@@ -243,6 +243,53 @@ const online = {
     ok(calls.length === 3 && calls[2] && calls[2].del === '6902083881234', '库存 0 且无进行中订单 → DELETE /api/products/{code}');
   }
 
+  /* ---------- 管理端 · 小票打印（离线、不真打印） ---------- */
+  section('⑥ admin.html · 小票 / 配送单打印');
+  {
+    const env = await bootPage('admin.html', offline);
+    const ctx = env.ctx;
+    ok(env.els.stName.value === Admin.DEFAULT_STORE.name, '系统页抬头表单回填默认店名：' + env.els.stName.value);
+    Mall.addToCart('6901234567892', 2);
+    const o = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '张三', phone: '13800000000' } });
+    ctx.renderOrders();
+    ok(env.els.orders.innerHTML.indexOf('🖨 小票') >= 0, '每张订单末尾有「🖨 小票」按钮');
+    let printed = 0;
+    env.ctx.window.print = function () { printed++; };
+    ctx.printOrder(o.id);
+    ok(printed === 1, 'printOrder 只唤起一次打印');
+    const html = env.els.printRoot.innerHTML;
+    ok(html.indexOf(o.id) >= 0 && html.indexOf('receipt') >= 0, '小票已写入打印区并含单号');
+    ok(html.indexOf('应收') >= 0 && html.indexOf('到店自提') >= 0, '票面含应收与自提方式');
+    ok(html.indexOf(Admin.DEFAULT_STORE.name) >= 0, '票头用本地抬头（默认店名）');
+    ok(html.indexOf('¥5.00') >= 0, '行金额按 2.50 × 2 计算');
+    // 抬头保存后立即生效
+    env.els.stName.value = '小邻里超市';
+    env.els.stPhone.value = '0571-88888888';
+    env.els.stAddr.value = '幸福路 1 号';
+    env.els.stFooter.value = '欢迎再来';
+    ctx.saveStore();
+    ok(Admin.getStoreInfo().name === '小邻里超市', '抬头保存进本地设置');
+    ctx.printOrder(o.id);
+    ok(env.els.printRoot.innerHTML.indexOf('小邻里超市') >= 0 && env.els.printRoot.innerHTML.indexOf('0571-88888888') >= 0, '再打印时票头已更新');
+    // 批量打印待备货
+    Mall.addToCart('6902083881234', 1);
+    const o2 = Mall.createOrder({ deliveryType: 'delivery', customer: { name: '李四', phone: '13900000000', address: '幸福路2号' } });
+    printed = 0;
+    ctx.printPending();
+    ok(printed === 1 && (env.els.printRoot.innerHTML.match(/class="receipt/g) || []).length === 2, '批量打印 2 张待备货小票（一次唤起）');
+    ok(env.els.printRoot.innerHTML.indexOf('r-break') >= 0, '多张小票之间分页');
+    ok(env.els.printRoot.innerHTML.indexOf('幸福路2号') >= 0 && env.els.printRoot.innerHTML.indexOf('配送费') >= 0, '配送单票面含地址与配送费');
+    // 全部完成后没有待备货 → 不唤起打印
+    Mall.advanceOrder(o.id, 'ready');
+    Mall.advanceOrder(o.id, 'done');
+    Mall.advanceOrder(o2.id, 'delivering');
+    Mall.advanceOrder(o2.id, 'done');
+    printed = 0;
+    ctx.printPending();
+    ok(printed === 0, '没有待备货订单时不唤起打印');
+    ok(ctx.printOrder('M00000') === undefined && printed === 0, '打印不存在的订单不唤起打印（只提示）');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

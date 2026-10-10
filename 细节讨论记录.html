@@ -281,6 +281,20 @@
   </ul>
 </div>
 
+<div class="callout green">
+  <strong>第 12 轮（2026-10-10）任务池第 2 项：订单打印 / 小票</strong>
+  <p>本轮把「订单只能看屏幕」补成「能落到纸面」：家庭店送货车里没有后台界面，配送单必须是纸的。</p>
+  <ul>
+    <li><strong>小票模型（纯函数，只读投影）</strong>：<code>Admin.buildReceipt(order, { store })</code> 只读订单 + 门店抬头，<b>不改订单、不改库存、不改价格</b>（与 D8「扫码只读」同源思路）；返回结构化票面字段（标题 / 单号 / 时间 / 状态 / 顾客 / 行明细 / 件数 / 小计 / 配送费 / 应收 / 票尾）与一份 32 字宽纯文本 <code>r.text</code>（可复制发给骑手）。</li>
+    <li><strong>打印方式：纯前端 + 零依赖</strong>：不引任何打印库。屏幕上 <code>#printRoot</code> 是 <code>display:none</code>；<code>@media print</code> 里 <code>body &gt; *</code> 全部隐藏、只显示 <code>#printRoot</code>，所以纸上只有小票、没有侧边栏和按钮。热敏定宽 <code>72mm</code>、<code>@page { margin: 6mm }</code>，一单一页不跨页。</li>
+    <li><strong>两个入口</strong>：每张订单末尾「🖨 小票」打单张；订单面板右上角「🖨 批量打印待备货」把所有 <code>pending</code> 订单一次排好（<code>break-after: page</code> 分页，只唤起一次打印）。已取消的订单照打，但票面盖「已取消 / 作废」。</li>
+    <li><strong>门店抬头本地化</strong>：店名 / 电话 / 地址 / 票尾在「系统与工具 → 小票抬头」维护，存 localStorage <code>mall_store</code>；店名必填且 ≤20 字；抬头<b>只影响本机打印、不上后端</b>（家庭店就一台收银电脑，没有必要为它加接口）。</li>
+    <li><strong>两个自造 bug</strong>：① <code>printPending()</code> 里拼 HTML 写成 <code>class="receipt"</code> 与条件 <code>class="receipt r-break"</code> 并置 → 同一元素出现两个 <code>class</code> 属性，改为先拼一次类名；② <code>renderStore()</code> 在假 DOM/旧页面缺 <code>#stName</code> 时抛错 → 加存在性判断直接 return。</li>
+    <li><strong>验证</strong>：Web 后台 75 → <b>98</b>、页面冒烟 51 → <b>65</b>（其余 44 / 28 / 41 保持全绿）；真浏览器 CDP 用 <code>Emulation.setEmulatedMedia({media:'print'})</code> 仿真打印媒体：打印时 <code>body</code> 子元素只有 <code>#printRoot</code> 为 <code>block</code>（<code>.layout</code> 为 <code>none</code>）、小票盒 <b>272×353px</b>（= 72mm 宽）、<code>@page</code> 规则已解析、<b>console 错误与异常均为 0</b>；批量打印一次唤起打 2 张且分页生效。</li>
+    <li><strong>下一轮</strong>：任务池第 3 项「顾客端收货地址簿」——顾客端下单地址仍靠手输，做地址簿能直接减少熟客下单步骤。</li>
+  </ul>
+</div>
+
 <h2>三、已定决策汇总</h2>
 <table>
   <tr><th>决策</th><th>来源</th><th>对主方案的影响</th></tr>
@@ -295,6 +309,7 @@
   <tr><td><b>Web 端优先 + 页面现代化（D14）</b>：按用户 2026-10-10 指令，<b>先把商城做成 Web 端、先实现功能，小程序化暂缓</b>（骨架归档 <code>archive/miniprogram/</code> 可续）；顾客端与管理端共用设计系统 <code>web/assets/theme.css</code>；<b>新增/改页面必须在真实浏览器里验收</b>——classic script 共享全局词法环境，顶层 <code>const/let</code> 重名会让整个脚本静默失效（<code>mall-admin.js</code> 与 <code>mall.js</code> 抢 <code>Mall</code> → 浏览器里 <code>Admin</code> 永久 undefined）；UI 验收以 CDP 数值证据为准（布局盒模型/真实列数/横向溢出/加载期异常）</td><td>第 9 轮（用户三条指令：清理仓库 / 页面现代化 / 商城先做 Web 端）</td><td>目录 <code>mall-demo/</code> → <code>web/</code>、<code>mall.html</code> → <code>index.html</code>；Rule 13 写入 <code>.agent_rules.md</code>（浏览器验收 + 禁止重名声明）；fake-DOM 测试之外必须补真实浏览器一层</td></tr>
   <tr><td><b>文档角色分工（D15）：一事实一 owner</b>——① <b>指令面</b>：只有 <code>.agent_rules.md</code> 对 agent 有约束力；② <b>地图</b>：根 <code>README.md</code>（总览 / 快速上手）+ <code>开发计划.html</code>（路线图与当前重心）+ 模块 README（<code>web/</code>、<code>server/</code>、<code>barcode-demo/</code>、<code>sync-demo/</code> 各管一域）；③ <b>状态</b>：里程碑与阻塞只在根 README 维护，其它文档只引用不复述；④ <b>历史</b>：<code>细节讨论记录.html</code>（决策台账，只追加校正）+ <code>独立小程序商城可行性分析与架构方案.html</code>（立项论证，变更以「现状校正（日期）」追加）</td><td>第 10 轮（用户指令：清理之后把文档也重新写一下）</td><td>文档从「按轮次堆补丁」转为「一个事实一个 owner」；规则 14（禁全局 sed、方向变化整篇重写）与规则 15（文档分工）写入 <code>.agent_rules.md</code>；三份 HTML 仍走 pull → 改 → convert → push → 设权限 流水线</td></tr>
   <tr><td><b>商品档案写接口语义（D16）</b>：建档与编辑共用 <code>POST /api/products</code>（覆盖式 upsert，按条码为主键），<b><code>stock</code> 字段采用指针语义——不传就是「不改库存」</b>，只有显式传值才写库；前端编辑表单根本不渲染库存输入。<b>删除</b>走 <code>DELETE /api/products/{code}</code>，两道闸：库存必须为 0、没有进行中（非 <code>done</code>/<code>cancelled</code>）订单引用；<b>删档不删条码字典层（D6 沉淀）</b>，所以删除只影响经营档案，不影响扫码识别能力。建档/编辑的服务端校验（条码与名称必填、价格与库存非负、比价防线超价 400）与前端归一化校验同口径</td><td>第 11 轮（做任务池第 1 项「商品建档 / 编辑表单」时定下）</td><td>避免「编辑商品把库存清零」这类静默数据事故；库存只有一个入口（<code>/api/products/stock</code> 与库存页三操作）与一条流水，与 D8「扫码只读、库存手动调整」一致</td></tr>
+  <tr><td><b>订单小票约定（D17）</b>：小票是<b>只读投影</b>——<code>Admin.buildReceipt(order)</code> 只看订单与抬头，不改订单/库存/价格；打印走<b>纯前端 <code>@media print</code> + <code>#printRoot</code>、零打印库依赖</b>，热敏 72mm 一单一页；门店抬头（店名/电话/地址/票尾）存本机 <code>mall_store</code>、<b>不上后端</b>；批量打印只唤起一次打印并按订单分页；已取消订单盖「作废」仍可打（留痕）</td><td>第 12 轮（做任务池第 2 项「订单打印 / 小票」时定下）</td><td>不给家庭店加打印中间件与后端接口；小票内容永远可由订单重算，不引入第二份订单数据；后续若要 A4 对账单，复用同一 <code>buildReceipt</code> 模型换样式即可</td></tr>
   <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
 </table>
 

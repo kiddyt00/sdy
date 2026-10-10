@@ -223,6 +223,50 @@ throws(() => Admin.deleteProduct('9999999999999'), '删除不存在的商品 →
   ok(Admin.getStockLog()[0].type === 'product_del', '删除留流水（product_del）');
 }
 
+// ============ ⑦ 小票 / 配送单（任务池第 2 项） ============
+section('⑦ 小票 / 配送单');
+fresh();
+{
+  const st = Admin.getStoreInfo();
+  ok(st.name === Admin.DEFAULT_STORE.name && st.footer === Admin.DEFAULT_STORE.footer, '门店抬头有默认值（' + st.name + '）');
+  const s2 = Admin.setStoreInfo({ name: '  小邻里超市  ', phone: ' 13800000000 ', address: '幸福路 1 号', footer: '' });
+  ok(s2.name === '小邻里超市' && s2.phone === '13800000000', '抬头保存前 trim 空格');
+  ok(s2.footer === Admin.DEFAULT_STORE.footer, '票尾留空回落到默认文案');
+  ok(Admin.getStoreInfo().name === '小邻里超市', '抬头已持久化，下次打票生效');
+  throws(() => Admin.setStoreInfo({ name: '   ' }), '店名为空 → 拦截');
+  throws(() => Admin.setStoreInfo({ name: '一二三四五六七八九十一二三四五六七八九十一' }), '店名超 20 字 → 拦截');
+}
+{
+  Mall.addToCart('6901234567892', 2);   // 2.50 × 2
+  Mall.addToCart('6921168509256', 1);   // 4.50 × 1
+  const o = Mall.createOrder({ deliveryType: 'delivery', customer: { name: '张三', phone: '13800000000', address: '幸福路1号' } });
+  const r = Admin.buildReceipt(o, { store: Admin.getStoreInfo() });
+  ok(r.title === '配送小票' && r.isPickup === false, '配送单标题=配送小票');
+  ok(r.orderNo === o.id && r.customer.phone === '13800000000' && r.customer.address === '幸福路1号', '单号/电话/地址带出');
+  ok(r.count === 3 && r.items.length === 2, '件数按 qty 求和（3 件 / 2 行）');
+  ok(r.items[0].amount === 5 && r.items[1].amount === 4.5, '行金额 = 单价 × 数量（2.50×2=5.00）');
+  ok(r.subtotal === 9.5 && r.deliveryFee === Mall.calcDeliveryFee('delivery', 9.5) && r.total === 12.5, '小计 9.50 ＋ 配送 3.00 ＝ 应收 12.50');
+  ok(Mall.calcDeliveryFee('delivery', 30) === 0, '满 30 免配送费（规则同源）');
+  ok(r.storeName === '小邻里超市' && r.statusLabel === '待备货', '抬头与订单状态带出（' + r.statusLabel + '）');
+  ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(r.time), '时间格式 YYYY-MM-DD HH:MM（' + r.time + '）');
+  ok(r.text.indexOf('单号：' + o.id) >= 0 && r.text.indexOf('应收：¥12.50') >= 0, '纯文本小票含单号与应收');
+  ok(r.text.indexOf('配送费：¥3.00') >= 0 && r.text.indexOf('方式：配送到家') >= 0, '纯文本含配送费与配送方式');
+  ok(r.text.split('\n').length >= 16, '纯文本小票分行完整（' + r.text.split('\n').length + ' 行）');
+}
+{
+  Mall.addToCart('6902083881234', 1);   // 1.80 × 1
+  const o2 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '李四', phone: '13900000000' } });
+  const r2 = Admin.buildReceipt(o2);
+  ok(r2.title === '自提小票' && r2.text.indexOf('方式：到店自提') >= 0, '自提单标题与方式正确');
+  ok(r2.deliveryFee === 0 && r2.text.indexOf('配送费') < 0, '自提不打印配送费行');
+  ok(r2.storeName === Admin.DEFAULT_STORE.name, '不传 store 时用默认抬头');
+  ok(r2.courier === '', '自提单不出现配送员');
+  Mall.cancelOrder(o2.id);
+  const r3 = Admin.buildReceipt(Mall.getOrders().find(x => x.id === o2.id));
+  ok(r3.cancelled === true && r3.text.indexOf('（作废）') >= 0, '已取消订单在票面标注作废');
+  throws(() => Admin.buildReceipt({}), '无单号 → 拦截（订单不存在）');
+}
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

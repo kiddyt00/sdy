@@ -27,7 +27,8 @@ const Admin = (() => {
   const KEYS = {
     couriers: 'mall_couriers',
     stockLog: 'mall_stockLog',
-    customerNotes: 'mall_customers'
+    customerNotes: 'mall_customers',
+    store: 'mall_store'
   };
   const DEFAULT_COURIERS = ['老张', '小李', '阿强', '小美']; // 4 人配送雏形
 
@@ -310,9 +311,106 @@ const Admin = (() => {
     };
   }
 
+  /* ---------------- 小票 / 配送单（任务池第 2 项） ----------------
+   * 约定：小票是订单的**只读投影** —— 只读订单与门店抬头，不改订单、不改库存、不改价格
+   *      （与 D8「扫码只读」同源）；金额一律两位小数，件数按 qty 求和。
+   */
+  const DEFAULT_STORE = { name: '家庭超市', phone: '', address: '', footer: '谢谢惠顾，欢迎再来！' };
+
+  function getStoreInfo() {
+    const s = MallCore._load(KEYS.store, null);
+    if (!s || typeof s !== 'object') return Object.assign({}, DEFAULT_STORE);
+    return Object.assign({}, DEFAULT_STORE, s);
+  }
+  // 门店抬头（小票表头）：只允许改这四项
+  function setStoreInfo(info) {
+    const i = info || {};
+    const name = String(i.name == null ? '' : i.name).trim();
+    if (!name) throw new Error('请填写店名');
+    if (name.length > 20) throw new Error('店名不能超过 20 字');
+    const out = {
+      name: name,
+      phone: String(i.phone == null ? '' : i.phone).trim(),
+      address: String(i.address == null ? '' : i.address).trim(),
+      footer: String(i.footer == null ? '' : i.footer).trim() || DEFAULT_STORE.footer
+    };
+    MallCore._save(KEYS.store, out);
+    return out;
+  }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function formatTime(ts) {
+    const d = new Date(Number(ts) || 0);
+    if (isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+      ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+
+  // 订单 → 小票模型（纯函数，可直接单测）；store 缺省用 DEFAULT_STORE
+  function buildReceipt(order, opts) {
+    const o = order || {};
+    if (!o.id) throw new Error('订单不存在，无法打印小票');
+    const store = Object.assign({}, DEFAULT_STORE, (opts && opts.store) || {});
+    const items = (o.items || []).map(it => {
+      const price = round2(it.price), qty = Number(it.qty) || 0;
+      return { name: it.name || '', spec: it.spec || '', unit: it.unit || DEFAULT_UNIT, price: price, qty: qty, amount: round2(price * qty) };
+    });
+    const subtotal = round2(o.subtotal != null ? o.subtotal : items.reduce((s, i) => s + i.amount, 0));
+    const deliveryFee = round2(o.deliveryFee || 0);
+    const total = round2(o.total != null ? o.total : subtotal + deliveryFee);
+    const view = MallCore.orderView ? MallCore.orderView(o) : { statusLabel: o.status || '' };
+    const isPickup = o.deliveryType === 'pickup';
+    const r = {
+      storeName: store.name, storePhone: store.phone, storeAddress: store.address,
+      title: isPickup ? '自提小票' : '配送小票',
+      isPickup: isPickup, cancelled: o.status === 'cancelled',
+      orderNo: String(o.id), time: formatTime(o.createdAt), statusLabel: view.statusLabel,
+      courier: o.courier || '',
+      customer: {
+        name: (o.customer && o.customer.name) || '',
+        phone: (o.customer && o.customer.phone) || '',
+        address: (o.customer && o.customer.address) || ''
+      },
+      items: items, count: items.reduce((n, i) => n + i.qty, 0),
+      subtotal: subtotal, deliveryFee: deliveryFee, total: total,
+      footer: store.footer || DEFAULT_STORE.footer
+    };
+    r.text = receiptText(r);
+    return r;
+  }
+
+  // 32 字宽纯文本小票（热敏打印机 / 复制粘贴给骑手用）
+  function receiptText(r) {
+    const line = '--------------------------------';
+    const L = [r.storeName, '（' + r.title + '）'];
+    if (r.storePhone) L.push('电话：' + r.storePhone);
+    if (r.storeAddress) L.push('地址：' + r.storeAddress);
+    L.push(line);
+    L.push('单号：' + r.orderNo);
+    L.push('时间：' + r.time);
+    L.push('状态：' + r.statusLabel + (r.cancelled ? '（作废）' : ''));
+    L.push('顾客：' + r.customer.name + ' ' + r.customer.phone);
+    if (!r.isPickup && r.customer.address) L.push('地址：' + r.customer.address);
+    L.push(r.isPickup ? '方式：到店自提' : '方式：配送到家' + (r.courier ? ' · ' + r.courier : ''));
+    L.push(line);
+    r.items.forEach(i => {
+      L.push(i.name + (i.spec ? ' ' + i.spec : ''));
+      L.push('  ¥' + i.price.toFixed(2) + ' × ' + i.qty + ' ' + i.unit + ' = ¥' + i.amount.toFixed(2));
+    });
+    L.push(line);
+    L.push('合计 ' + r.count + ' 件');
+    L.push('小计：¥' + r.subtotal.toFixed(2));
+    if (r.deliveryFee) L.push('配送费：¥' + r.deliveryFee.toFixed(2));
+    L.push('应收：¥' + r.total.toFixed(2));
+    L.push(line);
+    if (r.footer) L.push(r.footer);
+    return L.join('\n');
+  }
+
   return {
     KEYS: KEYS,
     DEFAULT_COURIERS: DEFAULT_COURIERS,
+    DEFAULT_STORE: DEFAULT_STORE,
     DEFAULT_UNIT: DEFAULT_UNIT,
     DEFAULT_CATEGORY: DEFAULT_CATEGORY,
     LOW_STOCK: LOW_STOCK,
@@ -333,6 +431,10 @@ const Admin = (() => {
     stockIn: stockIn,
     stockTake: stockTake,
     setCourier: setCourier,
+    getStoreInfo: getStoreInfo,
+    setStoreInfo: setStoreInfo,
+    buildReceipt: buildReceipt,
+    formatTime: formatTime,
     getCustomers: getCustomers,
     setCustomerNote: setCustomerNote
   };

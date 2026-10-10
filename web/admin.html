@@ -14,6 +14,28 @@
   .stkrow .scur b.zero { color: var(--red); }
   .side-toggle { display: none; }
   @media (max-width: 900px) { .side-toggle { display: inline-flex; } }
+
+  /* 小票（任务池第 2 项）：屏幕上不占位，只在打印时出现 */
+  #printRoot { display: none; }
+  #receipt, .receipt { width: 72mm; margin: 0 auto; color: #000; font: 12px/1.7 "PingFang SC", "Microsoft YaHei", monospace; }
+  #receipt .r-hd { text-align: center; }
+  #receipt .r-hd b { font-size: 15px; letter-spacing: 1px; }
+  #receipt .r-hd div { font-size: 11px; }
+  #receipt .r-sep { border-top: 1px dashed #000; margin: 6px 0; }
+  #receipt .r-row { display: flex; justify-content: space-between; gap: 8px; }
+  #receipt .r-row span:last-child { white-space: nowrap; }
+  #receipt .r-item { margin-top: 3px; }
+  #receipt .r-item .r-row { font-size: 11px; color: #333; }
+  #receipt .r-total { font-size: 14px; font-weight: 700; }
+  #receipt .r-void { text-align: center; font-weight: 700; border: 1px solid #000; padding: 2px; margin: 6px 0; }
+  #receipt .r-ft { text-align: center; margin-top: 10px; font-size: 11px; }
+  .r-break { break-after: page; page-break-after: always; }
+  @page { margin: 6mm; }
+  @media print {
+    body { background: #fff; }
+    body > * { display: none !important; }
+    #printRoot { display: block !important; }
+  }
 </style>
 </head>
 <body>
@@ -113,6 +135,7 @@
           <div class="acts">
             <span class="muted" style="font-size:12px">配送员名单</span>
             <input class="input input-sm" id="couriers" style="width:170px" placeholder="张三,李四" onchange="saveCouriers()">
+            <button class="btn btn-xs" onclick="printPending()">🖨 批量打印待备货</button>
           </div>
         </div>
         <div class="panel-body">
@@ -214,6 +237,23 @@
             </div>
           </div>
         </div>
+        <div class="panel">
+          <div class="panel-head"><h3>小票抬头</h3><span class="muted" style="font-size:12px">打票时印在票头，只影响本机打印</span></div>
+          <div class="panel-body">
+            <div class="row">
+              <div class="field grow"><label>店名</label><input class="input" id="stName" maxlength="20" placeholder="家庭超市"></div>
+              <div class="field grow"><label>电话</label><input class="input" id="stPhone" placeholder="选填，印在店名下方"></div>
+            </div>
+            <div class="row mt">
+              <div class="field grow"><label>地址</label><input class="input" id="stAddr" placeholder="选填"></div>
+              <div class="field grow"><label>票尾</label><input class="input" id="stFooter" placeholder="谢谢惠顾，欢迎再来！"></div>
+            </div>
+            <div class="acts mt">
+              <button class="btn btn-primary" onclick="saveStore()">保存抬头</button>
+              <span class="muted" style="font-size:12px">订单页每张单末尾的「🖨 小票」可单张打印；面板右上角可批量打印待备货</span>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>
@@ -258,6 +298,8 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div id="printRoot"></div>
 
 <script src="mall.js"></script>
 <script src="pricing.js"></script>
@@ -363,6 +405,7 @@ function renderOrders() {
     } else if (o.status === 'ready') {
       acts.push('<button class="btn btn-xs btn-primary" onclick="adv(\'' + esc(o.id) + '\',\'done\')">确认完成</button>');
     }
+    acts.push('<button class="btn btn-xs" onclick="printOrder(\'' + esc(o.id) + '\')">🖨 小票</button>');
     return '<div class="ocard">' +
       '<div class="oh"><span class="oid">' + esc(o.id) + '</span><span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></div>' +
       '<div class="items">' + o.items.map(i => '· ' + esc(i.name) + ' ×' + i.qty + '　' + yuan(i.price * i.qty)).join('<br>') + '</div>' +
@@ -402,6 +445,65 @@ async function cancelO(id) {
   try { await SdyApi.cancelOrder(id); toast('订单已取消，库存已回补'); }
   catch (e) { toast(e.message, 3600); }
   renderAll();
+}
+
+/* ---------------- 小票打印（任务池第 2 项） ---------------- */
+// 小票是订单的只读投影：只读订单 + 门店抬头，不动订单/库存/价格（D8 同源）
+function receiptHTML(r) {
+  const rows = r.items.map(i =>
+    '<div class="r-item"><div class="r-row"><span>' + esc(i.name) + (i.spec ? ' ' + esc(i.spec) : '') + '</span><span>' + yuan(i.amount) + '</span></div>' +
+    '<div class="r-row"><span>' + yuan(i.price) + ' × ' + i.qty + ' ' + esc(i.unit) + '</span><span></span></div></div>').join('');
+  return '<div class="r-hd"><b>' + esc(r.storeName) + '</b>' +
+      (r.storePhone ? '<div>电话 ' + esc(r.storePhone) + '</div>' : '') +
+      (r.storeAddress ? '<div>' + esc(r.storeAddress) + '</div>' : '') +
+      '<div>' + esc(r.title) + '</div></div>' +
+    '<div class="r-sep"></div>' +
+    (r.cancelled ? '<div class="r-void">已取消 / 作废</div>' : '') +
+    '<div class="r-row"><span>单号</span><span>' + esc(r.orderNo) + '</span></div>' +
+    '<div class="r-row"><span>时间</span><span>' + esc(r.time) + '</span></div>' +
+    '<div class="r-row"><span>状态</span><span>' + esc(r.statusLabel) + '</span></div>' +
+    '<div class="r-row"><span>顾客</span><span>' + esc(r.customer.name) + ' ' + esc(r.customer.phone) + '</span></div>' +
+    (r.isPickup
+      ? '<div class="r-row"><span>方式</span><span>到店自提</span></div>'
+      : '<div class="r-row"><span>地址</span><span>' + esc(r.customer.address) + '</span></div>' +
+        '<div class="r-row"><span>配送员</span><span>' + esc(r.courier || '待分配') + '</span></div>') +
+    '<div class="r-sep"></div>' + rows +
+    '<div class="r-sep"></div>' +
+    '<div class="r-row"><span>件数</span><span>' + r.count + ' 件</span></div>' +
+    '<div class="r-row"><span>小计</span><span>' + yuan(r.subtotal) + '</span></div>' +
+    (r.deliveryFee ? '<div class="r-row"><span>配送费</span><span>' + yuan(r.deliveryFee) + '</span></div>' : '') +
+    '<div class="r-row r-total"><span>应收</span><span>' + yuan(r.total) + '</span></div>' +
+    '<div class="r-ft">' + esc(r.footer) + '</div>';
+}
+function openPrint(html, tip) {
+  $('printRoot').innerHTML = html;
+  toast(tip, 2000);
+  try { window.print(); } catch (e) { toast('打印被浏览器拦截：' + e.message, 3600); }
+}
+function printOrder(id) {
+  const o = Mall.getOrders().find(x => x.id === id);
+  if (!o) return toast('订单不存在：' + id);
+  openPrint('<div class="receipt" id="receipt">' + receiptHTML(Admin.buildReceipt(o, { store: Admin.getStoreInfo() })) + '</div>', '小票已生成，正在唤起打印…');
+}
+function printPending() {
+  const list = Mall.getOrders().filter(o => o.status === 'pending');
+  if (!list.length) return toast('没有待备货订单');
+  const store = Admin.getStoreInfo();
+  openPrint(list.map((o, i) =>
+    '<div class="receipt' + (i < list.length - 1 ? ' r-break' : '') + '"' + (i === 0 ? ' id="receipt"' : '') + '>' +
+    receiptHTML(Admin.buildReceipt(o, { store: store })) + '</div>').join(''),
+    '已生成 ' + list.length + ' 张小票，正在唤起打印…');
+}
+function saveStore() {
+  try { Admin.setStoreInfo({ name: $('stName').value, phone: $('stPhone').value, address: $('stAddr').value, footer: $('stFooter').value }); }
+  catch (e) { return toast(e.message, 3600); }
+  renderStore();
+  toast('小票抬头已保存，下次打票即生效');
+}
+function renderStore() {
+  if (!$('stName')) return;
+  const s = Admin.getStoreInfo();
+  $('stName').value = s.name; $('stPhone').value = s.phone; $('stAddr').value = s.address; $('stFooter').value = s.footer;
 }
 
 /* ---------------- 库存 ---------------- */
@@ -732,7 +834,7 @@ async function refreshAll() {
   renderAll();
 }
 function renderAllAdmin() {
-  renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderSys();
+  renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderSys(); renderStore();
 }
 async function initApi() {
   const badge = $('modeBadge');
