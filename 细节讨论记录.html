@@ -250,6 +250,7 @@
   <tr><td><b>生产部署方案（D9）</b>：生产服务器用 Docker 部署，<b>参照同机 <code>yiguan</code> 项目范式</b>——Docker Compose + 蓝绿 A/B 双实例 + 主机级 Nginx(80/443) 反代、镜像走国内代理；<b>端口必须避开同机既有服务</b>（已占用 22/53/80/443/8081/8082），本项目约定前端 8091/8092、后端 8093 且绑 <code>127.0.0.1</code></td><td>第 4 轮（用户指定：生产服务器已定，参照 yiguan，注意端口冲突）</td><td>服务器与本机均已完成只读勘察；服务器 IP/凭证只存本地 <code>.server_cred.md</code>（公开仓库与公开文档均不披露）；M4 部署按此执行</td></tr>
   <tr><td><b>后端技术栈（D11）：确认后端语言为 Golang</b>（Go 1.24；标准库 <code>net/http</code>；SQLite 用 <code>modernc.org/sqlite</code> 纯 Go 驱动、<code>CGO_ENABLED=0</code> 静态单文件）</td><td>第 5 轮（用户指令：「后端开发语言切换成golang」）</td><td>与生产服务器同机 yiguan 项目（Go）同栈，Docker 蓝绿部署范式直接复用；静态单文件、内存占用低（服务器 3.7G 与多服务共存）；原 Python 标准库方案作废，<code>开发计划</code> M4 已同步更新</td></tr>
   <tr><td><b>两地开发同步（D10）</b>：用户可能在家里和公司两地开发，<b>每轮开工先 <code>git pull</code>、收工必 commit + push</b>，保证云端代码始终最新</td><td>第 4 轮（用户强调：及时同步云端代码）</td><td>已写入 <code>.agent_rules.md</code> 第 7 条与 README「协作约定」；每次推送前仍执行三层敏感扫描</td></tr>
+  <tr><td><b>前端接入后端（D12）</b>：页面与 Go 后端之间只留一条通道 <code>mall-demo/sdy-api.js</code>（SdyApi）；<b>后端是唯一真源</b>，页面 localStorage 只作镜像与离线降级；<b>运费 / 价格防线 / 库存扣减 / 订单状态机全部只在服务端执行</b>，页面不再自己算；探测不到后端时自动退回纯本地演示（同一套页面代码，无需切换）；服务端 409/400 的原文直接弹给顾客（如「库存不足：「可口可乐」仅剩 1 罐」）</td><td>第 6 轮（M4 收尾：前端接后端）</td><td>顾客端与管理端共用同一通道；离线演示能力保留（方便无后端时给店里演示）；规则一致性由 <code>server/internal/pricing|store</code> 单测与联调测试共同保证</td></tr>
   <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
 </table>
 

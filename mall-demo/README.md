@@ -1,14 +1,23 @@
 # 顾客端商城 Demo（mall-demo）
 
-《开发计划》M1.1 顾客端商城 + M1.2 管理端扩展：**首页 → 详情 → 购物车 → 结算 → 我的订单** 全流程可走通，管理端可管订单/库存/顾客。
+《开发计划》M1.1 顾客端商城 + M1.2 管理端扩展 + **M4 收尾（前端接后端）**：**首页 → 详情 → 购物车 → 结算 → 我的订单** 全流程可走通，管理端可管订单/库存/顾客。
 
 ## 运行
+
+**方式 A：纯前端跑（无需后端，本地演示模式）**
 
 ```bash
 python3 -m http.server 8910        # 或直接双击 mall.html（file:// 亦可）
 ```
 
-浏览器打开 `http://127.0.0.1:8910/mall.html`（顾客端）或 `http://127.0.0.1:8910/admin.html`（管理端，顾客端页脚也有入口）。
+**方式 B：接上 Go 后端（推荐，规则与账目由服务端执行）**
+
+```bash
+cd ../server && STATIC_DIR=.. go run ./cmd/server     # 后端 127.0.0.1:8093
+# 浏览器打开 http://127.0.0.1:8093/mall-demo/mall.html
+```
+
+两种方式页面都能用：顶部胶囊显示 **🟢 后端已连接** 或 **🟡 本地演示（离线可用）**，探测不到后端时自动退回本地演示，不需要改代码。
 
 ## 页面与规则
 
@@ -37,11 +46,26 @@ python3 -m http.server 8910        # 或直接双击 mall.html（file:// 亦可�
 
 管理端逻辑在 `mall-admin.js`（与顾客端共用 `mall.js` 与 `bd_products` 商品库），测试见下。
 
+## 接后端：`sdy-api.js`（M4 收尾）
+
+页面与 Go 后端之间的唯一通道，**后端是真源，localStorage 只是镜像**：
+
+- 启动时探测一次 `GET /healthz`（不轮询）：成功 → `server` 模式，拉商品与订单镜像；失败 → `local` 模式，纯本地演示照旧可用
+- 顾客端下单、管理端改库存/改参考价、状态流转全部走 HTTP API，规则（运费、价格防线、库存、状态机）**只在服务端执行**，页面不再自己算
+- 后端返回 409/400 时把服务端原话弹给用户（例如「库存不足：「可口可乐」仅剩 1 罐」），不会产生幽灵订单
+- 地址可覆盖：`configure({base})` / `window.SDY_API_BASE` / `localStorage.sdy_api_base`，默认同源
+
+对应服务端接口见 [server/README.md](../server/README.md)。
+
 ## 测试
 
 ```bash
-node test-mall.js        # 40 项：购物车合计/配送费规则/下单扣库存/取消回补/状态机/售罄
-node test-admin.js       # 32 项：改数/入库/盘点/负库存拦截/配送员分配/顾客聚合/档案
+node test-mall.js         # 44 项：购物车合计/配送费规则/下单扣库存/取消回补/状态机/售罄
+node test-pricing.js      # 28 项：配送费规则 + 比价防线（与后端同参数）
+node test-admin.js        # 32 项：改数/入库/盘点/负库存拦截/配送员分配/顾客聚合/档案
+node test-sdy-api.js      # 35 项：数据通道两条路径（假 fetch，不依赖后端）
+node test-page-boot.js    # 21 项：假 DOM 真跑两个页面的内联脚本（离线/在线各一遍）
+node test-integration.js  # 17 项：真 fetch → 真 Go 后端（需先起后端，未探测到则自动跳过）
 ```
 
 ## 数据

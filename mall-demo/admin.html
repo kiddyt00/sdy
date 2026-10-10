@@ -99,6 +99,7 @@ header{position:sticky;top:0;z-index:30;background:var(--bg);backdrop-filter:blu
   <header>
     <div class="brand-row">
       <div class="brand">小邻里超市<small> · 管理端 Demo · M1.2</small></div>
+      <div id="modeBadge" style="display:inline-block;margin-top:7px;font-size:11.5px;padding:3px 11px;border-radius:999px;background:#f4efe4;border:1px solid #e2d9c6;color:#6b6255">⏳ 正在连接后端…</div>
       <span style="flex:1"></span>
       <a class="back" href="mall.html">← 返回顾客端</a>
     </div>
@@ -142,6 +143,7 @@ header{position:sticky;top:0;z-index:30;background:var(--bg);backdrop-filter:blu
 <script src="mall.js"></script>
 <script src="mall-admin.js"></script>
 <script src="pricing.js"></script>
+<script src="sdy-api.js"></script>
 <script>
 /* ================= 管理端 UI 层 ================= */
 'use strict';
@@ -156,6 +158,7 @@ function toast(msg, ms) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', ms || 2200);
 }
 const tryRun = fn => { try { const r = fn(); if (r) toast(r); } catch (e) { toast(e.message); } };
+const tryRunAsync = async fn => { try { const r = await fn(); if (r) toast(r); } catch (e) { toast(e.message); } };
 
 /* ---------- 订单管理 ---------- */
 const F = [['全部',''],['待备货','pending'],['配送中','delivering'],['待自提','ready'],['已完成','done'],['已取消','cancelled']];
@@ -198,10 +201,10 @@ function assign(id) {
   const v = $('cs_' + id).value;
   tryRun(() => { Admin.setCourier(id, v); renderOrders(); return '已分配 ' + v + '，订单配送中'; });
 }
-function adv(id, to) { tryRun(() => { Mall.advanceOrder(id, to); renderOrders(); return '订单已更新'; }); }
+function adv(id, to) { return tryRunAsync(async () => { await SdyApi.advanceOrder(id, to); renderOrders(); return '订单已更新'; }); }
 function cancelO(id) {
   if (!confirm('确定取消该订单？库存将自动回补。')) return;
-  tryRun(() => { Mall.cancelOrder(id); renderOrders(); return '订单已取消，库存已回补'; });
+  return tryRunAsync(async () => { await SdyApi.cancelOrder(id); renderOrders(); return '订单已取消，库存已回补'; });
 }
 
 /* ---------- 库存管理 ---------- */
@@ -227,29 +230,37 @@ function renderStock() {
   }).join('') || '<div class="empty">商品库为空</div>';
   renderStockLog();
 }
+// 库存改动往后端同步（后端在线时以服务端数值为准；离线时只落本地流水）
+async function pushStock(code, stock) {
+  if (!SdyApi.on()) return;
+  await SdyApi.setStock(code, stock);
+}
 function doAdjust(code) {
-  tryRun(() => {
+  return tryRunAsync(async () => {
     const d = parseFloat($('ad_' + code).value);
     if (isNaN(d)) throw new Error('请输入±数量');
     const e = Admin.adjustStock(code, d, $('ar_' + code).value.trim());
+    await pushStock(code, e.after);
     renderStock();
     return '已改数：' + e.name + ' ' + e.before + ' → ' + e.after + ' ' + e.unit;
   });
 }
 function doStockIn(code) {
-  tryRun(() => {
+  return tryRunAsync(async () => {
     const q = parseInt($('si_' + code).value, 10);
     if (!(q > 0)) throw new Error('请输入正数数量');
     const e = Admin.stockIn(code, q, $('sr_' + code).value.trim() || '现场入库');
+    await pushStock(code, e.after);
     renderStock();
     return '已入库：' + e.name + ' +' + q + '（' + e.after + ' ' + e.unit + '）';
   });
 }
 function doTake(code) {
-  tryRun(() => {
+  return tryRunAsync(async () => {
     const c = parseInt($('st_' + code).value, 10);
     if (isNaN(c) || c < 0) throw new Error('请输入 ≥0 的实盘数');
     const e = Admin.stockTake(code, c);
+    if (e.delta !== 0) await pushStock(code, e.after);
     renderStock();
     return e.delta === 0 ? '盘点一致（' + e.name + '）' : '盘点校准：' + e.name + ' ' + e.before + ' → ' + e.after + ' ' + e.unit;
   });
@@ -306,17 +317,20 @@ function renderPricing() {
     ' <span style="font-size:12px;color:var(--muted)">批发商品（isWholesale/priceMode=wholesale）自动跳过</span>';
 }
 function saveRefs() {
-  tryRun(() => {
+  return tryRunAsync(async () => {
     let saved = 0;
-    Mall.loadCatalog().forEach(p => {
+    for (const p of Mall.loadCatalog()) {
       const v = $('rf_' + p.code).value;
-      if (v === '') return;
-      Mall.updateProduct(p.code, { refPrice: parseFloat(v) });
+      if (v === '') continue;
+      await SdyApi.updateProduct(p.code, { refPrice: parseFloat(v) });
       saved++;
-    });
-    const r = Pricing.pricingCheck(Mall.loadCatalog());
+    }
+    const list = Mall.loadCatalog();
+    const r = SdyApi.on() ? await SdyApi.pricingCheck() : null;
+    const over = r ? r.over : Pricing.pricingCheck(list).violations.length;
     renderPricing();
-    return '已保存 ' + saved + ' 个参考价' + (r.violations.length ? '，超价 ' + r.violations.length + ' 个商品！' : '，全部合规 ✔');
+    return '已保存 ' + saved + ' 个参考价' + (SdyApi.on() ? '（已写入后端，防线由服务端执行）' : '') +
+      (over ? '，超价 ' + over + ' 个商品！' : '，全部合规 ✔');
   });
 }
 
@@ -327,6 +341,28 @@ function switchTab(t) {
     $('view' + view.slice(4)).style.display = tab === t ? 'block' : 'none';
   });
   if (t === 'pricing') renderPricing();
+}
+
+/* ---------- 启动：先按本地镜像渲染，再探测后端并刷新 ---------- */
+function renderAllAdmin() { renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); }
+renderAllAdmin();
+
+(async function initApi() {
+  const badge = $('modeBadge');
+  const st = await SdyApi.boot();
+  badge.textContent = st.label;
+  badge.title = st.detail;
+  badge.style.background = st.online ? '#e7f5ec' : '#fdf3e3';
+  badge.style.borderColor = st.online ? '#bfe3cc' : '#f0dcb8';
+  badge.style.color = st.online ? '#14532d' : '#8a6d3b';
+  if (st.online) { renderAllAdmin(); if (SdyApi.health()) toastDetail(st); }
+})();
+
+function toastDetail(st) {
+  // 后端在线时顺带提示条码云端状态（熔断/未配置），不影响操作
+  const h = SdyApi.health() || {};
+  if (h.circuitOpen) toast('⚠️ 条码云端已熔断（连续失败过多），今日不再调用云端');
+  else if (h.cloudConfigured === false) toast('ℹ️ 条码云端未配置，当前为纯本地解析模式');
 }
 </script>
 </body>

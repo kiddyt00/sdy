@@ -180,6 +180,7 @@ header{position:sticky;top:0;z-index:30;background:var(--bg);backdrop-filter:blu
   <header>
     <div class="brand-row">
       <div class="brand">小邻里超市<small> · 顾客端商城 Demo · M1.1</small></div>
+      <div id="modeBadge" style="display:inline-block;margin-top:7px;font-size:11.5px;padding:3px 11px;border-radius:999px;background:#f4efe4;border:1px solid #e2d9c6;color:#6b6255">⏳ 正在连接后端…</div>
     </div>
     <div class="act-row">
       <div class="search">
@@ -275,11 +276,12 @@ header{position:sticky;top:0;z-index:30;background:var(--bg);backdrop-filter:blu
 <div id="toast"></div>
 
 <script src="mall.js"></script>
+<script src="sdy-api.js"></script>
 <script>
 /* ================= UI 层（调用 Mall 核心逻辑） ================= */
 'use strict';
 const $ = id => document.getElementById(id);
-let curCat = '全部', curFilter = '全部', selCode = null, selQty = 1;
+let curCat = '全部', curFilter = '', selCode = null, selQty = 1;
 let deliveryType = 'pickup', detailQty = 1;
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -417,11 +419,11 @@ function renderCheckout() {
   $('ckFee').textContent = yuan(fee);
   $('ckTotal').textContent = yuan(s.subtotal + fee);
 }
-function submitOrder() {
+async function submitOrder() {
   const customer = { name: $('cName').value.trim(), phone: $('cPhone').value.trim(), address: $('cAddress').value.trim() };
   try {
-    const o = Mall.createOrder({ deliveryType: deliveryType, customer: customer });
-    toast('下单成功！订单号 ' + o.id + '，合计 ' + yuan(o.total));
+    const o = await SdyApi.createOrder({ deliveryType: deliveryType, customer: customer });
+    toast('下单成功！订单号 ' + o.id + '，合计 ' + yuan(o.total) + (SdyApi.on() ? '（后端已受理）' : ''));
     $('cName').value = ''; $('cPhone').value = ''; $('cAddress').value = '';
     renderCartBadge(); closeAll(); switchTab('orders');
   } catch (e) { toast(e.message); }
@@ -459,10 +461,13 @@ function orderHTML(o) {
     ' ＝ <b>' + yuan(o.total) + '</b></span><span class="acts">' + acts.join('') + '</span></div>' +
     '</div>';
 }
-function adv(id, to) { try { Mall.advanceOrder(id, to); renderOrders(); toast('订单已更新'); } catch (e) { toast(e.message); } }
-function cancelOrder(id) {
+async function adv(id, to) {
+  try { await SdyApi.advanceOrder(id, to); renderOrders(); renderCartBadge(); renderGrid(); toast('订单已更新'); }
+  catch (e) { toast(e.message); }
+}
+async function cancelOrder(id) {
   if (!confirm('确定取消该订单？库存将自动回补。')) return;
-  try { Mall.cancelOrder(id); renderOrders(); toast('订单已取消，库存已回补'); }
+  try { await SdyApi.cancelOrder(id); renderOrders(); renderCartBadge(); renderGrid(); toast('订单已取消，库存已回补'); }
   catch (e) { toast(e.message); }
 }
 
@@ -479,14 +484,27 @@ function closeAll() {
   ['dlgDetail','dlgScan','dlgCheckout','cartSheet','mask'].forEach(id => { const e = $(id); if (e) e.style.display = 'none'; });
 }
 
-/* ---------- 启动 ---------- */
+/* ---------- 启动：先按本地镜像渲染，再探测后端并刷新 ---------- */
+function renderAll() { renderCats(); renderGrid(); renderCartBadge(); renderFilters(); }
 Mall.loadCatalog();
-renderCats(); renderGrid(); renderCartBadge(); renderFilters();
+renderAll();
+
+(async function initApi() {
+  const badge = $('modeBadge');
+  const st = await SdyApi.boot();
+  badge.textContent = st.label;
+  badge.title = st.detail;
+  badge.style.background = st.online ? '#e7f5ec' : '#fdf3e3';
+  badge.style.borderColor = st.online ? '#bfe3cc' : '#f0dcb8';
+  badge.style.color = st.online ? '#14532d' : '#8a6d3b';
+  if (st.online) { renderAll(); renderOrders(); }
+})();
 </script>
 
 <footer class="foot-note">
   <a class="pill" href="admin.html" style="display:inline-block;margin-bottom:8px;padding:8px 18px">🔧 管理端（订单 / 库存 / 顾客）</a><br>
-  demo 数据存于本机 localStorage（商品库 bd_products 与条码扫码 demo 共用）｜配送费为占位规则（自提免 / 满 30 免，否则 3 元）<br>
+  后端在线时订单与库存由 Go 服务统一记账（页面本地只留镜像）；后端不可用时自动退回纯本地演示（商品库 bd_products 与条码扫码 demo 共用）<br>
+  配送费与价格防线都在服务端执行：自提免 / 配送满 30 免否则 3 元；售价 ≤ 牵牛花参考价 × 0.95<br>
   <b>D8：扫码只读</b>——库存一律在管理端手动调整（入库单 / 盘点 / 直接改数）
 </footer>
 </body>

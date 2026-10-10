@@ -121,7 +121,7 @@
 </ul>
 <div class="callout green"><b>已交付（本轮）：</b>对账引擎 <code>sync-demo/sync-csv.js</code>（CSV 解析：BOM/CRLF/引号转义/自动识别逗号与 Tab；字段映射可配中英文别名；对账产出库存差/价差/双差 + 云端独有 + 本地独有 + 无效行统计；导出「库存回填（以本地实盘为准）」与「新增建档」两份 CSV）+ <b>62 项测试</b>；对账工作台页面 <code>sync-demo/sync.html</code>（载入 CSV → 差异表勾选确认 → 导出，纯前端不上传）；行动项 0 确认清单页。<br>差异默认<b>未确认</b>，必须人工勾选才进导出——防止误回填。本地商品侧复用同源 <code>bd_products</code>（与商城/扫码 demo 同库）。<br><b>唯一待办</b>：拿到牵牛花真实导出文件后核对列名（若不在映射表内，改 <code>DEFAULT_FIELD_MAP</code> 即可）。</div>
 
-<h2>七、M4 后端服务 <span class="ok">◐ 主体已落地</span></h2>
+<h2>七、M4 后端服务 <span class="ok">✔ 已完成（本地联调通过）</span></h2>
 <table>
 <tr><th>项</th><th>内容</th></tr>
 <tr><td>数据模型</td><td>product / barcode_lib / order / order_item / customer / sync_batch</td></tr>
@@ -142,8 +142,14 @@
 • <b>条码解析链服务端化</b>：商品档案 → 本地字典 → 云端（查到永久回填、查无标记 90 天、连续失败 5 次熔断当日），<code>APPCODE</code> <b>只从环境变量读</b>，绝不下发到前端；<br>
 • <b>HTTP API</b>：<code>/healthz</code>、商品列表/建档/手动改库存（D8）、订单下单/列表/详情/状态流转、<code>/api/barcode/resolve</code>、<code>/api/pricing/check</code>；静态目录可托管演示页；<br>
 • <b>验证</b>：<b>20 个 Go 单测全绿</b>（解析链三级命中/回填/TTL/熔断、价格规则边界、状态机全部合法与非法路径、事务扣库存与回滚）＋ <code>server/smoke.sh</code> 端到端冒烟通过（下单 120→118、取消回补 120、非法流转 409）；<br>
-• <b>部署件</b>：<code>server/Dockerfile</code>（alpine 两段式、非 root、内置健康检查）＋ <code>docker-compose.yml</code>（<b>api-a 8093 / api-b 8094 蓝绿</b>，仅绑 <code>127.0.0.1</code>）＋ <code>deploy/</code>（deploy.sh 走国内代理拉镜像、rolling-update.sh 逐台重启不停服、主机 Nginx 模板）。<br>
-<b>剩余</b>：前端页面接后端 API（当前 demo 仍走 localStorage）＋ 上线到生产服务器（<b>待用户提供已备案域名</b>）。</div>
+• <b>部署件</b>：<code>server/Dockerfile</code>（alpine 两段式、非 root、内置健康检查）＋ <code>docker-compose.yml</code>（<b>api-a 8093 / api-b 8094 蓝绿</b>，仅绑 <code>127.0.0.1</code>）＋ <code>deploy/</code>（deploy.sh 走国内代理拉镜像、rolling-update.sh 逐台重启不停服、主机 Nginx 模板）。</div>
+<div class="callout green"><b>已交付（M4 收尾，前端接后端）：</b>新增数据通道 <code>mall-demo/sdy-api.js</code>（D12），顾客端与管理端全部改走 HTTP API，<b>后端是唯一真源</b>——<br>
+• 启动探测一次 <code>/healthz</code>：在线 → 顶部显示 <b>🟢 后端已连接</b> 并拉取商品/订单镜像；离线 → <b>🟡 本地演示（离线可用）</b>，同一套页面代码自动降级，方便无后端时演示；<br>
+• 下单、改库存、改参考价、状态流转、条码解析、比价巡检全部走后端；<b>运费/价格防线/库存/状态机只在服务端执行</b>，页面的本地计算只剩展示用；<br>
+• 后端拒绝（409/400）时把服务端原话弹给用户（如「库存不足：「可口可乐」仅剩 1 罐」），购物车保留、不产生幽灵订单；<br>
+• <b>验证</b>：数据通道 <b>35 项</b>（假 fetch 两条路径）、<b>真 fetch 联调 17 项</b>（真起 Go 服务：下单扣库存 120→117、配送 2.5+3=5.5、非法流转被拒、取消回补）、<b>页面启动冒烟 21 项</b>（假 DOM 真跑两个页面的内联脚本，离线/在线各一遍）；<br>
+• 顺带修掉两个真 bug：<code>mall.html</code> 订单列表「全部」筛选默认值写错（'全部' ≠ 空串）导致订单页恒显示「暂无订单」；<code>admin.html</code> <b>原本没有任何启动渲染</b>，打开是空白页。<br>
+<b>剩余</b>：上线到生产服务器（属 M6，<b>待用户提供已备案域名</b>）。</div>
 
 <h2>八、M5 小程序化</h2>
 <table>
@@ -184,10 +190,10 @@
 <tr><td>M1.3 扫码体验</td><td class="ok">✔ 完成</td><td>barcode-demo 摄像头扫一扫 + 扫码枪 HID + 双库徽标（wx.scanCode 待 M5）</td></tr>
 <tr><td>M2 规则与数据层</td><td class="ok">✔ 完成</td><td>价格规则服务 pricing.js + 28 项测试；订单状态机/库存联动归入；双库 resolve 服务化（app.js）已有 7 组测试</td></tr>
 <tr><td>M3 牵牛花同步</td><td class="ok">✔ 工具就绪</td><td>sync-demo/sync-csv.js（对账引擎 + 62 项测试）· sync.html 对账工作台 · 牵牛花导出确认清单.html；<b>待真实导出文件核对列名</b></td></tr>
-<tr><td>M4 后端服务</td><td class="doing">● 进行中（主体已落地）</td><td><b>Go 1.24 + SQLite</b>（modernc 纯 Go 驱动）· 条码 resolve 服务端化（APPCODE 只存服务端）· 部署到生产服务器（IP 见本地 <code>.server_cred.md</code>）（Docker 蓝绿 A/B，参照 yiguan 范式）<br>已落地：数据层六表 + 事务下单 + 状态机 + 价格/配送规则 + 条码解析链（配额/熔断）+ HTTP API + 20 单测 + 冒烟 + 部署件（8093/8094）；剩余：前端接后端、生产域名上线</td></tr>
+<tr><td>M4 后端服务</td><td class="ok">✔ 完成（本地联调通过）</td><td><b>Go 1.24 + SQLite</b>（modernc 纯 Go 驱动）· 条码 resolve 服务端化（APPCODE 只存服务端）· 部署件就绪（Docker 蓝绿 api-a 8093 / api-b 8094，参照 yiguan 范式）<br>已落地：数据层六表 + 事务下单 + 状态机 + 价格/配送规则 + 条码解析链（配额/熔断）+ HTTP API + <b>20 个 Go 单测</b> + 端到端冒烟 + 部署件；<b>前端已接后端</b>（sdy-api.js 数据通道：35 项通道测试 + 17 项真后端联调 + 21 项页面启动冒烟，覆盖顾客端与管理端）<br>剩余：部署到生产服务器（属 M6，<b>待已备案域名</b>）</td></tr>
 </table>
 
-<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。<b>M1 页面展示层、M2 规则数据层、M3 同步工具均已落地并测试</b>（全套回归：对账 62 + 商城 44 + 价格规则 28 + 管理端 32 + 条码核心 7 组，全绿）；<b>M4 后端主体本轮落地</b>（Go 1.24 + SQLite：数据层/规则/条码解析链/HTTP API + <b>20 个 Go 单测</b> + 端到端冒烟 + Docker 蓝绿部署件，端口 8093/8094 避开既有服务）。<b>下一轮</b>：把前端页面接到后端 API（订单/库存/条码走后端，不再用 localStorage），并准备生产上线。<b>并行需要用户推进</b>：① 行动项 0 牵牛花导出字段确认（用清单页谈）；② <b>生产域名 + 备案</b>（小程序要求 HTTPS + 已备案域名，是上线的硬前提）。</div>
+<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。<b>M1 页面展示层、M2 规则数据层、M3 同步工具、M4 后端服务均已落地并测试</b>（全套回归：Go 20 单测 + 端到端冒烟；前端对账 62 + 商城 44 + 价格规则 28 + 管理端 32 + 数据通道 35 + 页面启动 21 + 条码核心 7 组，全绿；另有 17 项真后端联调）。<b>本轮（第 6 轮）</b>：新增 <code>mall-demo/sdy-api.js</code> 数据通道，顾客端与管理端全部改走 HTTP API——后端是真源、规则只在服务端执行、离线自动降级为本地演示；顺带修掉两个真 bug（订单「全部」筛选恒空、管理端打开空白页）。<b>下一轮</b>：M5 小程序化前置（需小程序账号 + 商户号）或先把后端部署到生产服务器验证蓝绿上线（需域名）。<b>并行需要用户推进</b>：① 行动项 0 牵牛花导出字段确认（用清单页谈）；② <b>生产域名 + 备案</b>（小程序要求 HTTPS + 已备案域名，是上线的硬前提）；③ 小程序账号 + 商户号（M5 前置，申请周期 1–2 周）。</div>
 
 </body>
 </html>

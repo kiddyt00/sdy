@@ -2,14 +2,14 @@
 
 自营微信小程序商城项目：商品、价格、库存、订单、配送、顾客全部自管理，完全独立于牵牛花中台，仅保留**月度 CSV 库存同步**。
 
-> 当前阶段：**M1 页面展示层 + M2 规则数据层 + M3 同步工具**已完成并测试；**M4 后端服务（Go）主体已落地**（数据层/规则/条码解析链/HTTP API + 20 个单测 + 端到端冒烟 + Docker 蓝绿部署件），剩余前端接后端与生产上线。
+> 当前阶段：**M1 页面展示层 + M2 规则数据层 + M3 同步工具 + M4 后端服务**已完成并测试。M4 = Go 后端（数据层/规则/条码解析链/HTTP API + 20 个单测 + 端到端冒烟 + Docker 蓝绿部署件）**＋ 前端已接后端**（`mall-demo/sdy-api.js` 数据通道：35 项通道测试 + 17 项真后端联调 + 21 项页面启动冒烟）。剩余：部署到生产服务器（属 M6，待已备案域名）。
 
 ## 文档
 
 | 文件 | 说明 |
 | --- | --- |
 | `独立小程序商城可行性分析与架构方案.html` | 总体架构方案（13 章，含双库设计 §2.7） |
-| `细节讨论记录.html` | 逐轮讨论记录与决策汇总（D1–D8） |
+| `细节讨论记录.html` | 逐轮讨论记录与决策汇总（D1–D12） |
 | `开发计划.html` | M0–M6 里程碑路线图（页面优先策略） |
 | `README.md` | 本文件 |
 
@@ -20,7 +20,7 @@
 ```
 sdy/
 ├── barcode-demo/          # 条码双库 demo（扫码台[扫码枪HID+摄像头扫一扫]/商品库/条码库/扫码日志/设置）
-├── mall-demo/             # 商城 demo（顾客端 5 页面 + 管理端 admin.html + 价格规则 tab）
+├── mall-demo/             # 商城 demo（顾客端 5 页面 + 管理端 admin.html + sdy-api.js 数据通道 + 价格规则 tab）
 ├── sync-demo/             # 牵牛花 CSV 对账（sync-csv.js 引擎 + sync.html 工作台 + 导出确认清单）
 ├── server/                # Go 后端（cmd/server + internal/store|pricing|barcode + Dockerfile + smoke.sh）
 ├── deploy/                # 部署件（deploy.sh / rolling-update.sh / 主机 Nginx 模板）
@@ -47,12 +47,20 @@ sdy/
 
 ### mall-demo / sync-demo（商城、管理端、对账工作台）
 ```bash
+# 方式 A：纯前端本地演示（无后端）
 cd mall-demo && python3 -m http.server 8910     # 商城 http://127.0.0.1:8910/mall.html
                                                  # 管理端 /admin.html；对账台见 sync-demo/sync.html
+
+# 方式 B：接后端（推荐，规则与账目由服务端执行）
+cd server && STATIC_DIR=.. go run ./cmd/server   # 打开 http://127.0.0.1:8093/mall-demo/mall.html
+
+# 测试
 node mall-demo/test-mall.js && node mall-demo/test-pricing.js && node mall-demo/test-admin.js
+node mall-demo/test-sdy-api.js && node mall-demo/test-page-boot.js   # 数据通道 + 页面启动冒烟（假 DOM）
+node mall-demo/test-integration.js               # 真 fetch → 真后端（需先起后端，未探测到则自动跳过）
 node barcode-demo/test-core.js && node sync-demo/test-sync.js
 ```
-三个 demo 共用同源 localStorage 商品库 `bd_products`，需用同一个 http 端口打开才能互相看到数据。
+页面打开时顶部胶囊显示 **🟢 后端已连接** / **🟡 本地演示**：探不到后端自动降级，同一套页面代码。三个 demo 共用同源 localStorage 商品库 `bd_products`，需用同一个 http 端口打开才能互相看到数据。
 
 ### server（Go 后端）
 ```bash
@@ -72,7 +80,7 @@ go run ./cmd/server      # 默认 http://127.0.0.1:8093；STATIC_DIR=.. 可同�
 
 ## 开发计划
 
-见 [开发计划.html](开发计划.html)：M0 基建、**M1 页面展示层（顾客端商城 → 管理端 → 扫码体验）、M2 规则数据层（价格规则服务）、M3 同步工具（对账引擎 + 工作台）均已完成并测试**；**M4 后端服务进行中**（**Go 1.24 + SQLite**，`modernc.org/sqlite` 纯 Go 驱动，`CGO_ENABLED=0` 静态单文件）：数据层六表（product/barcode_lib/customer/orders/order_item/sync_batch）、价格与配送规则、条码解析链（本地优先 + 配额熔断）、HTTP API（商品/订单/条码/比价）、Docker 蓝绿部署件均已就绪；剩余「前端接后端 + 生产域名上线」→ M5 小程序化 → M6 上线验证。依赖用户事项（牵牛花导出字段确认、**生产域名 + ICP 备案**、小程序账号/商户号、配送 API 权限）见计划「依赖用户的事项」一节。
+见 [开发计划.html](开发计划.html)：M0 基建、**M1 页面展示层（顾客端商城 → 管理端 → 扫码体验）、M2 规则数据层（价格规则服务）、M3 同步工具（对账引擎 + 工作台）、M4 后端服务均已完成并测试**；**M4 = Go 1.24 + SQLite**（`modernc.org/sqlite` 纯 Go 驱动，`CGO_ENABLED=0` 静态单文件）：数据层六表（product/barcode_lib/customer/orders/order_item/sync_batch）、价格与配送规则、条码解析链（本地优先 + 配额熔断）、HTTP API（商品/订单/条码/比价）、Docker 蓝绿部署件，**且前端页面已接入后端**（`mall-demo/sdy-api.js`：后端为真源、规则只在服务端执行、离线自动降级）。剩余「部署到生产服务器」属 M6，需**已备案域名** → M5 小程序化 → M6 上线验证。依赖用户事项（牵牛花导出字段确认、**生产域名 + ICP 备案**、小程序账号/商户号、配送 API 权限）见计划「依赖用户的事项」一节。
 
 ## 部署（M4，已勘察）
 

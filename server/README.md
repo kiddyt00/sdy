@@ -2,6 +2,8 @@
 
 独立小程序商城的服务端：纯标准库 `net/http` + `database/sql`(`modernc.org/sqlite`，纯 Go 无 CGO，静态单文件）。
 
+前端页面（`mall-demo/mall.html` 顾客端、`mall-demo/admin.html` 管理端）通过 `mall-demo/sdy-api.js` 调用本服务；**服务端是唯一真源**，运费/价格防线/库存/状态机只在这里执行，页面在探不到本服务时自动降级为本地演示模式。
+
 ## 运行
 
 ```bash

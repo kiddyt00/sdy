@@ -57,7 +57,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           withCORS(withLogging(routes(st, resolver, staticDir))),
+		Handler:           withCORS(withLogging(routes(st, resolver, staticDir, appcode != ""))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -82,13 +82,14 @@ func main() {
 
 /* ------------------------------ 路由 ------------------------------ */
 
-func routes(st *store.Store, res *barcode.Resolver, staticDir string) http.Handler {
+func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabled bool) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"ok": true, "time": time.Now().Format(time.RFC3339),
 			"circuitOpen": res.CircuitOpen(), "cloudFails": res.Fails(),
+			"cloudConfigured": cloudEnabled,
 		})
 	})
 
