@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // 纯 Go 驱动，CGO_ENABLED=0 可静态编译
@@ -202,8 +203,34 @@ func nowStr() string { return time.Now().Format(time.RFC3339) }
 
 // UpsertProduct 新增或覆盖商品档案。
 func (s *Store) UpsertProduct(p Product) (Product, error) {
+	p.Code = strings.TrimSpace(p.Code)
+	p.Name = strings.TrimSpace(p.Name)
 	if p.Code == "" {
 		return Product{}, fmt.Errorf("%w: 条码不能为空", ErrBadInput)
+	}
+	if p.Name == "" {
+		return Product{}, fmt.Errorf("%w: 商品名称不能为空", ErrBadInput)
+	}
+	if p.CostPrice < 0 || p.SalePrice < 0 || p.RefPrice < 0 {
+		return Product{}, fmt.Errorf("%w: 价格不能为负数", ErrBadInput)
+	}
+	if math.IsNaN(p.CostPrice) || math.IsNaN(p.SalePrice) || math.IsNaN(p.RefPrice) || math.IsNaN(p.Stock) {
+		return Product{}, fmt.Errorf("%w: 价格/库存必须是数字", ErrBadInput)
+	}
+	if p.Stock < 0 {
+		return Product{}, fmt.Errorf("%w: 库存不能为负", ErrBadInput)
+	}
+	// 归一化：单位/分类留空时给默认值，避免页面出现空白列
+	if p.Unit == "" {
+		p.Unit = "件"
+	}
+	if p.Category == "" {
+		p.Category = "未分类"
+	}
+	// 价格防线（M2 规则，服务端为准）：零售价不得超过牵牛花参考价的 MaxRetailRatio；
+	// 批发商品按配置豁免。前端改价同样会被这里拒绝，页面把错误原文展示给店主。
+	if r := pricing.CheckRetailPrice(p.SalePrice, p.RefPrice, p.IsWholesale, s.cfg); !r.OK {
+		return Product{}, fmt.Errorf("%w: %s", ErrBadInput, r.Msg)
 	}
 	if p.CreatedAt == "" {
 		p.CreatedAt = nowStr()
@@ -288,6 +315,33 @@ func (s *Store) SetStock(code string, stock float64) (Product, error) {
 		return Product{}, fmt.Errorf("%w: 商品 %s", ErrNotFound, code)
 	}
 	return s.GetProduct(code)
+}
+
+// DeleteProduct 删除商品档案。
+// 约束：库存必须已盘点为 0（否则库存无处交代），且不能有进行中的订单引用该商品
+// （已完成/已取消订单只留历史行，不阻塞删除）。条码字典层保留不动（D6 永久沉淀）。
+func (s *Store) DeleteProduct(code string) error {
+	p, err := s.GetProduct(code)
+	if err != nil {
+		return err
+	}
+	if p.Stock != 0 {
+		return fmt.Errorf("%w: 库存为 %.4g %s，请先盘点为 0 再删除", ErrConflict, p.Stock, p.Unit)
+	}
+	var refs int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM order_item oi
+		JOIN orders o ON o.id = oi.order_id
+		WHERE oi.code = ? AND o.status NOT IN ('done','cancelled')`, code).Scan(&refs)
+	if err != nil {
+		return fmt.Errorf("查询订单引用失败: %w", err)
+	}
+	if refs > 0 {
+		return fmt.Errorf("%w: 有 %d 个进行中的订单包含该商品，不能删除", ErrConflict, refs)
+	}
+	if _, err := s.db.Exec(`DELETE FROM product WHERE code = ?`, code); err != nil {
+		return fmt.Errorf("删除商品失败: %w", err)
+	}
+	return nil
 }
 
 func scanProduct(sc interface{ Scan(...any) error }) (Product, error) {

@@ -267,6 +267,20 @@
   </ul>
 </div>
 
+<div class="callout green">
+  <strong>第 11 轮（2026-10-10）任务池第 1 项：商品建档 / 编辑表单</strong>
+  <p>本轮把「商品只能来自种子数据或扫码台」这个硬缺口补上：管理端第一次拥有了完整的商品档案页面与写接口。</p>
+  <ul>
+    <li><strong>管理端「商品档案」页</strong>：搜索（名称/条码/品牌）+ 分类 chips + 「只看低库存」+ 4 张统计卡（档案总数 / 低库存 / 缺参考价 / 待同步）+ 表格（含价格防线徽标与行内编辑、删除）。建档 / 编辑 / 删除共用一个弹窗；<b>编辑态隐藏库存输入、条码锁定</b>。</li>
+    <li><strong>校验前后端同口径</strong>：条码 1–32 位 <code>[0-9A-Za-z._-]</code>、名称必填且 ≤40 字、售价 &gt; 0、进价/参考价非负、库存非负整数，缺省单位「件」、分类「未分类」；<b>比价防线在归一化阶段就拦</b>（复用 <code>Pricing.checkRetailPrice</code>，与 Go 版同阈值），错误文案与后端一致。</li>
+    <li><strong>三条不变量写进 <code>web/mall-admin.js</code> 头注释</strong>：① 一切库存变更必须留流水；② <b>商品编辑表单不改库存</b>；③ 删除要求库存为 0 且无进行中订单，与后端同规则。</li>
+    <li><strong>后端两处真实修正</strong>：<code>POST /api/products</code> 的 <code>stock</code> 改为指针语义（<b>不传 = 保留原库存</b>，修掉「编辑商品时 JSON 零值把库存清零」的隐患）；新增 <code>DELETE /api/products/{code}</code>（库存非 0 → 409「请先盘点为 0」；有进行中（非 done/cancelled）订单引用 → 409；<b>删档保留 <code>barcode_lib</code></b>，D6 永久沉淀，以后扫码仍能认货）。</li>
+    <li><strong>三个踩坑</strong>：① 测试里先清零库存再下单 → 报「库存不足：农夫 仅剩 0」，必须<b>先下单再清零</b>才能验证「库存已 0 但有进行中订单仍拦」；② <code>strings.Builder</code> 没有 <code>ReadFrom</code> → 改 <code>io.ReadAll</code>；③ <code>Object.assign({stock:0}, product)</code> 被 <code>product.stock</code> 覆盖，初始库存入账两次（流水 <code>stock_in 12 before=12 after=24</code>）→ 把 <code>stock:0</code> 放到最后一个参数并加注释。</li>
+    <li><strong>验证</strong>：Go 单测 <b>21 → 27</b>（新增 HTTP 层 3 个：商品全流程 / 库存语义 / CORS 预检）；Web 后台 32 → <b>75</b>、通道 35 → <b>41</b>、页面冒烟 21 → <b>51</b>；真浏览器 CDP 打开商品档案页与弹窗、真建档一次，<b>无异常、无 console 错误</b>；真后端 curl 走完「建档 → 编辑保库存 → 超价 400 → 库存非 0 删除 409 → 清零后删除 ok → 重复删除 404」。</li>
+    <li><strong>下一轮</strong>：任务池第 2 项「订单打印 / 小票」——家庭店高频刚需，纯前端打印样式即可交付，不依赖外部审批。</li>
+  </ul>
+</div>
+
 <h2>三、已定决策汇总</h2>
 <table>
   <tr><th>决策</th><th>来源</th><th>对主方案的影响</th></tr>
@@ -280,6 +294,7 @@
   <tr><td><b>扫码台也接后端（D13）</b>：条码 demo 与 Go 后端之间只留一条通道 <code>barcode-demo/bd-api.js</code>（BdApi）；<b>解析链（档案 → 字典 → 云端）、查无 TTL、熔断、建档全部在服务端执行</b>，页面只做展示与降级；<b>APPCODE 从前端（localStorage/设置页）彻底移除，只存在于服务端环境变量 <code>BARCODE_APPCODE</code></b>；新增只读接口 <code>GET /api/barcode/lib</code> 把字典层开放给扫码台（解决「本地条码库里看不到数据」）；服务端查无时返回 <code>expiresAt</code>，页面据此显示剩余天数；在线时<b>禁用演示用「删除商品」</b>（删档会破坏与牵牛花对账口径），提示到商品库改数/下架；后端不在时自动退回纯本地演示（Mock 云端），配额/熔断统一由服务端负责（<code>/healthz</code> 暴露 <code>cloudFails</code>/<code>circuitOpen</code>）</td><td>第 7 轮（M4 收尾第二步：扫码台接后端，APPCODE 收进服务端）</td><td>生产环境前端不再持有任何密钥；<code>proxy.py</code> 与 appcode.txt 仅保留为「无后端时的本地调试手段」；通道测试 55 项 + 页面冒烟 28 项 + 真后端联调 34 项，Go 单测 21 个</td></tr>
   <tr><td><b>Web 端优先 + 页面现代化（D14）</b>：按用户 2026-10-10 指令，<b>先把商城做成 Web 端、先实现功能，小程序化暂缓</b>（骨架归档 <code>archive/miniprogram/</code> 可续）；顾客端与管理端共用设计系统 <code>web/assets/theme.css</code>；<b>新增/改页面必须在真实浏览器里验收</b>——classic script 共享全局词法环境，顶层 <code>const/let</code> 重名会让整个脚本静默失效（<code>mall-admin.js</code> 与 <code>mall.js</code> 抢 <code>Mall</code> → 浏览器里 <code>Admin</code> 永久 undefined）；UI 验收以 CDP 数值证据为准（布局盒模型/真实列数/横向溢出/加载期异常）</td><td>第 9 轮（用户三条指令：清理仓库 / 页面现代化 / 商城先做 Web 端）</td><td>目录 <code>mall-demo/</code> → <code>web/</code>、<code>mall.html</code> → <code>index.html</code>；Rule 13 写入 <code>.agent_rules.md</code>（浏览器验收 + 禁止重名声明）；fake-DOM 测试之外必须补真实浏览器一层</td></tr>
   <tr><td><b>文档角色分工（D15）：一事实一 owner</b>——① <b>指令面</b>：只有 <code>.agent_rules.md</code> 对 agent 有约束力；② <b>地图</b>：根 <code>README.md</code>（总览 / 快速上手）+ <code>开发计划.html</code>（路线图与当前重心）+ 模块 README（<code>web/</code>、<code>server/</code>、<code>barcode-demo/</code>、<code>sync-demo/</code> 各管一域）；③ <b>状态</b>：里程碑与阻塞只在根 README 维护，其它文档只引用不复述；④ <b>历史</b>：<code>细节讨论记录.html</code>（决策台账，只追加校正）+ <code>独立小程序商城可行性分析与架构方案.html</code>（立项论证，变更以「现状校正（日期）」追加）</td><td>第 10 轮（用户指令：清理之后把文档也重新写一下）</td><td>文档从「按轮次堆补丁」转为「一个事实一个 owner」；规则 14（禁全局 sed、方向变化整篇重写）与规则 15（文档分工）写入 <code>.agent_rules.md</code>；三份 HTML 仍走 pull → 改 → convert → push → 设权限 流水线</td></tr>
+  <tr><td><b>商品档案写接口语义（D16）</b>：建档与编辑共用 <code>POST /api/products</code>（覆盖式 upsert，按条码为主键），<b><code>stock</code> 字段采用指针语义——不传就是「不改库存」</b>，只有显式传值才写库；前端编辑表单根本不渲染库存输入。<b>删除</b>走 <code>DELETE /api/products/{code}</code>，两道闸：库存必须为 0、没有进行中（非 <code>done</code>/<code>cancelled</code>）订单引用；<b>删档不删条码字典层（D6 沉淀）</b>，所以删除只影响经营档案，不影响扫码识别能力。建档/编辑的服务端校验（条码与名称必填、价格与库存非负、比价防线超价 400）与前端归一化校验同口径</td><td>第 11 轮（做任务池第 1 项「商品建档 / 编辑表单」时定下）</td><td>避免「编辑商品把库存清零」这类静默数据事故；库存只有一个入口（<code>/api/products/stock</code> 与库存页三操作）与一条流水，与 D8「扫码只读、库存手动调整」一致</td></tr>
   <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
 </table>
 

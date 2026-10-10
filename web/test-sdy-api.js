@@ -179,6 +179,38 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     ok(!Mall.getOrders().some(o => o.id && o.id.indexOf('M1') === 0 && o.total === 5 && o.customer.name === '赵六'), '没有生成幽灵订单');
   }
 
+  /* ============ ⑤ 删除商品：离线改镜像 / 在线打后端 ============ */
+  section('⑤ 删除商品档案');
+  fresh();
+  {
+    const r = await SdyApi.deleteProduct('6902083881234');
+    ok(r.ok === true && !Mall.getProduct('6902083881234'), '离线：删本地镜像并返回 {ok:true}');
+    let msg = '';
+    try { await SdyApi.deleteProduct('9999999999999'); } catch (e) { msg = e.message; }
+    ok(msg.indexOf('商品不存在') >= 0, '离线：镜像里没有该商品 → 抛错（' + msg + '）');
+  }
+  fresh();
+  {
+    const f = mkFetch(serverRoutes([
+      { method: 'DELETE', re: /^\/api\/products\//, body: { ok: true, code: '6901234567892' } }
+    ]));
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
+    const r = await SdyApi.deleteProduct('6901234567892');
+    const call = f.calls.find(c => c.method === 'DELETE');
+    ok(call && call.path === '/api/products/6901234567892', '在线：DELETE /api/products/{code}');
+    ok(r && r.ok === true && r.code === '6901234567892', '在线：透出后端返回的 {ok:true, code}');
+  }
+  {
+    const f = mkFetch(serverRoutes([
+      { method: 'DELETE', re: /^\/api\/products\//, status: 409, body: { error: '库存为 12 罐，请先盘点为 0 再删除' } }
+    ]));
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
+    let msg = '';
+    try { await SdyApi.deleteProduct('6901234567892'); } catch (e) { msg = e.message; }
+    ok(msg.indexOf('盘点为 0') >= 0, '在线：后端 409 原文透出（' + msg + '）');
+    ok(!!Mall.getProduct('6901234567892'), '在线：删除失败后本地镜像仍在（不做幽灵删除）');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

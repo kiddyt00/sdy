@@ -9,12 +9,12 @@
 | 文件 | 职责 |
 | --- | --- |
 | `web/index.html` | 顾客端页面（471 行）：首页/分类/搜索/扫码找货/商品详情/购物车/结算/我的订单；UI 层只调用 `Mall` 与 `SdyApi`，不自己算价 |
-| `web/admin.html` | 管理端页面（555 行）：经营总览 KPI / 订单处理 / 库存与流水 / 价格防护 / 顾客档案 / 系统与工具 |
+| `web/admin.html` | 管理端页面（759 行）：经营总览 KPI / 订单处理 / 库存与流水 / **商品档案（建档·编辑·删除）** / 价格防护 / 顾客档案 / 系统与工具 |
 | `web/assets/theme.css` | 共享设计系统（416 行）：设计令牌 + 组件类 + 三档响应式（断点 1080 / 900 / 640px） |
 | `web/mall.js` | 领域逻辑（255 行，全局 `Mall`）：商品、购物车、订单、配送规则、localStorage 读写 |
-| `web/mall-admin.js` | 后台逻辑（157 行，全局 `Admin`）：库存流水/入库/盘点、配送员派单、顾客档案聚合 |
+| `web/mall-admin.js` | 后台逻辑（341 行，全局 `Admin`）：库存流水/入库/盘点、**商品档案 CRUD 与校验**、配送员派单、顾客档案聚合 |
 | `web/pricing.js` | 价格与配送费规则（65 行，全局 `Pricing`）：价格防护、运费计算 |
-| `web/sdy-api.js` | 后端连通层（316 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示 |
+| `web/sdy-api.js` | 后端连通层（334 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示 |
 | `web/test-*.js` | 6 套测试（见下），纯 Node 运行，无需浏览器 |
 
 页面之间只靠相对路径互链（`index.html` ↔ `admin.html`，管理端系统页再链到 `../barcode-demo/`、`../sync-demo/`）。
@@ -74,9 +74,9 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 cd /home/kiddyt00/GolandProjects/sdy
 node web/test-mall.js          # 44 项
 node web/test-pricing.js       # 28 项
-node web/test-admin.js         # 32 项
-node web/test-sdy-api.js       # 35 项
-node web/test-page-boot.js     # 21 项
+node web/test-admin.js         # 75 项
+node web/test-sdy-api.js       # 41 项
+node web/test-page-boot.js     # 51 项
 node web/test-integration.js   # 17 项（需后端在线）
 ```
 
@@ -84,9 +84,9 @@ node web/test-integration.js   # 17 项（需后端在线）
 | --- | --- | --- | --- |
 | `web/test-mall.js` | 通过 44 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机 | 否 |
 | `web/test-pricing.js` | 通过 28 项 / 失败 0 项 | 配送费规则、价格防线、批发与无参考价豁免 | 否 |
-| `web/test-admin.js` | 通过 32 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额） | 否 |
-| `web/test-sdy-api.js` | 通过 35 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流 | 否（注入假 fetch） |
-| `web/test-page-boot.js` | 通过 21 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突 | 否 |
+| `web/test-admin.js` | 通过 75 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额）、**商品档案归一化/校验/价格防线/三档删除约束** | 否 |
+| `web/test-sdy-api.js` | 通过 41 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品 | 否（注入假 fetch） |
+| `web/test-page-boot.js` | 通过 51 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体** | 否 |
 | `web/test-integration.js` | 17 项（需后端在线；探测不到会自动跳过并 `exit 0`） | 真 fetch → 真后端：下单扣库存、运费、状态流转、非法流转 409、取消回补、比价巡检 | **是** |
 
 联调测试的地址取 `SDY_API_BASE`（不设则默认 `http://127.0.0.1:8093`）：
@@ -117,6 +117,15 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 - **下单与库存**：下单在一个事务里「校验 → 扣库存 → 写订单」，库存不足整单失败（不部分扣减）；取消订单**逐行回补库存**。本地模式同样是「先全量校验再扣减」。
 - **D8 扫码只读**：顾客端「扫码找货」只做识别（先查本地商品档案，未建档再问后端解析链），**绝不改库存、不自动填价格**。
 
+**商品档案（建档 / 编辑 / 删除）**
+
+- **建档**：条码/货号必填（1–32 位数字、字母或 `._-`），商品名称必填且 ≤40 字；售价必须 > 0，进价/参考价非负，库存必须是非负整数；单位缺省「件」、分类缺省「未分类」。
+- **编辑不改库存**：编辑弹窗根本不显示库存输入；在线模式下 `POST /api/products` **不带 `stock` 字段**，后端（`server/cmd/server/main.go`）用指针区分「没传」与「传 0」，没传就保留原库存。库存只能在「库存与流水」页进出。
+- **初始库存**：新建时填了初始库存，本地模式会走一条 `stock_in` 流水（原因「建档初始库存」）并另记一条 `product_new` 档案流水；在线模式由后端写入。
+- **删除两道闸**（与后端 `DELETE /api/products/{code}` 同规则）：① 库存必须为 0（提示「请先把库存盘点为 0 再删除」）；② 没有进行中（非 `done`/`cancelled`）的订单引用该商品。删档后 **`barcode_lib` 记录保留**（D6 永久沉淀），以后扫码仍能认出货名。
+- **价格防线前置**：表单归一化时就跑 `Pricing.checkRetailPrice`（与 Go `internal/pricing` 同阈值），超价比价防线直接拦下并给出后端同款文案。
+- **待同步标记**：任何档案变更都会把 `syncStatus` 置为「待同步」，提醒在下一次牵牛花月度对账时核对。
+
 **约定与坑**
 
 - **localStorage 键**：`bd_products`（商品库，与扫码台、对账工具**同源共用**）、`mall_cart`（购物车）、`mall_orders`（订单）、`mall_customer`（上次填写的收货信息）、`mall_couriers`（配送员名单）、`mall_stockLog`（库存流水，上限 500 条）、`mall_customers`（顾客备注）、`sdy_api_base`（后端地址）。
@@ -130,7 +139,7 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 
 - [`../README.md`](../README.md) — 仓库总览、里程碑状态、测试矩阵
 - [`../开发计划.html`](../开发计划.html) — 路线图与当前重心
-- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账 D1–D15（含库存页形态、扫码只读等）
+- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账 D1–D16（含库存页形态、扫码只读等）
 - [`../独立小程序商城可行性分析与架构方案.html`](../独立小程序商城可行性分析与架构方案.html) — 架构与实现现状
 - [`../server/README.md`](../server/README.md) — 后端接口、环境变量、测试
 - [`../barcode-demo/README.md`](../barcode-demo/README.md) — 扫码台与双库解析链

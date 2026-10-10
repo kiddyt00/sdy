@@ -33,6 +33,7 @@
       <div class="nv on" id="navDash" onclick="switchTab('dash')"><i>📊</i>经营总览</div>
       <div class="nv" id="navOrders" onclick="switchTab('orders')"><i>🧾</i>订单处理<span class="badge st-warn" id="navOrderBadge" style="margin-left:auto"></span></div>
       <div class="nv" id="navStock" onclick="switchTab('stock')"><i>📦</i>库存与流水</div>
+      <div class="nv" id="navProducts" onclick="switchTab('products')"><i>🏷️</i>商品档案</div>
       <div class="nv" id="navPricing" onclick="switchTab('pricing')"><i>🛡️</i>价格防护</div>
       <div class="nv" id="navCust" onclick="switchTab('cust')"><i>👥</i>顾客档案</div>
       <div class="nv" id="navSys" onclick="switchTab('sys')"><i>⚙️</i>系统与工具</div>
@@ -136,6 +137,32 @@
       </div>
     </section>
 
+    <!-- ---------- 商品档案 ---------- -->
+    <section class="page hide" id="viewProducts">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>商品档案<span class="sub" id="prodCount"></span></h3>
+          <div class="acts">
+            <div class="search" style="width:220px">
+              <span>🔎</span>
+              <input id="prodQ" placeholder="搜名称 / 条码 / 品牌" oninput="renderProducts()">
+            </div>
+            <button class="btn btn-xs" id="prodLowBtn" onclick="toggleLow()">只看低库存</button>
+            <button class="btn btn-primary btn-xs" onclick="openProductDlg('')">＋ 新建商品</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="chips" id="prodCats"></div>
+          <div class="kpis" id="prodStats" style="margin:14px 0"></div>
+          <div class="table-wrap" id="prodTable"></div>
+          <p class="hint mt">
+            建档只登记与改价，<b>不动库存</b>；库存请到「库存与流水」入库 / 改数 / 盘点。
+            删除要求库存为 0 且没有进行中的订单；扫码台只沉淀条码库，不改档案（D6 / D8）。
+          </p>
+        </div>
+      </div>
+    </section>
+
     <!-- ---------- 价格 ---------- -->
     <section class="page hide" id="viewPricing">
       <div class="panel">
@@ -192,6 +219,44 @@
   </div>
 </div>
 
+<!-- ---------- 商品建档 / 编辑弹窗 ---------- -->
+<div class="modal" id="dlgProduct">
+  <div class="modal-head"><h3 id="dlgTitle" style="font-size:16px">新建商品档案</h3><button class="icon-btn" onclick="closeProductDlg()">✕</button></div>
+  <div class="modal-body">
+    <div class="row">
+      <div class="field grow"><label>条码 / 货号（建档后不可改）</label><input class="input" id="pfCode" placeholder="扫码或手输，如 6901234567892"></div>
+      <div class="field grow"><label>商品名称</label><input class="input" id="pfName" placeholder="如 农夫山泉 550ml"></div>
+    </div>
+    <div class="row mt">
+      <div class="field grow"><label>品牌</label><input class="input" id="pfBrand" placeholder="选填"></div>
+      <div class="field grow"><label>规格</label><input class="input" id="pfSpec" placeholder="如 550ml / 330ml 罐装"></div>
+    </div>
+    <div class="row mt">
+      <div class="field grow"><label>分类</label><input class="input" id="pfCat" list="catList" placeholder="饮料 / 酒水 / 纸品…"><datalist id="catList"></datalist></div>
+      <div class="field grow"><label>单位</label><input class="input" id="pfUnit" placeholder="瓶 / 罐 / 件 / 包"></div>
+    </div>
+    <div class="row mt">
+      <div class="field grow"><label>进价（选填）</label><input class="input" id="pfCost" placeholder="0.00" oninput="checkProductForm()"></div>
+      <div class="field grow"><label>售价</label><input class="input" id="pfSale" placeholder="0.00" oninput="checkProductForm()"></div>
+      <div class="field grow"><label>牵牛花参考价（选填）</label><input class="input" id="pfRef" placeholder="填了才有比价防线" oninput="checkProductForm()"></div>
+    </div>
+    <div class="row mt" id="pfStockRow">
+      <div class="field grow"><label>初始库存（建档后请到库存页调整）</label><input class="input" id="pfStock" placeholder="不填按 0，记一条入库流水"></div>
+      <div class="field grow"><label>批发商品</label>
+        <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="pfWhole" onchange="checkProductForm()"> 批发价，跳过比价防线</label>
+      </div>
+    </div>
+    <div class="mt" id="pfMsg"></div>
+    <p class="muted mt" style="font-size:12px;line-height:1.8">
+      价格防线：零售价 ≤ 参考价 −5%，超了会被平台比价处罚；建档只登记商品，<b>不用于调整库存</b>（D8 手动）。
+    </p>
+  </div>
+  <div class="modal-foot">
+    <button class="btn" onclick="closeProductDlg()">取消</button>
+    <button class="btn btn-primary" onclick="submitProduct()" id="pfSubmit">保存档案</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="mall.js"></script>
@@ -215,12 +280,12 @@ function toast(msg, ms) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.className = 'toast'; }, ms || 2600);
 }
-function closeAll() { $('mask').className = 'mask'; $('sidebar').className = 'sidebar'; }
+function closeAll() { $('mask').className = 'mask'; $('sidebar').className = 'sidebar'; closeProductDlg(); }
 function toggleSide() { const s = $('sidebar'); s.className = s.className.indexOf('open') >= 0 ? 'sidebar' : 'sidebar open'; }
 function online() { return SdyApi.on(); }
 
 /* ---------------- 视图切换 ---------------- */
-const TABS = { dash: ['经营总览', 'navDash', 'viewDash'], orders: ['订单处理', 'navOrders', 'viewOrders'], stock: ['库存与流水', 'navStock', 'viewStock'], pricing: ['价格防护', 'navPricing', 'viewPricing'], cust: ['顾客档案', 'navCust', 'viewCust'], sys: ['系统与工具', 'navSys', 'viewSys'] };
+const TABS = { dash: ['经营总览', 'navDash', 'viewDash'], orders: ['订单处理', 'navOrders', 'viewOrders'], stock: ['库存与流水', 'navStock', 'viewStock'], products: ['商品档案', 'navProducts', 'viewProducts'], pricing: ['价格防护', 'navPricing', 'viewPricing'], cust: ['顾客档案', 'navCust', 'viewCust'], sys: ['系统与工具', 'navSys', 'viewSys'] };
 function switchTab(t) {
   tab = t;
   Object.keys(TABS).forEach(k => {
@@ -418,7 +483,7 @@ function renderPricing() {
     const chk = Pricing.checkRetailPrice(p);
     const cap = p.refPrice ? Math.round(p.refPrice * Pricing.DEFAULT_CONFIG.maxRetailRatio * 100) / 100 : null;
     return '<tr' + (chk.ok ? '' : ' style="background:#fef2f2"') + '>' +
-      '<td><b>' + esc(p.name) + '</b><div class="muted" style="font-size:11.5px">' + esc(p.code) + (p.wholesale ? ' · 批发' : '') + '</div></td>' +
+      '<td><b>' + esc(p.name) + '</b><div class="muted" style="font-size:11.5px">' + esc(p.code) + ((p.isWholesale || p.wholesale) ? ' · 批发' : '') + '</div></td>' +
       '<td class="num">' + yuan(p.salePrice) + '</td>' +
       '<td class="num">' + (p.refPrice ? yuan(p.refPrice) : '—') + '</td>' +
       '<td class="num">' + (cap == null ? '—' : yuan(cap)) + '</td>' +
@@ -457,6 +522,144 @@ async function saveRefs() {
   renderPricing(); renderDash();
   toast('已保存 ' + n + ' 个参考价' + (online() ? '（已写入后端，防线由服务端执行）' : '（本地演示）') +
     '，超价 ' + over + ' 个商品' + (over ? '！' : ' ✔') + (fail ? '（' + fail + ' 个失败）' : ''), 4000);
+}
+
+/* ---------------- 商品档案（建档 / 编辑 / 删除 · 任务池①） ---------------- */
+let prodCat = '';          // 当前分类筛选，'' = 全部
+let prodLow = false;       // 只看低库存
+let editCode = '';         // 正在编辑的条码，'' = 新建
+
+function renderProducts() {
+  const kw = (($('prodQ') && $('prodQ').value) || '').trim();
+  const list = Admin.listProducts({ keyword: kw, category: prodCat, lowOnly: prodLow });
+  const st = Admin.productStats();
+  $('prodCount').textContent = '共 ' + st.total + ' 个商品';
+  $('prodStats').innerHTML = [
+    ['档案总数', st.total, '含未同步商品'],
+    ['低库存', st.low, '≤ ' + Admin.LOW_STOCK + ' ' + Admin.DEFAULT_UNIT],
+    ['缺参考价', st.noRef, '没有比价防线'],
+    ['待同步', st.pending, '下次对账要核']
+  ].map(x => '<div class="kpi"><div class="k-label">' + x[0] + '</div><div class="k-value">' + x[1] + '</div><div class="k-foot">' + x[2] + '</div></div>').join('');
+
+  const cats = [''].concat(Admin.categories());
+  $('prodCats').innerHTML = cats.map(c =>
+    '<div class="chip' + (prodCat === c ? ' on' : '') + '" onclick="pickCat(\'' + esc(c) + '\')">' + (c || '全部分类') + '</div>').join('');
+  $('prodLowBtn').className = 'btn btn-xs' + (prodLow ? ' btn-primary' : '');
+
+  $('prodTable').innerHTML = list.length
+    ? '<div class="table-wrap"><table class="table"><thead><tr><th>商品</th><th>分类 / 单位</th><th class="num">进价</th><th class="num">售价</th><th class="num">参考价</th><th class="num">库存</th><th>价格防线</th><th>操作</th></tr></thead><tbody>' +
+      list.map(p => {
+        const chk = Pricing.checkRetailPrice(p);
+        const guard = !chk.ok
+          ? '<span class="badge st-cancelled">超价 ' + Math.abs(chk.diffPct || 0) + '%</span>'
+          : (p.refPrice ? '<span class="badge st-done">合规</span>' : '<span class="badge st-pending">缺参考价</span>');
+        return '<tr' + (p.stock <= Admin.LOW_STOCK ? ' style="background:#fffbeb"' : '') + '>' +
+          '<td><b>' + esc(p.name) + '</b>' + ((p.isWholesale || p.wholesale) ? ' <span class="badge st-info">批发</span>' : '') +
+            '<div class="muted" style="font-size:11.5px">' + esc(p.code) + (p.brand ? ' · ' + esc(p.brand) : '') + (p.spec ? ' · ' + esc(p.spec) : '') + '</div></td>' +
+          '<td>' + esc(p.category || Admin.DEFAULT_CATEGORY) + '<div class="muted" style="font-size:11.5px">' + esc(p.unit || Admin.DEFAULT_UNIT) + '</div></td>' +
+          '<td class="num">' + yuan(p.costPrice) + '</td>' +
+          '<td class="num"><b>' + yuan(p.salePrice) + '</b></td>' +
+          '<td class="num">' + (p.refPrice ? yuan(p.refPrice) : '—') + '</td>' +
+          '<td class="num">' + p.stock + '</td>' +
+          '<td>' + guard + '</td>' +
+          '<td><button class="btn btn-xs" onclick="openProductDlg(\'' + esc(p.code) + '\')">编辑</button> ' +
+            '<button class="btn btn-xs btn-danger" onclick="delProduct(\'' + esc(p.code) + '\')">删除</button></td>' +
+        '</tr>';
+      }).join('') + '</tbody></table></div>'
+    : '<div class="empty"><span class="big">🏷️</span>' + (kw || prodCat || prodLow ? '没有匹配的商品' : '商品库是空的，点右上角「＋ 新建商品」建档') + '</div>';
+}
+
+function pickCat(c) { prodCat = c; renderProducts(); }
+function toggleLow() { prodLow = !prodLow; renderProducts(); }
+
+function openProductDlg(code) {
+  editCode = code || '';
+  const p = editCode ? Mall.getProduct(editCode) : null;
+  if (editCode && !p) return toast('商品不存在：' + editCode);
+  const d = Admin.draftFrom(p || {});
+  $('catList').innerHTML = Admin.categories().map(c => '<option value="' + esc(c) + '"></option>').join('');
+  $('dlgTitle').textContent = editCode ? '编辑商品档案' : '新建商品档案';
+  $('pfCode').value = d.code; $('pfCode').disabled = !!editCode;   // 条码是主键，建档后不可改
+  $('pfName').value = d.name;
+  $('pfBrand').value = d.brand;
+  $('pfSpec').value = d.spec;
+  $('pfCat').value = (!editCode && d.category === Admin.DEFAULT_CATEGORY) ? '' : d.category;
+  $('pfUnit').value = (!editCode && d.unit === Admin.DEFAULT_UNIT) ? '' : d.unit;
+  $('pfCost').value = d.costPrice || '';
+  $('pfSale').value = d.salePrice || '';
+  $('pfRef').value = d.refPrice || '';
+  $('pfWhole').checked = !!d.isWholesale;
+  $('pfStockRow').style.display = editCode ? 'none' : '';           // 编辑不改库存（不变量①）
+  $('pfStock').value = '';
+  $('pfMsg').innerHTML = '';
+  $('dlgProduct').className = 'modal show';
+  $('mask').className = 'mask show';
+  if (!editCode && $('pfCode').focus) $('pfCode').focus();
+}
+function closeProductDlg() { $('dlgProduct').className = 'modal'; $('mask').className = 'mask'; }
+
+function formValues() {
+  return {
+    code: $('pfCode').value, name: $('pfName').value, brand: $('pfBrand').value, spec: $('pfSpec').value,
+    category: $('pfCat').value, unit: $('pfUnit').value,
+    costPrice: $('pfCost').value, salePrice: $('pfSale').value, refPrice: $('pfRef').value,
+    stock: editCode ? 0 : $('pfStock').value,                        // 编辑态不带库存
+    isWholesale: $('pfWhole').checked
+  };
+}
+// 表单即时校验（不阻断输入）
+function checkProductForm() {
+  const r = Admin.validateProduct(formValues());
+  $('pfMsg').innerHTML = r.ok
+    ? '<span class="badge st-done">校验通过</span>'
+    : '<span class="badge st-pending">' + esc(r.msg) + '</span>';
+  return r;
+}
+
+async function submitProduct() {
+  const r = Admin.validateProduct(formValues());
+  if (!r.ok) { $('pfMsg').innerHTML = '<span class="badge st-cancelled">' + esc(r.msg) + '</span>'; return toast(r.msg, 4000); }
+  const wasEdit = !!editCode;
+  const p = r.product;
+  const before = wasEdit ? Mall.getProduct(p.code) : null;
+  try {
+    if (online()) {
+      // 在线：后端是唯一真源（服务端同样校验 + 执行价格防线；不带 stock = 不改库存）
+      const payload = {
+        code: p.code, name: p.name, brand: p.brand, spec: p.spec, category: p.category, unit: p.unit,
+        costPrice: p.costPrice, salePrice: p.salePrice, refPrice: p.refPrice, isWholesale: p.isWholesale
+      };
+      if (!wasEdit) payload.stock = p.stock;                        // 初始库存只在新建立写
+      await SdyApi.upsertProduct(payload);
+      Admin.logProductEvent(wasEdit ? 'edit' : 'new', p, { by: BY, stock: wasEdit ? (before ? before.stock : 0) : p.stock });
+    } else {
+      Admin.saveProduct(p, { by: BY, requireNew: !wasEdit });
+    }
+  } catch (e) {
+    $('pfMsg').innerHTML = '<span class="badge st-cancelled">' + esc(e.message) + '</span>';
+    return toast(e.message, 4200);
+  }
+  closeProductDlg();
+  renderAllAdmin();
+  toast((wasEdit ? '商品档案已更新' : '商品已建档' + (p.stock > 0 ? '（初始库存 ' + p.stock + '）' : '')) + (online() ? '' : '（本地演示）'));
+}
+
+async function delProduct(code) {
+  const p = Mall.getProduct(code);
+  if (!p) return toast('商品不存在：' + code);
+  try { Admin.assertDeletable(code); }                              // 本地先给清晰提示（与后端同规则）
+  catch (e) { return toast(e.message, 4200); }
+  if (typeof confirm === 'function' && !confirm('删除商品「' + p.name + '」（' + code + '）？\n条码库里的记录会保留（D6 沉淀），以后扫码还能认出来。')) return;
+  try {
+    if (online()) {
+      await SdyApi.deleteProduct(code);
+      Admin.logProductEvent('del', p, { by: BY, reason: '删除商品档案' });
+    } else {
+      Admin.deleteProduct(code, BY);
+    }
+  } catch (e) { return toast('删除失败：' + e.message, 4200); }
+  renderAllAdmin();
+  toast('已删除「' + p.name + '」');
 }
 
 /* ---------------- 顾客 ---------------- */
@@ -519,6 +722,7 @@ function renderAll() {
   if (tab === 'dash') renderDash();
   else if (tab === 'orders') renderOrders();
   else if (tab === 'stock') renderStock();
+  else if (tab === 'products') renderProducts();
   else if (tab === 'pricing') renderPricing();
   else if (tab === 'cust') renderCust();
   else if (tab === 'sys') renderSys();
@@ -528,7 +732,7 @@ async function refreshAll() {
   renderAll();
 }
 function renderAllAdmin() {
-  renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); renderDash(); renderSys();
+  renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderSys();
 }
 async function initApi() {
   const badge = $('modeBadge');

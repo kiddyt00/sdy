@@ -271,6 +271,23 @@ const SdyApi = (() => {
     return upsertProduct(next);
   }
 
+  // 删除商品档案：后端会校验「库存已盘点为 0 + 无进行中订单」，
+  // 本地降级路径只改镜像，规则提示统一由 Admin.assertDeletable 提供。
+  async function deleteProduct(code) {
+    if (mode_ !== 'server') {
+      const m = M();
+      const list = m.loadCatalog();
+      const i = list.findIndex(x => x.code === code);
+      if (i < 0) throw new Error('商品不存在：' + code);
+      list.splice(i, 1);
+      m.saveCatalog(list);
+      return { ok: true, code: code };
+    }
+    const res = await req('DELETE', '/api/products/' + encodeURIComponent(code));
+    await sync();
+    return res;
+  }
+
   // 条码解析（扫码只读，不改库存——D8）
   async function resolveBarcode(code) {
     return req('GET', '/api/barcode/resolve?code=' + encodeURIComponent(code));
@@ -305,6 +322,7 @@ const SdyApi = (() => {
     setStock: setStock,
     upsertProduct: upsertProduct,
     updateProduct: updateProduct,
+    deleteProduct: deleteProduct,
     resolveBarcode: resolveBarcode,
     pricingCheck: pricingCheck,
     fromServerProduct: fromServerProduct,

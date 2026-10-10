@@ -145,6 +145,104 @@ const online = {
     ok(env.els.orders.innerHTML.indexOf('M123') >= 0, '订单区渲染后端订单');
   }
 
+  /* ---------- 管理端 · 商品档案页（离线建档/编辑） ---------- */
+  section('⑤ admin.html · 商品档案页（建档 / 编辑表单）');
+  {
+    const env = await bootPage('admin.html', offline);
+    const ctx = env.ctx;
+    ok(env.els.prodStats.innerHTML.indexOf('档案总数') >= 0, '商品档案统计卡已渲染');
+    ok(env.els.prodCount.textContent.indexOf('共 6 个') >= 0, '商品计数：' + env.els.prodCount.textContent);
+    ok(env.els.prodCats.innerHTML.indexOf('饮料') >= 0, '分类 chips 渲染（含饮料）');
+    ok(env.els.prodTable.innerHTML.indexOf('可口可乐') >= 0, '商品表格渲染种子商品');
+    ok(env.els.prodTable.innerHTML.indexOf('编辑') >= 0 && env.els.prodTable.innerHTML.indexOf('删除') >= 0, '每行有编辑/删除按钮');
+    ctx.switchTab('products');
+    ok(env.els.navProducts.className.indexOf('nv on') >= 0, '侧边栏「商品档案」入口高亮');
+    ok(env.els.viewProducts.className.indexOf('hide') < 0, '切换后商品档案页可见');
+    ok(env.els.crumb.textContent === '商品档案', '面包屑同步为商品档案');
+
+    // 编辑态：回填 + 不改库存
+    ctx.openProductDlg('6901234567892');
+    ok(env.els.pfName.value.indexOf('可口可乐') >= 0, '编辑弹窗回填名称');
+    ok(env.els.pfCode.disabled === true, '编辑态条码不可改');
+    ok(env.els.pfStockRow.style.display === 'none', '编辑态隐藏库存输入（不变量：编辑不改库存）');
+    ok(env.els.dlgProduct.className.indexOf('show') >= 0, '弹窗已打开');
+    ctx.closeProductDlg();
+    ok(env.els.dlgProduct.className.indexOf('show') < 0, '弹窗已关闭');
+
+    // 新建态：即时校验 + 保存
+    ctx.openProductDlg('');
+    ok(env.els.pfStockRow.style.display !== 'none', '新建态显示初始库存输入');
+    env.els.pfCode.value = '6909999999999';
+    env.els.pfName.value = '';
+    ctx.checkProductForm();
+    ok(env.els.pfMsg.innerHTML.indexOf('名称') >= 0, '空名称即时提示：' + env.els.pfMsg.innerHTML.replace(/<[^>]+>/g, ''));
+    env.els.pfName.value = '测试商品';
+    env.els.pfSale.value = '9.9';
+    env.els.pfRef.value = '5';
+    ctx.checkProductForm();
+    ok(env.els.pfMsg.innerHTML.indexOf('比价防线') >= 0, '超价即时提示比价防线');
+    env.els.pfRef.value = '';
+    env.els.pfStock.value = '3';
+    ctx.checkProductForm();
+    ok(env.els.pfMsg.innerHTML.indexOf('校验通过') >= 0, '合法表单即时校验通过');
+    await ctx.submitProduct();
+    const np = Mall.getProduct('6909999999999');
+    ok(!!np, '建档成功写入商品库');
+    ok(np && np.stock === 3, '初始库存 3 已写入');
+    ok(np && np.syncStatus === '待同步', '建档标记待同步');
+    ok(Admin.getStockLog().filter(x => x.code === '6909999999999').length >= 2, '建档留了两条流水（建档 + 初始入库）');
+    ok(env.els.prodCount.textContent.indexOf('共 7 个') >= 0, '保存后列表刷新：' + env.els.prodCount.textContent);
+    ok(env.els.dlgProduct.className.indexOf('show') < 0, '保存后弹窗自动关闭');
+  }
+
+  /* ---------- 管理端 · 在线写入（建档/编辑/删除走 api shim） ---------- */
+  section('④b admin.html · 商品档案在线写入');
+  {
+    const calls = [];
+    const recFetch = async (url, opts) => {
+      const p = String(url).replace(/^https?:\/\/[^/]+/, '');
+      const method = (opts && opts.method) || 'GET';
+      if (p === '/api/products' && method === 'POST') {
+        const body = JSON.parse(opts.body);
+        calls.push(body);
+        return { ok: true, status: 200, text: async () => JSON.stringify(body) };
+      }
+      if (p.indexOf('/api/products/') === 0 && method === 'DELETE') {
+        calls.push({ del: decodeURIComponent(p.replace('/api/products/', '')) });
+        return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, code: p.split('/').pop() }) };
+      }
+      return online.fetch(url, opts);
+    };
+    const env = await bootPage('admin.html', { base: 'http://127.0.0.1:8093', fetch: recFetch });
+    const ctx = env.ctx;
+    ok(Mall.getProduct('6901234567892') != null, '在线镜像已拉到商品档案');
+    // 编辑：不带 stock
+    ctx.openProductDlg('6901234567892');
+    env.els.pfSale.value = '2.6';
+    await ctx.submitProduct();
+    ok(calls.length === 1 && calls[0].code === '6901234567892', '编辑走 POST /api/products');
+    ok(calls[0] && calls[0].stock === undefined, '编辑请求不带 stock（后端保留库存）');
+    // 建档：带初始库存
+    ctx.openProductDlg('');
+    env.els.pfCode.value = '6908888888888';
+    env.els.pfName.value = '在线新品';
+    env.els.pfSale.value = '4';
+    env.els.pfStock.value = '5';
+    await ctx.submitProduct();
+    ok(calls.length === 2 && calls[1].stock === 5, '建档请求带初始库存 5');
+    // 删除：库存非 0 时本地规则先拦住，不发请求
+    await ctx.delProduct('6902083881234');
+    ok(calls.length === 2, '库存非 0 时不发删除请求（本地规则先拦）');
+    // 库存清零但订单 M123 仍在进行 → 本地规则拦住
+    Mall.updateProduct('6901234567892', { stock: 0 });
+    await ctx.delProduct('6901234567892');
+    ok(calls.length === 2, '有进行中订单时不发删除请求（本地规则先拦）');
+    // 另一个商品无进行中订单，清零后可删
+    Mall.updateProduct('6902083881234', { stock: 0 });
+    await ctx.delProduct('6902083881234');
+    ok(calls.length === 3 && calls[2] && calls[2].del === '6902083881234', '库存 0 且无进行中订单 → DELETE /api/products/{code}');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

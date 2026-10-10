@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/kiddyt00/sdy/server/internal/pricing"
@@ -332,5 +333,118 @@ func TestListLib(t *testing.T) {
 	}
 	if len(one) != 1 {
 		t.Errorf("limit 未生效：期望 1 条，实际 %d", len(one))
+	}
+}
+
+// TestUpsertProductValidation 商品建档/编辑入参校验（表单第一道防线在服务端）。
+func TestUpsertProductValidation(t *testing.T) {
+	st := newTestStore(t)
+	cases := []struct {
+		name string
+		in   Product
+	}{
+		{"空条码", Product{Name: "可乐"}},
+		{"空名称", Product{Code: "6901"}},
+		{"名称为空白", Product{Code: "6901", Name: "   "}},
+		{"售价为负", Product{Code: "6901", Name: "可乐", SalePrice: -1}},
+		{"进价为负", Product{Code: "6901", Name: "可乐", CostPrice: -0.5}},
+		{"参考价为负", Product{Code: "6901", Name: "可乐", RefPrice: -2}},
+		{"库存为负", Product{Code: "6901", Name: "可乐", SalePrice: 2, Stock: -3}},
+	}
+	for _, c := range cases {
+		if _, err := st.UpsertProduct(c.in); !errors.Is(err, ErrBadInput) {
+			t.Errorf("%s 应返回 ErrBadInput，实际 %v", c.name, err)
+		}
+	}
+
+	// 归一化：单位/分类留空 → 件 / 未分类；条码两侧空白被去掉
+	p, err := st.UpsertProduct(Product{Code: "  6903  ", Name: "散装花生", SalePrice: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Code != "6903" || p.Unit != "件" || p.Category != "未分类" {
+		t.Errorf("归一化失败: %+v", p)
+	}
+	if err := st.DeleteProduct("6903"); err != nil {
+		t.Fatalf("库存为 0 的商品应可删除: %v", err)
+	}
+}
+
+// TestUpsertProductPriceGuard 价格防线：零售价 > 参考价 ×0.95 一律拒绝，批发商品豁免。
+func TestUpsertProductPriceGuard(t *testing.T) {
+	st := newTestStore(t)
+	// 参考价 4.00 → 上限 3.80
+	if _, err := st.UpsertProduct(Product{Code: "6901", Name: "可乐", SalePrice: 3.8, RefPrice: 4}); err != nil {
+		t.Fatalf("恰好压线应通过: %v", err)
+	}
+	_, err := st.UpsertProduct(Product{Code: "6902", Name: "雪碧", SalePrice: 3.81, RefPrice: 4})
+	if !errors.Is(err, ErrBadInput) {
+		t.Fatalf("超价应被拒绝，实际 %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "比价防线") {
+		t.Errorf("错误信息应说明比价防线，实际 %v", err)
+	}
+	// 批发商品跳过防线（默认 ExcludeWholesale=true）
+	if _, err := st.UpsertProduct(Product{Code: "6902", Name: "雪碧", SalePrice: 3.81, RefPrice: 4, IsWholesale: true}); err != nil {
+		t.Fatalf("批发商品应豁免比价防线: %v", err)
+	}
+	// 无参考价 → 不做比价
+	if _, err := st.UpsertProduct(Product{Code: "6904", Name: "口香糖", SalePrice: 99}); err != nil {
+		t.Fatalf("无参考价不应拦截: %v", err)
+	}
+}
+
+// TestDeleteProductGuard 删除约束：库存非 0、进行中订单引用都要拦。
+func TestDeleteProductGuard(t *testing.T) {
+	st := newTestStore(t)
+	seed(t, st) // 6901 库存 120、6902 库存 3
+
+	if err := st.DeleteProduct("9999"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("不存在的商品应 ErrNotFound，实际 %v", err)
+	}
+	err := st.DeleteProduct("6901")
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("库存非 0 应拒绝删除，实际 %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "盘点为 0") {
+		t.Errorf("错误信息应提示先盘点为 0，实际 %v", err)
+	}
+	// 先下单再清零：验证「库存已是 0、但有进行中订单」仍会拦住删除
+	if _, err := st.CreateOrder(NewOrderInput{
+		DeliveryType: "pickup",
+		CustomerName: "张三",
+		Phone:        "13800000000",
+		Items:        []NewOrderInputItem{{Code: "6902", Qty: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SetStock("6902", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteProduct("6902"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("有进行中订单应拒绝删除，实际 %v", err)
+	} else if !strings.Contains(err.Error(), "进行中") {
+		t.Errorf("错误信息应提示进行中订单，实际 %v", err)
+	}
+	// 订单完成 → 可以删除
+	orders, _ := st.ListOrders("")
+	if len(orders) != 1 {
+		t.Fatalf("期望 1 个订单，实际 %d", len(orders))
+	}
+	if _, err := st.AdvanceOrder(orders[0].ID, "ready"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AdvanceOrder(orders[0].ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteProduct("6902"); err != nil {
+		t.Fatalf("订单已完成后应可删除: %v", err)
+	}
+	if _, err := st.GetProduct("6902"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("删除后应查不到，实际 %v", err)
+	}
+	// 字典层保留（D6 永久沉淀），扫码仍能认出条码
+	if e, ok := st.GetLib("6902"); !ok || e.Source != "product" {
+		t.Errorf("字典层应保留该条码，实际 %+v ok=%v", e, ok)
 	}
 }

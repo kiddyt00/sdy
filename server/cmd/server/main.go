@@ -105,11 +105,38 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			}
 			writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
 		case http.MethodPost:
-			var p store.Product
-			if !decode(w, r, &p) {
+			// 建档 / 编辑商品档案（任务池①）。
+			// stock 用指针区分「没传」与「传 0」：编辑表单不带库存时不覆盖现有库存
+			// （不变量：编辑档案不改库存，库存只走 /api/products/stock）。
+			var req struct {
+				Code        string   `json:"code"`
+				Name        string   `json:"name"`
+				Brand       string   `json:"brand"`
+				Spec        string   `json:"spec"`
+				Category    string   `json:"category"`
+				Img         string   `json:"img"`
+				CostPrice   float64  `json:"costPrice"`
+				SalePrice   float64  `json:"salePrice"`
+				RefPrice    float64  `json:"refPrice"`
+				Unit        string   `json:"unit"`
+				Stock       *float64 `json:"stock"`
+				IsWholesale bool     `json:"isWholesale"`
+			}
+			if !decode(w, r, &req) {
 				return
 			}
-			saved, err := st.UpsertProduct(p)
+			stock := 0.0
+			if req.Stock != nil {
+				stock = *req.Stock
+			} else if cur, err := st.GetProduct(strings.TrimSpace(req.Code)); err == nil {
+				stock = cur.Stock
+			}
+			saved, err := st.UpsertProduct(store.Product{
+				Code: req.Code, Name: req.Name, Brand: req.Brand, Spec: req.Spec, Category: req.Category,
+				Img: req.Img, CostPrice: req.CostPrice, SalePrice: req.SalePrice, RefPrice: req.RefPrice,
+				Unit: req.Unit, Stock: stock, IsWholesale: req.IsWholesale,
+				SyncStatus: "pending", // 档案变更 → 待与牵牛花核对（D3 月度对账）
+			})
 			if err != nil {
 				writeErr(w, err)
 				return
@@ -138,6 +165,25 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, p)
+	})
+
+	// 商品档案删除（D16）：DELETE /api/products/{code}
+	// 约束由 store 层把关：库存必须先盘点为 0、不能有进行中的订单。
+	mux.HandleFunc("/api/products/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		code := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/products/"), "/")
+		if code == "" {
+			writeJSON(w, 400, map[string]string{"error": "缺少条码"})
+			return
+		}
+		if err := st.DeleteProduct(code); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "code": code})
 	})
 
 	// 订单：列表 / 下单 / 详情 / 状态流转
@@ -308,7 +354,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
 			return

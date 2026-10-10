@@ -230,13 +230,13 @@
 <!-- ================= 0 实施现状 ================= -->
 <section id="s0">
   <h2><span class="no">0</span>实施现状与本次更新（2026-10-10）</h2>
-  <div class="callout green"><strong>一句话：</strong>本文最初是「可行性分析 + 架构设计」，现在它同时是一份<strong>实施记录</strong>。截至第 9 轮：<strong>M0–M4 已完成并测试</strong>，<strong>小程序化（M5）按用户要求暂缓并归档</strong>，当前重心是 <strong>Web 端商城的功能补全</strong>。</div>
+  <div class="callout green"><strong>一句话：</strong>本文最初是「可行性分析 + 架构设计」，现在它同时是一份<strong>实施记录</strong>。截至第 11 轮：<strong>M0–M4 已完成并测试</strong>，<strong>小程序化（M5）按用户要求暂缓并归档</strong>，当前重心是 <strong>Web 端商城的功能补全</strong>（第 11 轮完成「待做任务池」第 1 项：商品建档 / 编辑表单）。</div>
 
   <h3>0.1 已落地的东西（仓库实况）</h3>
   <table>
     <tr><th>目录</th><th>内容</th><th>状态</th></tr>
-    <tr><td><code>web/</code></td><td>顾客端 <code>index.html</code> + 经营管理台 <code>admin.html</code> + 设计系统 <code>assets/theme.css</code> + 领域逻辑 <code>mall.js</code> / <code>mall-admin.js</code> / <code>pricing.js</code> + 后端数据通道 <code>sdy-api.js</code></td><td>✅ 已完成（第 9 轮现代化重做）</td></tr>
-    <tr><td><code>server/</code></td><td>Go 后端：六表数据层、事务下单、订单状态机、价格与配送规则、条码解析链（配额熔断）、HTTP API、Docker 蓝绿部署件</td><td>✅ 21 个单测 + 端到端冒烟通过</td></tr>
+    <tr><td><code>web/</code></td><td>顾客端 <code>index.html</code> + 经营管理台 <code>admin.html</code>（总览 / 订单 / 库存 / <strong>商品档案</strong> / 价格防护 / 顾客 / 系统七视图）+ 设计系统 <code>assets/theme.css</code> + 领域逻辑 <code>mall.js</code> / <code>mall-admin.js</code> / <code>pricing.js</code> + 后端数据通道 <code>sdy-api.js</code></td><td>✅ 已完成（第 9 轮现代化重做；第 11 轮补商品建档/编辑/删除）</td></tr>
+    <tr><td><code>server/</code></td><td>Go 后端：六表数据层、事务下单、订单状态机、价格与配送规则、商品档案增删改校验、条码解析链（配额熔断）、HTTP API、Docker 蓝绿部署件</td><td>✅ 27 个单测（含 HTTP 层 3 个）+ 端到端冒烟通过</td></tr>
     <tr><td><code>barcode-demo/</code></td><td>扫码台（手机摄像头 / 扫码枪 HID）+ 商品库 / 条码库 / 扫码日志 + 后端通道 <code>bd-api.js</code></td><td>✅ APPCODE 只在服务端</td></tr>
     <tr><td><code>sync-demo/</code></td><td>牵牛花 CSV 对账引擎 + 对账工作台 + 导出确认清单</td><td>✅ 工具就绪（待真实导出文件核对列名）</td></tr>
     <tr><td><code>archive/miniprogram/</code></td><td>微信小程序骨架（4 页 + tabBar + <code>utils</code> 三件套 + 两套测试）</td><td>⏸ 暂缓归档，可随时续做</td></tr>
@@ -255,7 +255,7 @@
     <tr><th>文档</th><th>定位</th></tr>
     <tr><td>本文（可行性分析与架构方案）</td><td>为什么做、怎么做、选型与成本的完整推演 + 第 0 章实施现状</td></tr>
     <tr><td><code>开发计划.html</code></td><td>里程碑路线图、当前重心与待办、依赖用户的事项、进度跟踪</td></tr>
-    <tr><td><code>细节讨论记录.html</code></td><td>逐轮讨论记录与 D1–D15 决策汇总（每条决策含来源与影响）</td></tr>
+    <tr><td><code>细节讨论记录.html</code></td><td>逐轮讨论记录与 D1–D16 决策汇总（每条决策含来源与影响）</td></tr>
     <tr><td><code>README.md</code> · <code>web/README.md</code> · <code>server/README.md</code></td><td>仓库落地说明：目录结构、运行方式、测试命令</td></tr>
   </table>
   <p style="color:var(--muted)">三份中文文档均会推送到腾讯文档便于共同编辑，<strong>每次推送都会生成新链接</strong>（导出接口每人每天 9 次配额，故推送按轮次合并进行），最新链接见每轮汇报与仓库 README。</p>
@@ -972,7 +972,7 @@
 </section>
 
 <footer>
-  独立微信小程序商城 · 可行性分析与架构方案 &nbsp;|&nbsp; 2026-10-10 第 10 轮文档整体重写（Web 端先行 · 小程序暂缓 · 新增第 0 章实施现状）
+  独立微信小程序商城 · 可行性分析与架构方案 &nbsp;|&nbsp; 2026-10-10 第 11 轮（任务池第 1 项：商品建档 / 编辑表单；第 10 轮文档整体重写：Web 端先行 · 小程序暂缓 · 第 0 章实施现状）
 </footer>
 </div>
 </body>

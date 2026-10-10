@@ -8,9 +8,10 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `server/cmd/server/main.go` | 进程入口（392 行）：环境变量、建库与种子数据、路由表、CORS/日志中间件、超时与优雅退出、云端条码 HTTP 客户端 |
-| `server/internal/store/store.go` | 数据层（627 行）：6 张表、事务下单、状态机、库存回补、条码字典 |
-| `server/internal/store/store_test.go` | 数据层单测（336 行，11 个） |
+| `server/cmd/server/main.go` | 进程入口（438 行）：环境变量、建库与种子数据、路由表、CORS/日志中间件、超时与优雅退出、云端条码 HTTP 客户端 |
+| `server/cmd/server/main_test.go` | HTTP 层单测（200 行，3 个）：商品建档/编辑/删除全流程、库存语义、CORS 预检 |
+| `server/internal/store/store.go` | 数据层（681 行）：6 张表、事务下单、状态机、库存回补、商品档案增删改校验、条码字典 |
+| `server/internal/store/store_test.go` | 数据层单测（450 行，14 个） |
 | `server/internal/pricing/pricing.go` | 价格与配送规则（111 行），与 `web/pricing.js` 语义一致 |
 | `server/internal/pricing/pricing_test.go` | 规则单测（95 行，4 个） |
 | `server/internal/barcode/barcode.go` | 条码解析链（143 行）：商品档案 → 本地字典 → 云端，含查无 TTL 与失败熔断 |
@@ -82,7 +83,8 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | --- | --- | --- |
 | GET | `/healthz` | 健康检查：`{ok, time, circuitOpen, cloudFails, cloudConfigured}` |
 | GET | `/api/products?keyword=&category=` | 商品列表，返回 `{items, total}`；`keyword` 匹配名称或条码，`category` 精确等值，按条码排序 |
-| POST | `/api/products` | 建档/覆盖商品（**自动写入条码字典层**）；成功返回保存后的商品 |
+| POST | `/api/products` | 建档/编辑商品（**自动写入条码字典层**）：服务端校验条码/名称必填、价格非负、库存非负，并执行比价防线（超价 `400`，批发与无参考价豁免）；`stock` 字段**不传 = 不改库存**（编辑表单不改库存），传了才写；成功返回保存后的商品，`syncStatus` 置 `pending` |
+| DELETE | `/api/products/{code}` | 删除商品档案（任务池①）：库存必须为 0（否则 `409` 提示先盘点为 0）、没有进行中订单引用（否则 `409`）；删档**保留条码字典层记录**（D6 永久沉淀）；成功返回 `{ok:true, code}` |
 | POST | `/api/products/stock` | 手动改库存 `{code, stock}`（D8：库存一律手动调整，扫码只读）；同时把 `syncStatus` 置为 `pending` |
 | GET | `/api/orders?status=` | 订单列表 |
 | POST | `/api/orders` | 下单（事务内校验 → 扣库存 → 写订单，避免超卖），成功返回 `201` |
@@ -93,7 +95,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | GET | `/api/pricing/check` | 比价防线巡检，返回 `{total, over, violations}` |
 | — | `/`（其余路径） | 静态文件（`STATIC_DIR`） |
 
-**错误码**：`400` 参数不合法 / `404` 资源不存在 / `409` 库存不足或状态不允许流转 / `405` 方法不支持 / `500` 其他。领域错误到 HTTP 码的映射写在 `server/cmd/server/main.go:346` 的 `writeErr`，用 `errors.Is` 判断 `store.ErrBadInput` / `ErrNotFound` / `ErrStockLess` / `ErrConflict`。
+**错误码**：`400` 参数不合法 / `404` 资源不存在 / `409` 库存不足或状态不允许流转 / `405` 方法不支持 / `500` 其他。领域错误到 HTTP 码的映射写在 `server/cmd/server/main.go:392` 的 `writeErr`，用 `errors.Is` 判断 `store.ErrBadInput` / `ErrNotFound` / `ErrStockLess` / `ErrConflict`。
 
 所有接口都带 CORS（`Access-Control-Allow-Origin: *`），`OPTIONS` 直接返回 `204`，方便扫码台在别的端口调试。请求体上限 1 MiB（`http.MaxBytesReader`）。
 
@@ -101,7 +103,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy/server
-go test ./... -count=1        # 21 个单测
+go test ./... -count=1        # 27 个单测
 ./smoke.sh                    # 起真服务跑 HTTP 全流程
 ```
 
@@ -111,10 +113,10 @@ go test ./... -count=1        # 21 个单测
 | --- | --- | --- |
 | `server/internal/barcode` | 6 | `TestResolveProductFirst`、`TestResolveLibSecond`、`TestResolveCloudBackfill`、`TestResolveCloudNotFoundTTL`、`TestResolveCircuitBreaker`、`TestResolveEdgeCases` |
 | `server/internal/pricing` | 4 | `TestDeliveryFee`、`TestDeliveryFeeCustomConfig`、`TestCheckRetailPrice`、`TestPricingCheck` |
-| `server/internal/store` | 11 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib` |
-| `server/cmd/server` | 0 | `[no test files]` |
+| `server/internal/store` | 14 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard` |
+| `server/cmd/server` | 3 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestHealthzAndOptions` |
 
-合计 **21 个单测**，本机实测 `go test ./... -count=1` 全部通过。
+合计 **27 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
 
 `./smoke.sh` 会 `go build` 一个临时二进制，用 `mktemp` 建临时库（**不碰 `server/data/sdy.db`**），起在 `127.0.0.1:8099`（`SMOKE_PORT` 可改，**默认不占用 8093**），轮询 `/healthz` 就绪后依次验证 8 项：健康检查 → 商品数 → 条码解析 → 下单 → 下单后库存 → 非法流转返回 409 → 取消回补库存 → 比价巡检，最后退出并清理进程与临时文件。实测输出以 `✅ 冒烟通过` 结束（下单示例：`6901234567892` 库存 120 → 118，取消后回到 120）。
 
@@ -136,6 +138,8 @@ go vet ./...
 - **下单是一个事务**：校验配送方式/姓名手机/地址/购物车非空 → 逐行校验数量与库存 → 扣库存 → 写订单与订单项 → 沉淀顾客档案，全部在一个事务里，任一步失败整单回滚（**不会部分扣减**）。库存不足的错误文案是「仅剩 N」。
 - **取消订单逐行回补库存**，并把回补过的商品 `sync_status` 置回 `pending`。
 - **价格防线**：`salePrice ≤ round2(refPrice × 0.95)`；批发商品（`ExcludeWholesale: true`）与无参考价（`refPrice <= 0`）自动跳过。默认配置：自提 0 元、满 30 元免运费否则 3 元。
+- **商品档案校验**：`POST /api/products` 在 store 层校验条码/名称必填、价格非负、库存非负，并**在服务端执行比价防线**（`UpsertProduct` 内调 `pricing.CheckRetailPrice`，超价返回 `400`，批发与无参考价豁免）；缺省单位补「件」、分类补「未分类」。**`stock` 不传 = 保留原库存**（指针区分「没传」与「传 0」），保证管理端编辑表单不会误清库存。
+- **删除商品档案**：`DeleteProduct` 先查在库量与进行中订单，再删行；**条码字典层（`barcode_lib`）不删**——D6 的永久沉淀，删档后扫码仍能识别。
 - **D8 扫码只读**：`/api/barcode/resolve` 只识别、不写价格库存；库存只能通过 `/api/products/stock` 手动改。
 - **D6 双库**：建档（`POST /api/products`）会**顺带把条码写进字典层**（`source=product`），所以建过档的码永久走本地命中，不再花云端配额。字典层的命中计数不会被 upsert 重置。
 
@@ -153,7 +157,7 @@ go vet ./...
 
 - `STATIC_DIR` 默认是 `.`（`server/` 目录），所以直接 `go run ./cmd/server` 后在浏览器打开根路径看到的是文件列表，不是商城——要看页面必须显式设 `STATIC_DIR`。
 - 商品搜索的 `keyword` **只匹配名称和条码，不含品牌**；前端顾客端搜索框额外匹配了品牌，两边口径不同（已知差异）。
-- `POST /api/products` 是**覆盖式 upsert**（`ON CONFLICT(code) DO UPDATE`），服务端**不会拦重复建档**；防重复的检查在扫码台前端 `bd-api.js` 里。
+- `POST /api/products` 是**覆盖式 upsert**（`ON CONFLICT(code) DO UPDATE`），服务端**不会拦重复建档**；防重复的检查在前端：扫码台 `bd-api.js` 与管理端 `Admin.saveProduct({requireNew:true})`。**所以「编辑」和「重复建档」在后端是同一条接口**，管理端靠 `requireNew` 区分。
 
 ## 部署（M6，Docker 蓝绿）
 
