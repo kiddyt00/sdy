@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>独立小程序商城 · 开发计划 v1</title>
+<style>
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;max-width:960px;margin:24px auto;padding:0 16px;color:#1f2937;line-height:1.65;font-size:14px}
+  h1{font-size:22px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:18px;margin-top:28px;border-left:5px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#111827}
+  h4{font-size:14px;margin-top:14px}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px}
+  th,td{border:1px solid #e3e8ee;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#f8fafc}
+  .callout{border-radius:8px;padding:10px 14px;margin:10px 0;font-size:13px}
+  .callout.blue{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
+  .callout.green{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+  .callout.yellow{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+  .risk{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin:10px 0;font-size:13px;color:#92400e}
+  .badges span{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;margin-right:6px;font-weight:600}
+  .bg-green{background:#dcfce7;color:#166534}.bg-blue{background:#dbeafe;color:#1e40af}
+  .bg-purple{background:#ede9fe;color:#6b21a8}.bg-gray{background:#f3f4f6;color:#4b5563}
+  .bg-orange{background:#ffedd5;color:#9a3412}.bg-red{background:#fee2e2;color:#991b1b}
+  .ok{color:#16a34a;font-weight:600}.doing{color:#2563eb;font-weight:600}.todo{color:#6b7280}
+  code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-size:12px}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;font-size:13px}
+  .flow b{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:4px 12px;border-radius:999px}
+  ul,ol{padding-left:22px}li{margin:3px 0}
+</style>
+</head>
+<body>
+
+<h1>独立小程序商城 · 开发计划 v1</h1>
+<div class="badges">
+  <span class="bg-blue">版本 v1</span><span class="bg-green">2026-10-10</span>
+  <span class="bg-purple">依据：架构方案 + 细节讨论记录（D1–D8）</span>
+</div>
+
+<div class="callout blue">
+<b>一句话路线：页面展示优先 → 规则与数据层 → 牵牛花同步 → 后端服务 → 小程序化 → 上线验证。</b>
+先让「看得见」的页面把全流程跑通（web demo 先行），再逐层填充真实逻辑与后端，降低返工、随时可演示给合伙人看。
+</div>
+
+<h2>一、目标与边界</h2>
+<table>
+<tr><th style="width:130px">维度</th><th>内容</th></tr>
+<tr><td>总目标</td><td>自营微信小程序商城，完全独立于牵牛花中台：商品、价格、库存、订单、配送、顾客全部自管理；与牵牛花仅保留<b>月度 CSV 库存同步</b></td></tr>
+<tr><td>MVP 范围</td><td>常温商品 + 酒水饮料；生鲜后置（P1+）；固定客群私域沉淀；自提免配送费 + 4 人配送</td></tr>
+<tr><td>红线</td><td>敏感信息绝不上库；扫码只读不改库存（D8）；建档必须人工确认；价格/库存永不自动填云端值；云端调用仅双库未命中（D6）；先不买枪、手机摄像头验证（D7）</td></tr>
+<tr><td>技术形态</td><td>web demo（纯 HTML/JS + localStorage，无构建）先行；后端 Python 标准库服务；最终小程序端复用 demo 页面设计</td></tr>
+</table>
+
+<h2>二、里程碑总览</h2>
+<table>
+<tr><th>里程碑</th><th>目标</th><th>主要产出</th><th>依赖</th><th>估时</th></tr>
+<tr><td><b>M0 基建</b></td><td>仓库、文档、同步链路、安全基线</td><td>README、本计划、腾讯文档同步、敏感信息管理</td><td>—</td><td class="ok">✔ 已完成</td></tr>
+<tr><td><b>M1 页面展示层</b></td><td>全流程页面可见、可走通（web demo）</td><td>顾客端商城 demo、管理端扩展、扫码建档链路</td><td>M0</td><td class="doing">● 当前</td></tr>
+<tr><td><b>M2 规则与数据层</b></td><td>订单状态机、价格规则、库存联动、双库逻辑服务化</td><td>核心逻辑模块 + 自动化测试</td><td>M1</td><td>1–2 轮</td></tr>
+<tr><td><b>M3 牵牛花同步</b></td><td>月度库存双向 CSV 同步</td><td>同步工具、对账规则、导出字段确认</td><td>牵牛花导出能力验证（行动项）</td><td>1–2 轮</td></tr>
+<tr><td><b>M4 后端服务</b></td><td>数据模型 + API + 条码代理</td><td>Python 后端（标准库）、接口清单、配额/熔断</td><td>M2</td><td>2–3 轮</td></tr>
+<tr><td><b>M5 小程序化</b></td><td>顾客端 + 管理端小程序</td><td>小程序代码、商户号/支付、配送 API 接入</td><td>用户申请账号/商户号（1–2 周）</td><td>3–4 轮</td></tr>
+<tr><td><b>M6 上线验证</b></td><td>试运营、生鲜/储值/发票 P1+</td><td>灰度上线、规则调优</td><td>M5</td><td>按运营反馈</td></tr>
+</table>
+
+<h2>三、M0 基建（已完成 ✔）</h2>
+<ul>
+<li>仓库：<code>github.com/kiddyt00/sdy</code>，main 分支，首提交 15 文件</li>
+<li>敏感信息管理：<code>.gitignore</code> 五类拦截 + 每次推送前三层扫描（工作区/暂存区/远端树）</li>
+<li>文档链路：方案 + 细节讨论记录（含 D1–D8）双文档，pull→合并→转换→推送→设权限 全自动化</li>
+<li>条码双库 demo（barcode-demo）：三级链路 resolve、真实阿里云 API 接入、配额/熔断/去重锁、7 组核心测试通过</li>
+</ul>
+
+<h2>四、M1 页面展示层（当前执行）</h2>
+
+<h3>M1.1 顾客端商城 demo（✔ 已完成 2026-10-10）</h3>
+<p><b>目的：</b>把顾客「看得到」的购物全流程先立起来：逛 → 详情 → 加购 → 结算 → 订单。</p>
+<div class="callout green">M1.1 已完成：<code>mall-demo/</code>（mall.html + mall.js + 40 项核心逻辑测试全通过）——首页/详情/购物车/结算/我的订单全流程可走通；下单扣库存、取消回补、状态机、售罄拦截均已测试覆盖。</div>
+<table>
+<tr><th>任务</th><th>内容</th><th>验收</th></tr>
+<tr><td>1.1-a 首页</td><td>店名/搜索框/分类筛选/商品卡片网格（名称/规格/售价/库存）+ 扫码入口</td><td>分类可切、搜索/扫码可命中本地商品</td></tr>
+<tr><td>1.1-b 商品详情</td><td>点击卡片弹详情：品牌/规格/售价/库存/条码 + 数量选择 + 加购</td><td>库存为 0 禁购；同条码防重</td></tr>
+<tr><td>1.1-c 购物车</td><td>抽屉式：数量增减、小计、合计、清空</td><td>合计正确（node 测试覆盖）</td></tr>
+<tr><td>1.1-d 结算</td><td>自提（免配送费）/ 配送（满 30 免、否则 3 元，占位规则）二选一；配送需姓名/电话/地址</td><td>配送费规则正确（node 测试覆盖）</td></tr>
+<tr><td>1.1-e 下单</td><td>校验库存 → 扣减 → 生成订单（待备货）</td><td>库存联动正确；取消回补（node 测试覆盖）</td></tr>
+<tr><td>1.1-f 我的订单</td><td>状态筛选 + 状态流转：待备货→配送中/待自提→已完成；取消</td><td>状态机边界完整（node 测试覆盖）</td></tr>
+</table>
+<p><b>产出：</b><code>mall-demo/</code>（mall.html + mall.js + 测试）。<b>数据约定：</b>与 barcode-demo 共用 <code>bd_products</code>（商品库档案），扫码建档后商城立即可售。</p>
+
+<h3>M1.2 管理端 demo 扩展（下一步）</h3>
+<ul>
+<li><b>库存管理页</b>：入库单（手动录数量，D8）、盘点差异调整、直接改数；整车到货按箱调整</li>
+<li><b>订单管理页</b>：订单列表、状态操作（备货/发配送/标记自提）、4 人配送任务分配雏形</li>
+<li><b>顾客管理页</b>：私域顾客名单、消费次数/金额统计雏形</li>
+</ul>
+
+<h3>M1.3 扫码体验完善（随 1.2）</h3>
+<ul>
+<li>手机摄像头扫码（wx.scanCode 回调 → resolve）；扫码枪 HID 回车（零驱动）</li>
+<li>双库命中徽标（本地商品/本地字典/云端/查无）与建档入口（D6）</li>
+</ul>
+
+<div class="callout green">M1 整体验收：顾客端与管理端 demo 全流程可本地跑通；核心逻辑均有 node 自动化测试；任一页面可直接演示给合伙人。</div>
+
+<h2>五、M2 规则与数据层</h2>
+<table>
+<tr><th>模块</th><th>内容</th><th>关键规则</th></tr>
+<tr><td>订单状态机</td><td>待备货 → 配送中 / 待自提 → 已完成；取消；边界：已备货不可直接删单</td><td>状态只允许合法迁移，非法操作拦截并提示</td></tr>
+<tr><td>价格规则</td><td>自提免配送费；配送满 30 免 / 否则 3 元（占位，可配）；批发价不计入会员比价</td><td>零售定价 ≤ 牵牛花 -5%（防平台比价处罚）</td></tr>
+<tr><td>库存联动</td><td>下单扣减、取消回补、盘点修正、期初建档</td><td>扫码只读不改库存（D8）；库存以人工为准</td></tr>
+<tr><td>双库服务化</td><td>resolve 三级链路从 demo 提为可复用模块（同码去重锁、串行队列、配额、熔断）</td><td>云端仅双库未命中调用（D6）</td></tr>
+</table>
+
+<h2>六、M3 牵牛花同步</h2>
+<ul>
+<li><b>行动项 0（依赖用户）</b>：向牵牛花确认导出/导入的字段能力（条码、名称、库存、价格能否导出 CSV）</li>
+<li>月度双向 CSV：牵牛花库存 → 本地盘点基准；本地实盘 → 回填牵牛花；对账差异清单人工确认</li>
+<li>冲突处理：以本地实盘为准的字段（库存），以牵牛花为准的字段（已生成单据）分开对待</li>
+</ul>
+
+<h2>七、M4 后端服务</h2>
+<table>
+<tr><th>项</th><th>内容</th></tr>
+<tr><td>数据模型</td><td>product / barcode_lib / order / order_item / customer / sync_batch</td></tr>
+<tr><td>API 清单</td><td>商品（CRUD/上下架）、库存（入库/盘点/调整）、订单（创建/流转/查询）、顾客、条码 resolve</td></tr>
+<tr><td>条码代理</td><td>APPCODE 只存服务端；配额按 HTTP 200 计（查无也计）、非 200 不计；熔断当日</td></tr>
+<tr><td>形态</td><td>Python 标准库 + SQLite（个人成本敏感，先不引框架）；后续按需迁移</td></tr>
+</table>
+
+<h2>八、M5 小程序化</h2>
+<table>
+<tr><th>任务</th><th>说明</th><th>依赖用户</th></tr>
+<tr><td>小程序账号</td><td>注册微信小程序（个人/企业主体），AppID</td><td>1–2 周</td></tr>
+<tr><td>商户号/支付</td><td>微信支付商户号（对公/小微）</td><td>1–2 周</td></tr>
+<tr><td>顾客端小程序</td><td>复用 M1 页面设计；wx.scanCode 扫码；配送 API 接入（4 家各 1–2 周权限）</td><td>配送 API 权限</td></tr>
+<tr><td>管理端</td><td>小程序内管理页 或 响应式网页（二选一，M1.2 后再定）</td><td>—</td></tr>
+</table>
+
+<h2>九、M6 上线验证</h2>
+<ul>
+<li>灰度试运营：熟人客群 → 固定客群；自提免运费规则验证；4 人配送排班验证</li>
+<li>P1+ 候选：批发电子发票、储值/余额、生鲜（效期/批次，关联 D3 待定）</li>
+</ul>
+
+<h2>十、依赖用户的事项</h2>
+<table>
+<tr><th>事项</th><th>影响</th><th>建议时间</th></tr>
+<tr><td>牵牛花 CSV 导出字段能力确认</td><td>阻塞 M3</td><td>本周（行动项 0）</td></tr>
+<tr><td>微信小程序账号 + 商户号</td><td>阻塞 M5</td><td>1–2 周内启动</td></tr>
+<tr><td>配送 API（美团/达达/闪送/顺丰同城）权限</td><td>阻塞配送接入</td><td>M5 前各 1–2 周</td></tr>
+<tr><td>D1–D5 待确认（入库场景/无条码策略/批次效期/入库单完整度/多单位换算）</td><td>影响 M1.2 库存页设计</td><td>M1.2 前定 D1/D2/D4</td></tr>
+<tr><td>生鲜是否进 MVP、批发发票/储值优先级</td><td>影响 M6 范围</td><td>M5 前后</td></tr>
+</table>
+
+<h2>十一、风险与红线</h2>
+<div class="risk"><b>风险：</b>① 牵牛花导出能力未知 → 行动项 0 尽快验证；② 小程序/商户号申请周期 → 提前并行申请；③ 配送 API 成本与权限 → 自提优先、配送后置；④ 一码多品 → 建档人工确认。</div>
+<div class="risk"><b>红线：</b>敏感信息（AppCode/凭证/Token）绝不入库，每次推送前三层扫描；扫码只读（D8）；价格与库存永不自动填云端值；建档必须人工确认；腾讯文档推送前必须 pull 比对、保留外部修改。</div>
+
+<h2>十二、进度跟踪</h2>
+<table>
+<tr><th>里程碑</th><th>状态</th><th>产出/链接</th></tr>
+<tr><td>M0 基建</td><td class="ok">✔ 完成</td><td>GitHub 仓库 · README · 本计划 · 文档同步链路</td></tr>
+<tr><td>M1.1 顾客端商城 demo</td><td class="ok">✔ 完成</td><td>mall-demo/（首页/详情/购物车/结算/我的订单 + 40 项测试）</td></tr>
+<tr><td>M1.2 管理端扩展</td><td class="doing">● 下一步</td><td>库存管理（入库/盘点/改数，D8 手动）· 订单管理 · 顾客管理</td></tr>
+<tr><td>M2/M3/M4/M5/M6</td><td class="todo">○ 待办</td><td>—</td></tr>
+</table>
+
+<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。下一轮：M1.1 顾客端商城 demo 落地 + 测试。</div>
+
+</body>
+</html>

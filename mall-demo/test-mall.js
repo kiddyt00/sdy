@@ -1,0 +1,155 @@
+/* =====================================================================
+ * 顾客端商城 Demo —— 核心逻辑测试（Node）
+ * 覆盖：购物车合计 / 配送费规则 / 下单扣库存 / 取消回补 / 状态机 / 售罄
+ * 运行：node test-mall.js
+ * ===================================================================== */
+'use strict';
+const Mall = require('./mall.js');
+
+let passed = 0, failed = 0;
+function ok(cond, msg) {
+  if (cond) { passed++; console.log('  ✔ ' + msg); }
+  else { failed++; console.log('  ✘ ' + msg); }
+}
+function throws(fn, msg) {
+  try { fn(); ok(false, msg + '（应抛错却成功）'); }
+  catch (e) { ok(true, msg + '（' + e.message + '）'); }
+}
+function section(t) { console.log('\n■ ' + t); }
+
+function fresh() {
+  Mall._resetForTest();
+  Mall.loadCatalog();           // 触发播种
+}
+
+// ============ ① 购物车与合计 ============
+section('① 购物车与合计');
+fresh();
+ok(Mall.cartSummary().count === 0 && Mall.cartSummary().subtotal === 0, '空车 count=0 subtotal=0');
+Mall.addToCart('6901234567892', 2);   // 可乐 2.5
+Mall.addToCart('6902083881234', 3);   // 农夫山泉 1.8
+Mall.addToCart('6901234567892', 1);   // 再加 1 → 同码合并 3
+{
+  const s = Mall.cartSummary();
+  ok(s.count === 6, 'count=6（2+3+1 合并）');
+  ok(s.subtotal === 2.5 * 3 + 1.8 * 3 && Math.abs(s.subtotal - 12.9) < 1e-6, 'subtotal=12.9（3×2.5+3×1.8）');
+  ok(s.lines.find(l => l.code === '6901234567892').qty === 3, '同码合并 qty=3');
+}
+Mall.setQty('6902083881234', 0);
+ok(Mall.cartSummary().count === 3, 'setQty(0) 移除该行，count=3');
+Mall.setQty('6901234567892', 999);    // 超库存 → 钳到 120
+ok(Mall.cartSummary().lines[0].qty === 120, '超库存钳制到 120');
+throws(() => Mall.addToCart('6901234567892', 100), '已到 120 再加 100 → 库存不足拦截');
+Mall.clearCart();
+ok(Mall.cartSummary().count === 0, 'clearCart 后 count=0');
+
+// ============ ② 配送费规则 ============
+section('② 配送费规则');
+ok(Mall.calcDeliveryFee('pickup', 0) === 0, '自提任意金额免配送费');
+ok(Mall.calcDeliveryFee('pickup', 99.99) === 0, '自提 99.99 免配送费');
+ok(Mall.calcDeliveryFee('delivery', 29.99) === 3, '配送 29.99 < 30 → 3 元');
+ok(Mall.calcDeliveryFee('delivery', 30) === 0, '配送 30 → 免');
+ok(Mall.calcDeliveryFee('delivery', 55.5) === 0, '配送 55.5 → 免');
+throws(() => Mall.calcDeliveryFee('xxx', 10), '未知配送方式抛错');
+
+// ============ ③ 下单：校验 → 扣减 → 生成订单 ============
+section('③ 下单扣库存与校验');
+fresh();
+const stockBefore = Mall.getProduct('6901234567892').stock; // 120
+Mall.addToCart('6901234567892', 5);
+Mall.addToCart('6901001100113', 2);   // 青岛 6.0
+{
+  const o = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '张三', phone: '13800000000' } });
+  ok(o.status === 'pending', '订单初始状态=待备货');
+  ok(o.subtotal === 2.5 * 5 + 6 * 2, 'subtotal 正确');
+  ok(o.deliveryFee === 0 && o.total === o.subtotal, '自提配送费 0，total=subtotal');
+  ok(Mall.getProduct('6901234567892').stock === stockBefore - 5, '下单扣减库存 120→115');
+  ok(Mall.cartSummary().count === 0, '下单后购物车清空');
+  ok(Mall.getOrders().length === 1, '订单已入列表');
+}
+// 库存不足下单（先手动改库存：加购 2 后，下单前库存降为 1）
+Mall._resetForTest();
+{
+  const list = Mall.loadCatalog();
+  list.find(p => p.code === '6901234567892').stock = 3;
+  Mall.saveCatalog(list);
+  Mall.addToCart('6901234567892', 2);                // 2 ≤ 3，可加购
+  const list2 = Mall.loadCatalog();
+  list2.find(p => p.code === '6901234567892').stock = 1; // 下单前库存降为 1
+  Mall.saveCatalog(list2);
+  throws(() => Mall.createOrder({ deliveryType: 'delivery', customer: { name: '李四', phone: '13900000000', address: '幸福路1号' } }), '下单时库存不足 → 拦截且不生成订单');
+  ok(Mall.getOrders().length === 0, '拦截后订单数为 0');
+  ok(Mall.getProduct('6901234567892').stock === 1, '拦截后库存未变（仍 1）');
+}
+// 表单校验
+fresh();
+throws(() => Mall.createOrder({ deliveryType: 'delivery', customer: { name: '', phone: '1' } }), '缺姓名 → 拦截');
+throws(() => Mall.createOrder({ deliveryType: 'pickup', customer: { name: '王五' } }), '缺电话 → 拦截');
+Mall.addToCart('6901234567892', 1);
+throws(() => Mall.createOrder({ deliveryType: 'delivery', customer: { name: '王五', phone: '1' } }), '配送缺地址 → 拦截');
+{
+  const o = Mall.createOrder({ deliveryType: 'delivery', customer: { name: '王五', phone: '13700000000', address: '花园路2号' } });
+  ok(o.deliveryFee === 3, '配送 <30 → 运费 3 计入 total');
+}
+
+// ============ ④ 取消回补 ============
+section('④ 取消订单回补库存');
+fresh();
+const s2 = Mall.getProduct('6901001100113').stock; // 90
+Mall.addToCart('6901001100113', 4);
+const o2 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '赵六', phone: '13600000000' } });
+ok(Mall.getProduct('6901001100113').stock === s2 - 4, '下单后库存 90→86');
+Mall.cancelOrder(o2.id);
+ok(Mall.getProduct('6901001100113').stock === s2, '取消后库存回补 86→90');
+ok(Mall.getOrders()[0].status === 'cancelled', '状态=已取消');
+// 已备货不可取消
+Mall.addToCart('6901001100113', 1);
+const o3 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '钱七', phone: '13500000000' } });
+Mall.advanceOrder(o3.id, 'ready');
+throws(() => Mall.cancelOrder(o3.id), '待自提（已备货）不可取消 → 拦截');
+
+// ============ ⑤ 订单状态机 ============
+section('⑤ 订单状态机');
+fresh();
+Mall.addToCart('6907992751797', 2);
+const o4 = Mall.createOrder({ deliveryType: 'delivery', customer: { name: '孙八', phone: '13400000000', address: '梧桐巷3号' } });
+Mall.advanceOrder(o4.id, 'delivering');
+ok(Mall.getOrders()[0].status === 'delivering', 'pending → delivering 合法');
+Mall.advanceOrder(o4.id, 'done');
+ok(Mall.getOrders()[0].status === 'done', 'delivering → done 合法');
+Mall.addToCart('6907992751797', 1);
+const o5 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '周九', phone: '13300000000' } });
+Mall.advanceOrder(o5.id, 'ready');
+ok(Mall.getOrders()[0].status === 'ready', 'pending → ready 合法');
+Mall.advanceOrder(o5.id, 'done');
+ok(Mall.getOrders()[0].status === 'done', 'ready → done 合法');
+Mall.addToCart('6907992751797', 1);
+const o6 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '吴十', phone: '13200000000' } });
+throws(() => Mall.advanceOrder(o6.id, 'done'), 'pending → done 非法（必须经 delivering/ready）');
+throws(() => Mall.advanceOrder(o6.id, 'cancelled'), 'pending → cancelled 非法（取消走 cancelOrder）');
+ok(Mall.getOrders()[0].status === 'pending', '非法迁移后状态仍为 pending');
+
+// ============ ⑥ 售罄 ============
+section('⑥ 售罄禁购');
+fresh();
+{
+  const list = Mall.loadCatalog();
+  list.find(p => p.code === '6925303725941').stock = 0;
+  Mall.saveCatalog(list);
+}
+throws(() => Mall.addToCart('6925303725941', 1), '售罄商品加购 → 拦截');
+{
+  const list = Mall.loadCatalog();
+  list.find(p => p.code === '6925303725941').stock = 2;
+  Mall.saveCatalog(list);
+  Mall.addToCart('6925303725941', 2);
+  Mall.addToCart('6901234567892', 1);
+  const list2 = Mall.loadCatalog();
+  list2.find(p => p.code === '6925303725941').stock = 1; // 下单前该品库存降为 1 < 车 2
+  Mall.saveCatalog(list2);
+  throws(() => Mall.createOrder({ deliveryType: 'pickup', customer: { name: '郑一', phone: '13100000000' } }), '下单时某品售罄 → 整单拦截');
+}
+
+console.log('\n========================================');
+console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
+process.exit(failed ? 1 : 0);
