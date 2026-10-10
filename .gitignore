@@ -25,3 +25,6 @@ __pycache__/
 *.swp
 .idea/
 .vscode/
+
+# 生产服务器凭证（本地专用）
+.server_cred.md

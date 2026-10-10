@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>牵牛花对账工作台 · 商城 M3</title>
+<style>
+  :root{
+    --ink:#14532d; --ink-2:#0d3b21; --accent:#f97316; --paper:#f4efe4;
+    --paper-2:#fffdf8; --line:#e2d9c8; --muted:#6b7a6f; --ok:#15803d; --warn:#b91c1c;
+    --serif:"Noto Serif SC","Songti SC","Source Han Serif SC",Georgia,serif;
+    --mono:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:
+      radial-gradient(circle at 12% 8%, rgba(249,115,22,.10), transparent 42%),
+      radial-gradient(circle at 88% 0%, rgba(20,83,45,.12), transparent 46%),
+      var(--paper);
+    color:var(--ink-2); font-family:var(--serif); line-height:1.6;
+  }
+  .noise{position:fixed; inset:0; pointer-events:none; opacity:.35; mix-blend-mode:multiply;
+    background-image:radial-gradient(rgba(20,83,45,.07) 1px, transparent 1px); background-size:4px 4px;}
+  header{padding:34px 28px 10px; position:relative}
+  h1{margin:0; font-size:30px; letter-spacing:.06em}
+  h1 small{display:block; font-size:13px; font-family:var(--mono); letter-spacing:.18em; color:var(--muted); text-transform:uppercase; margin-top:6px}
+  .rule{height:3px; background:linear-gradient(90deg,var(--ink),var(--accent) 55%,transparent); margin:14px 0 0}
+  main{padding:18px 28px 70px; max-width:1180px}
+  section{background:var(--paper-2); border:1px solid var(--line); border-left:5px solid var(--ink);
+    padding:18px 20px; margin:0 0 20px; box-shadow:0 1px 0 rgba(20,83,45,.06)}
+  section > h2{margin:0 0 12px; font-size:18px; display:flex; align-items:center; gap:10px}
+  .step{font-family:var(--mono); font-size:12px; background:var(--ink); color:var(--paper);
+    padding:2px 8px; letter-spacing:.1em}
+  textarea{width:100%; min-height:110px; font-family:var(--mono); font-size:12.5px;
+    border:1px solid var(--line); background:#fff; padding:10px; color:var(--ink-2); resize:vertical}
+  button{font-family:var(--serif); font-size:14px; padding:8px 16px; border:1px solid var(--ink);
+    background:var(--ink); color:var(--paper); cursor:pointer; margin:8px 8px 0 0; transition:.18s}
+  button:hover{background:var(--accent); border-color:var(--accent)}
+  button.ghost{background:transparent; color:var(--ink)}
+  button.ghost:hover{background:var(--ink); color:var(--paper)}
+  button:disabled{opacity:.45; cursor:not-allowed}
+  .hint{font-size:13px; color:var(--muted); margin:8px 0 0}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:10px; margin:6px 0 14px}
+  .card{border:1px solid var(--line); background:#fff; padding:10px 12px}
+  .card b{display:block; font-family:var(--mono); font-size:22px; color:var(--ink)}
+  .card span{font-size:12px; color:var(--muted)}
+  .card.hot b{color:var(--warn)}
+  table{width:100%; border-collapse:collapse; font-size:13.5px}
+  th,td{border-bottom:1px solid var(--line); padding:7px 8px; text-align:left}
+  th{background:rgba(20,83,45,.06); font-size:12.5px; letter-spacing:.04em; white-space:nowrap}
+  td.num{font-family:var(--mono); text-align:right}
+  td.diff-neg{color:var(--warn); font-family:var(--mono); text-align:right}
+  td.diff-pos{color:var(--ok); font-family:var(--mono); text-align:right}
+  .tag{font-family:var(--mono); font-size:11.5px; padding:1px 7px; border:1px solid currentColor; white-space:nowrap}
+  .tag.stock{color:#b45309} .tag.price{color:#7c3aed} .tag.both{color:var(--warn)} .tag.ok{color:var(--ok)}
+  .empty{color:var(--muted); font-size:13.5px; padding:6px 0}
+  footer{padding:0 28px 40px; font-size:12.5px; color:var(--muted)}
+  code{font-family:var(--mono); background:rgba(20,83,45,.07); padding:1px 5px}
+  .reveal{opacity:0; transform:translateY(10px); animation:rv .5s forwards}
+  @keyframes rv{to{opacity:1; transform:none}}
+</style>
+</head>
+<body>
+<div class="noise"></div>
+<header>
+  <h1>牵牛花对账工作台
+    <small>Qianniuhua reconciliation · M3 data layer</small>
+  </h1>
+  <div class="rule"></div>
+</header>
+
+<main>
+  <section class="reveal" style="animation-delay:.02s">
+    <h2><span class="step">STEP 1</span> 载入牵牛花导出</h2>
+    <p class="hint">把牵牛花后台导出的商品/库存 CSV（或 Excel 另存为 CSV）整段粘贴进来，或选择文件。表头支持中英文别名：
+      <code>条码/编码/barcode</code>、<code>名称/品名</code>、<code>库存/结存/qty</code>、<code>零售价/售价/price</code>。</p>
+    <textarea id="cloudText" placeholder="条码,名称,库存,零售价&#10;6901234567892,可口可乐 330ml罐装,115,2.5&#10;..."></textarea>
+    <div>
+      <input type="file" id="file" accept=".csv,.txt,.tsv" style="display:none">
+      <button onclick="document.getElementById('file').click()">📂 选择 CSV 文件</button>
+      <button class="ghost" onclick="useSample()">🧪 用示例数据</button>
+      <button class="ghost" onclick="clearAll()">清空</button>
+    </div>
+    <p class="hint" id="loadMsg">本地侧数据：<b id="localInfo">读取中…</b>（来自本机商品库 <code>bd_products</code>，与商城/条码 demo 同源）</p>
+  </section>
+
+  <section class="reveal" style="animation-delay:.06s">
+    <h2><span class="step">STEP 2</span> 对账结果 <span class="hint" style="margin:0" id="runHint">（点下方按钮开始）</span></h2>
+    <div>
+      <button id="runBtn" onclick="runReconcile()">⚖️ 开始对账</button>
+      <button class="ghost" onclick="toggleAll(true)">全选差异</button>
+      <button class="ghost" onclick="toggleAll(false)">全不选</button>
+    </div>
+    <div class="cards" id="cards"></div>
+    <div id="diffWrap"><p class="empty">尚未对账。</p></div>
+    <div id="onlyWrap"></div>
+  </section>
+
+  <section class="reveal" style="animation-delay:.1s">
+    <h2><span class="step">STEP 3</span> 导出（人工确认后）</h2>
+    <p class="hint">规则：<b>库存以本地实盘为准</b> → 生成回填 CSV 交给牵牛花；本地有云端无的商品 → 生成上传建档 CSV。
+      差异需先勾选确认，未确认项不会进入导出。</p>
+    <div>
+      <button id="backBtn" onclick="exportBackfill()" disabled>⬇️ 导出库存回填 CSV</button>
+      <button id="upBtn" onclick="exportUpload()" disabled>⬇️ 导出新增建档 CSV</button>
+    </div>
+    <p class="hint" id="expMsg"></p>
+  </section>
+</main>
+
+<footer>
+  纯前端页面：数据只在浏览器本地处理，不上传任何服务器。引擎见 <code>sync-csv.js</code>，测试 <code>node test-sync.js</code>。
+  · 返回 <a href="../mall-demo/mall.html">商城</a> · <a href="../mall-demo/admin.html">管理端</a> · <a href="../barcode-demo/index.html">扫码台</a>
+</footer>
+
+<script src="sync-csv.js"></script>
+<script>
+'use strict';
+
+// 本地侧商品：同源 localStorage（商城/管理端写入），为空时用内置样例
+var LOCAL_SAMPLE = [
+  {code:'6901234567892', name:'可口可乐 330ml罐装', stock:120, salePrice:2.5, unit:'罐'},
+  {code:'6902083881234', name:'农夫山泉 550ml',    stock:200, salePrice:1.8, unit:'瓶'},
+  {code:'6921168509256', name:'心相印抽纸',        stock:60,  salePrice:4.5, unit:'包'},
+  {code:'6925303725941', name:'旺旺雪饼',          stock:40,  salePrice:4.5, unit:'袋'},
+  {code:'6901001100113', name:'青岛啤酒',          stock:90,  salePrice:6.0, unit:'罐'},
+  {code:'6907992751797', name:'伊利纯牛奶',        stock:80,  salePrice:3.5, unit:'盒'}
+];
+var CLOUD_SAMPLE = [
+  '条码,名称,库存,零售价',
+  '6901234567892,可口可乐 330ml罐装,115,2.5',
+  '6902083881234,农夫山泉 550ml,200,1.8',
+  '6921168509256,心相印抽纸,60,5.0',
+  '6925303725941,旺旺雪饼,38,4.5',
+  '6999999999991,牵牛花新品尝鲜,10,9.9',
+  '无码散装商品,散装瓜子,3,12.0'
+].join('\n');
+
+var state = {diffs:[], cloudOnly:[], localOnly:[], checked:{}};
+
+function localProducts(){
+  try{
+    var raw = localStorage.getItem('bd_products');
+    if(raw){
+      var arr = JSON.parse(raw);
+      if(Array.isArray(arr) && arr.length) return arr;
+    }
+  }catch(e){}
+  return LOCAL_SAMPLE;
+}
+function fmtProducts(list){
+  var l = localProducts();
+  document.getElementById('localInfo').textContent = l.length + ' 个商品' +
+    (localStorage.getItem('bd_products') ? '' : '（内置样例，商品库为空）');
+}
+
+/* ---------- STEP 1 ---------- */
+document.getElementById('file').addEventListener('change', function(ev){
+  var f = ev.target.files && ev.target.files[0];
+  if(!f) return;
+  var r = new FileReader();
+  r.onload = function(){ document.getElementById('cloudText').value = r.result; msg('已载入文件：' + f.name); };
+  r.readAsText(f, 'UTF-8');
+});
+function useSample(){ document.getElementById('cloudText').value = CLOUD_SAMPLE; msg('已填入示例数据（含：一致 / 库存差 / 价差 / 双差 / 云端独有 / 无码行）'); }
+function clearAll(){
+  document.getElementById('cloudText').value='';
+  state={diffs:[],cloudOnly:[],localOnly:[],checked:{}};
+  document.getElementById('cards').innerHTML='';
+  document.getElementById('diffWrap').innerHTML='<p class="empty">尚未对账。</p>';
+  document.getElementById('onlyWrap').innerHTML='';
+  msg('已清空');
+}
+function msg(t){ document.getElementById('loadMsg').innerHTML = '本地侧数据：<b>' +
+  localProducts().length + ' 个商品</b>（' + (localStorage.getItem('bd_products')?'来自商品库':'内置样例') + '） · ' + t; }
+
+/* ---------- STEP 2 ---------- */
+function runReconcile(){
+  var text = document.getElementById('cloudText').value;
+  if(!text.trim()){ alert('请先粘贴或载入牵牛花导出的 CSV'); return; }
+  var parsed = SyncCSV.parseCsv(text);
+  if(!parsed.rows.length){ alert('没解析到数据行，请检查内容'); return; }
+  var res = SyncCSV.reconcile(parsed.rows, localProducts());
+  state.diffs = res.diffs; state.cloudOnly = res.cloudOnly; state.localOnly = res.localOnly;
+  state.checked = {};
+  renderCards(res.stats);
+  renderDiffs();
+  renderOnly();
+  document.getElementById('runHint').textContent = '（解析 ' + parsed.rows.length + ' 行，表头：' + parsed.headers.join(' / ') + '）';
+  updateExportBtns();
+}
+function renderCards(s){
+  function c(label, val, hot){ return '<div class="card' + (hot&&val?' hot':'') + '"><b>' + val + '</b><span>' + label + '</span></div>'; }
+  document.getElementById('cards').innerHTML =
+    c('云端条码', s.cloudTotal) + c('本地商品', s.localTotal) + c('成功对齐', s.matched) +
+    c('完全一致', s.ok) + c('库存差异', s.stockDiff) + c('价格差异', s.priceDiff) +
+    c('双项差异', s.both) + c('云端独有', s.cloudOnly) + c('本地独有', s.localOnly) +
+    c('无码/无效', s.invalid, true);
+}
+var VERDICT_TXT = {stock:'库存差', price:'价格差', both:'库存+价格'};
+function renderDiffs(){
+  var d = state.diffs;
+  if(!d.length){ document.getElementById('diffWrap').innerHTML = '<p class="empty">✔ 没有库存/价格差异（已对齐 ' + localProducts().length + ' 个商品）</p>'; return; }
+  var h = '<table><thead><tr><th>确认</th><th>条码</th><th>名称</th><th>云端库存</th><th>本地实盘</th><th>库存差</th>' +
+          '<th>云端价</th><th>本地价</th><th>价差</th><th>判定</th></tr></thead><tbody>';
+  d.forEach(function(r, i){
+    var sd = r.stockDiff, pd = r.priceDiff;
+    h += '<tr><td><input type="checkbox" ' + (state.checked[r.code]?'checked':'') +
+         ' onchange="state.checked[\'' + r.code + '\']=this.checked; updateExportBtns()"></td>' +
+         '<td style="font-family:var(--mono)">' + r.code + '</td><td>' + (r.name||'—') + '</td>' +
+         '<td class="num">' + nv(r.cloudStock) + '</td><td class="num">' + nv(r.localStock) + '</td>' +
+         '<td class="' + (sd<0?'diff-neg':(sd>0?'diff-pos':'num')) + '">' + (sd==null?'—':(sd>0?'+':'')+sd) + '</td>' +
+         '<td class="num">' + nv(r.cloudPrice) + '</td><td class="num">' + nv(r.localPrice) + '</td>' +
+         '<td class="' + (pd<0?'diff-neg':(pd>0?'diff-pos':'num')) + '">' + (pd==null?'—':(pd>0?'+':'')+pd) + '</td>' +
+         '<td><span class="tag ' + r.verdict + '">' + VERDICT_TXT[r.verdict] + '</span></td></tr>';
+  });
+  document.getElementById('diffWrap').innerHTML = h + '</tbody></table>';
+}
+function nv(v){ return v==null ? '—' : v; }
+function renderOnly(){
+  var h = '';
+  if(state.cloudOnly.length){
+    h += '<h2 style="font-size:15px;margin:16px 0 6px">云端有、本地无（' + state.cloudOnly.length + '）：需确认是否建档或停售</h2>' +
+         '<table><thead><tr><th>条码</th><th>名称</th><th>云端库存</th><th>云端价</th></tr></thead><tbody>';
+    state.cloudOnly.forEach(function(p){ h += '<tr><td style="font-family:var(--mono)">' + p.code + '</td><td>' + (p.name||'—') + '</td><td class="num">' + nv(p.stock) + '</td><td class="num">' + nv(p.price) + '</td></tr>'; });
+    h += '</tbody></table>';
+  }
+  if(state.localOnly.length){
+    h += '<h2 style="font-size:15px;margin:16px 0 6px">本地有、云端无（' + state.localOnly.length + '）：待上传建档</h2>' +
+         '<table><thead><tr><th>条码</th><th>名称</th><th>本地库存</th><th>本地价</th></tr></thead><tbody>';
+    state.localOnly.forEach(function(p){ h += '<tr><td style="font-family:var(--mono)">' + p.code + '</td><td>' + (p.name||'—') + '</td><td class="num">' + nv(p.stock) + '</td><td class="num">' + nv(p.price) + '</td></tr>'; });
+    h += '</tbody></table>';
+  }
+  document.getElementById('onlyWrap').innerHTML = h;
+}
+function toggleAll(v){
+  state.diffs.forEach(function(r){ state.checked[r.code] = v; });
+  renderDiffs(); updateExportBtns();
+}
+
+/* ---------- STEP 3 ---------- */
+function confirmedDiffs(){ return state.diffs.filter(function(r){ return state.checked[r.code]; }); }
+function updateExportBtns(){
+  var n = confirmedDiffs().length;
+  var bk = SyncCSV.buildBackfill(confirmedDiffs()).length;
+  document.getElementById('backBtn').disabled = bk === 0;
+  document.getElementById('upBtn').disabled = state.localOnly.length === 0;
+  document.getElementById('expMsg').textContent = '已确认 ' + n + ' 项差异，其中可回填库存 ' + bk + ' 行；本地新增待上传 ' + state.localOnly.length + ' 行。';
+}
+function download(name, text){
+  var blob = new Blob(['\uFEFF' + text], {type:'text/csv;charset=utf-8'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+function exportBackfill(){
+  var rows = SyncCSV.buildBackfill(confirmedDiffs());
+  if(!rows.length){ alert('没有已确认的库存差异'); return; }
+  download('库存回填_' + stamp() + '.csv', SyncCSV.toCsv(['条码','名称','实盘库存','云端库存','差异'], rows));
+}
+function exportUpload(){
+  if(!state.localOnly.length){ alert('没有本地新增商品'); return; }
+  download('本地新增建档_' + stamp() + '.csv', SyncCSV.toCsv(['条码','名称','库存','售价','单位'], SyncCSV.buildUpload(state.localOnly)));
+}
+function stamp(){
+  var d = new Date(), p = function(n){ return String(n).padStart(2,'0'); };
+  return d.getFullYear() + p(d.getMonth()+1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes());
+}
+
+fmtProducts();
+</script>
+</body>
+</html>

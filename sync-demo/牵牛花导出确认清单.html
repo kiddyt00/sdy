@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>牵牛花导出能力确认清单 · 行动项 0</title>
+<style>
+  :root{--ink:#14532d;--ink2:#0d3b21;--accent:#f97316;--paper:#f4efe4;--card:#fffdf8;--line:#e2d9c8;--muted:#6b7a6f;
+    --serif:"Noto Serif SC","Songti SC",Georgia,serif;--mono:"JetBrains Mono","SF Mono",Menlo,monospace;}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(circle at 90% 4%,rgba(249,115,22,.10),transparent 40%),var(--paper);
+    color:var(--ink2);font-family:var(--serif);line-height:1.65}
+  header{padding:32px 28px 8px;border-bottom:1px solid var(--line)}
+  h1{margin:0;font-size:27px;letter-spacing:.05em}
+  h1 small{display:block;font-family:var(--mono);font-size:12.5px;letter-spacing:.16em;color:var(--muted);text-transform:uppercase;margin-top:6px}
+  main{max-width:960px;padding:20px 28px 80px}
+  .lead{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--accent);padding:14px 18px;margin-bottom:22px;font-size:14.5px}
+  h2{font-size:18px;margin:26px 0 10px;padding-bottom:6px;border-bottom:2px solid rgba(20,83,45,.15)}
+  h2 .n{font-family:var(--mono);font-size:12px;background:var(--ink);color:var(--paper);padding:2px 7px;margin-right:8px}
+  table{width:100%;border-collapse:collapse;font-size:14px;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:9px 10px;vertical-align:top;text-align:left}
+  th{background:rgba(20,83,45,.07);font-size:13px;white-space:nowrap}
+  td.q{width:44%}
+  td.fill{background:#fff;min-height:34px}
+  .why{font-size:12.5px;color:var(--muted);display:block;margin-top:3px}
+  .tag{font-family:var(--mono);font-size:11.5px;border:1px solid currentColor;padding:1px 6px;white-space:nowrap}
+  .tag.must{color:#b91c1c}.tag.if{color:#b45309}
+  ul{margin:8px 0 0 4px;padding-left:20px;font-size:14px}
+  li{margin:4px 0}
+  .chk{font-family:var(--mono)}
+  .box{border:1px dashed var(--accent);padding:12px 16px;background:rgba(249,115,22,.06);font-size:14px;margin-top:10px}
+  footer{padding:0 28px 40px;font-size:12.5px;color:var(--muted)}
+  a{color:var(--ink)}
+  @media print{body{background:#fff}.lead,.box{background:#fff}button{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>牵牛花导出能力确认清单
+    <small>Action item 0 · before M3 sync goes live</small>
+  </h1>
+</header>
+<main>
+  <div class="lead">
+    这份清单用于向牵牛花（服务商 / 客户经理 / 售后）确认<b>数据能不能拿得出来、拿得全不全</b>。
+    M3 的 CSV 对账工具已经就绪（<a href="sync.html">对账工作台</a>），只等确认导出字段即可对接真实文件。
+    <b>确认方式</b>：请对方导出一份真实文件发来，用「字段核对」一栏逐项打勾；拿不到的项目记录替代方案。
+  </div>
+
+  <h2><span class="n">A</span>导出能力（最关键的 3 问）</h2>
+  <table>
+    <thead><tr><th>要确认的问题</th><th>为什么问</th><th>对方答复 / 截图</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="q">1. 商品与库存能否导出为 <b>CSV / Excel</b>？在后台哪个菜单？<span class="why">若只能看不能导 → 需要别的方案（截图录入 / 手工盘点）</span></td>
+        <td>导出是 M3 同步的前提；拿不到文件就只能纯手工维护</td>
+        <td class="fill"></td>
+      </tr>
+      <tr>
+        <td class="q">2. 是<b>全量导出</b>还是<b>按条件/分页</b>？有没有<b>定时自动导出</b>或<b>开放 API</b>？<span class="why">最好是「一键全量」；有 API 则可做定时自动同步</span></td>
+        <td>决定同步是「手工月度」还是「自动化」</td>
+        <td class="fill"></td>
+      </tr>
+      <tr>
+        <td class="q">3. 导出字段有哪些？请给一份真实样例文件（脱敏可）。<span class="why">直接决定本工具的字段映射表要不要改</span></td>
+        <td>对账引擎靠表头识别字段</td>
+        <td class="fill"></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">B</span>字段核对（对照真实样例逐项打勾）</h2>
+  <table>
+    <thead><tr><th>字段</th><th>必需性</th><th>牵牛花里的列名</th><th>核对</th></tr></thead>
+    <tbody>
+      <tr><td>商品条码</td><td><span class="tag must">必需</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>商品名称</td><td><span class="tag must">必需</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>库存数量</td><td><span class="tag must">必需</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>零售价 / 售价</td><td><span class="tag must">必需</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>规格（如 330ml）</td><td><span class="tag if">建议</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>单位（罐/瓶/包）</td><td><span class="tag if">建议</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>进价 / 成本价</td><td><span class="tag if">建议</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>分类</td><td><span class="tag if">建议</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>批号 / 效期</td><td><span class="tag if">生鲜需要</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+      <tr><td>多单位/换算（箱↔瓶）</td><td><span class="tag if">整箱进货需要</span></td><td class="fill"></td><td class="chk">☐ 有 ☐ 无</td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">C</span>细节与坑</h2>
+  <table>
+    <thead><tr><th>问题</th><th>为什么</th><th>答复</th></tr></thead>
+    <tbody>
+      <tr><td class="q">文件编码是 UTF-8 还是 GBK？Excel 打开会不会乱码？</td><td>乱码会让整份文件报废</td><td class="fill"></td></tr>
+      <tr><td class="q">无条码商品怎么表示？（空列 / 内部编码 / 不导出）</td><td>本工具会把无条码行记为「无效」并跳过，避免误对账</td><td class="fill"></td></tr>
+      <tr><td class="q">导出的是<b>实时库存</b>还是某个时点快照？</td><td>决定对账差异算不算真差异</td><td class="fill"></td></tr>
+      <tr><td class="q">库存单位与销售单位是否一致？（整箱 vs 单瓶）</td><td>单位不一致会把差异放大成千倍</td><td class="fill"></td></tr>
+      <tr><td class="q">能否<b>导入</b>库存调整？导入模板字段是什么？</td><td>「库存回填 CSV」要靠导入回到牵牛花；不能导入则只能手动改</td><td class="fill"></td></tr>
+      <tr><td class="q">导出/导入是否有次数或时间限制？</td><td>决定同步频率</td><td class="fill"></td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">D</span>拿到样例文件后怎么验</h2>
+  <ul>
+    <li>打开 <a href="sync.html">对账工作台</a> → 选择该 CSV 文件（或整段粘贴）→ 点「开始对账」。</li>
+    <li>看顶部「无码/无效」是否为 0；若很多，说明条码列没被识别，把实际列名告诉我，我改字段映射。</li>
+    <li>差异数量是否合理：库存差异应集中在最近有动销的商品；<b>如果几乎全表都是差异</b>，多半是单位或快照时点问题。</li>
+    <li>确认无误 → 勾选差异 → 导出「库存回填 CSV」→ 在牵牛花里导入（或按导入模板改名后导入）。</li>
+  </ul>
+  <div class="box">
+    <b>结论回填</b>：拿到答复后，把「能不能自动拿数据」的结论记到《开发计划》依赖用户事项表（行动项 0），
+    并决定 M3 是「手工月度对账」还是「自动化同步」。
+  </div>
+
+  <h2><span class="n">E</span>顺带要问的（与 D1–D5 决策相关）</h2>
+  <ul>
+    <li>（D1/D4）入库单：牵牛花的采购/调拨单据能否导出？字段含条码/数量/单价吗？</li>
+    <li>（D2）无条码商品的行业做法：你们客户一般怎么管？（散装、生鲜）</li>
+    <li>（D3）批号效期：生鲜类是否强制录批号？（我方生鲜后置，先记录）</li>
+    <li>（D5）多单位：你们系统里整箱进货是怎么换算的？</li>
+  </ul>
+</main>
+<footer>
+  打印本页可直接带去谈（Ctrl/⌘+P）。工具说明见 <code>sync-demo/README.md</code>。
+</footer>
+</body>
+</html>

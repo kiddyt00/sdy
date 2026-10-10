@@ -113,12 +113,13 @@
 <tr><td>双库服务化</td><td>resolve 三级链路从 demo 提为可复用模块（同码去重锁、串行队列、配额、熔断）</td><td>云端仅双库未命中调用（D6）</td></tr>
 </table>
 
-<h2>六、M3 牵牛花同步</h2>
+<h2>六、M3 牵牛花同步 <span class="ok">✔ 工具就绪</span></h2>
 <ul>
-<li><b>行动项 0（依赖用户）</b>：向牵牛花确认导出/导入的字段能力（条码、名称、库存、价格能否导出 CSV）</li>
+<li><b>行动项 0（依赖用户）</b>：向牵牛花确认导出/导入的字段能力（条码、名称、库存、价格能否导出 CSV）——已备好可打印清单页 <code>sync-demo/牵牛花导出确认清单.html</code></li>
 <li>月度双向 CSV：牵牛花库存 → 本地盘点基准；本地实盘 → 回填牵牛花；对账差异清单人工确认</li>
 <li>冲突处理：以本地实盘为准的字段（库存），以牵牛花为准的字段（已生成单据）分开对待</li>
 </ul>
+<div class="callout green"><b>已交付（本轮）：</b>对账引擎 <code>sync-demo/sync-csv.js</code>（CSV 解析：BOM/CRLF/引号转义/自动识别逗号与 Tab；字段映射可配中英文别名；对账产出库存差/价差/双差 + 云端独有 + 本地独有 + 无效行统计；导出「库存回填（以本地实盘为准）」与「新增建档」两份 CSV）+ <b>62 项测试</b>；对账工作台页面 <code>sync-demo/sync.html</code>（载入 CSV → 差异表勾选确认 → 导出，纯前端不上传）；行动项 0 确认清单页。<br>差异默认<b>未确认</b>，必须人工勾选才进导出——防止误回填。本地商品侧复用同源 <code>bd_products</code>（与商城/扫码 demo 同库）。<br><b>唯一待办</b>：拿到牵牛花真实导出文件后核对列名（若不在映射表内，改 <code>DEFAULT_FIELD_MAP</code> 即可）。</div>
 
 <h2>七、M4 后端服务</h2>
 <table>
@@ -127,6 +128,13 @@
 <tr><td>API 清单</td><td>商品（CRUD/上下架）、库存（入库/盘点/调整）、订单（创建/流转/查询）、顾客、条码 resolve</td></tr>
 <tr><td>条码代理</td><td>APPCODE 只存服务端；配额按 HTTP 200 计（查无也计）、非 200 不计；熔断当日</td></tr>
 <tr><td>形态</td><td>Python 标准库 + SQLite（个人成本敏感，先不引框架）；后续按需迁移</td></tr>
+<tr><td>部署</td><td><b>生产服务器</b>（IP 见本地 <code>.server_cred.md</code>，公开文档不披露）（Ubuntu / 4 核 / 3.7G 内存 / 40G 盘 / Docker 29 + Compose v5），参照同机 <code>yiguan</code> 项目范式：<br>
+• Docker Compose 部署，镜像拉取走国内代理 <code>docker.1ms.run/library</code>；<br>
+• <b>蓝绿 A/B 双实例</b>（frontend-a / frontend-b）滚动更新，主机级 Nginx upstream 池做反代与失败重试；<br>
+• 主机 Nginx 继续监听 80/443（现有服务在用），本项目只新增一个域名 conf，证书用现成 acme.sh；<br>
+• <b>端口约定</b>：前端 8091 / 8092（蓝绿），后端 8093，均绑 <code>127.0.0.1</code>；<b>已占用端口一律避开</b>：22 / 53 / 80 / 443 / 8081 / 8082（yiguan 前端）；<br>
+• 服务器上还有其他在跑的服务，改动前先 <code>ss -tlnp</code> + <code>docker ps</code> 复核，不动他人配置。</td></tr>
+<tr><td>依赖</td><td>生产域名（小程序要求 <b>HTTPS + 已备案域名</b>）——加入依赖用户事项表</td></tr>
 </table>
 
 <h2>八、M5 小程序化</h2>
@@ -147,7 +155,8 @@
 <h2>十、依赖用户的事项</h2>
 <table>
 <tr><th>事项</th><th>影响</th><th>建议时间</th></tr>
-<tr><td>牵牛花 CSV 导出字段能力确认</td><td>阻塞 M3</td><td>本周（行动项 0）</td></tr>
+<tr><td>牵牛花 CSV 导出字段能力确认</td><td>阻塞 M3 真实对接</td><td>本周（行动项 0；清单页 <code>sync-demo/牵牛花导出确认清单.html</code> 可直接打印带去谈）</td></tr>
+<tr><td><b>生产域名 + ICP 备案</b>（HTTPS）</td><td>阻塞 M4 上线 / M5 小程序（小程序服务器域名必须 HTTPS 且已备案）</td><td>M4 期间并行办理</td></tr>
 <tr><td>微信小程序账号 + 商户号</td><td>阻塞 M5</td><td>1–2 周内启动</td></tr>
 <tr><td>配送 API（美团/达达/闪送/顺丰同城）权限</td><td>阻塞配送接入</td><td>M5 前各 1–2 周</td></tr>
 <tr><td>D1–D5 待确认（入库场景/无条码策略/批次效期/入库单完整度/多单位换算）</td><td>影响 M1.2 库存页设计</td><td>M1.2 前定 D1/D2/D4</td></tr>
@@ -166,10 +175,11 @@
 <tr><td>M1.2 管理端扩展</td><td class="ok">✔ 完成</td><td>admin.html 订单/库存/顾客三页 + mall-admin.js + 32 项测试</td></tr>
 <tr><td>M1.3 扫码体验</td><td class="ok">✔ 完成</td><td>barcode-demo 摄像头扫一扫 + 扫码枪 HID + 双库徽标（wx.scanCode 待 M5）</td></tr>
 <tr><td>M2 规则与数据层</td><td class="ok">✔ 完成</td><td>价格规则服务 pricing.js + 28 项测试；订单状态机/库存联动归入；双库 resolve 服务化（app.js）已有 7 组测试</td></tr>
-<tr><td>M3 牵牛花同步</td><td class="doing">● 下一步</td><td>行动项 0：验证牵牛花导出字段（条码/名称/库存/价格 CSV）→ 月度双向对账工具</td></tr>
+<tr><td>M3 牵牛花同步</td><td class="ok">✔ 工具就绪</td><td>sync-demo/sync-csv.js（对账引擎 + 62 项测试）· sync.html 对账工作台 · 牵牛花导出确认清单.html；<b>待真实导出文件核对列名</b></td></tr>
+<tr><td>M4 后端服务</td><td class="doing">● 下一步</td><td>Python 标准库 + SQLite · 条码 resolve 服务端化（APPCODE 只存服务端）· 部署到生产服务器（IP 见本地 <code>.server_cred.md</code>）（Docker 蓝绿 A/B，参照 yiguan 范式）</td></tr>
 </table>
 
-<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。M1 页面展示层与 M2 规则数据层已全部落地并测试（M1: 顾客端/管理端/扫码体验；M2: 价格规则服务 + 状态机/库存联动/双库服务化）。下一轮：M3 牵牛花 CSV 同步——行动项 0 需先向牵牛花确认导出字段能力（条码/名称/库存/价格能否导出 CSV）。</div>
+<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。<b>M1 页面展示层、M2 规则数据层、M3 同步工具（对账引擎 + 工作台）均已落地并测试</b>（全套回归：对账 62 + 商城 44 + 价格规则 28 + 管理端 32 + 条码核心 7 组，全绿）。<b>下一轮 M4 后端服务</b>：Python 标准库 + SQLite 数据模型与 API、条码 resolve 服务端化（APPCODE 只存服务端）、按 yiguan 范式部署到生产服务器（IP 见本地 <code>.server_cred.md</code>）（Docker 蓝绿 A/B + 主机 Nginx 反代，端口 8091/8092/8093 避开既有服务）。<b>并行需要用户推进</b>：① 行动项 0 牵牛花导出字段确认（用清单页谈）；② 生产域名 + 备案（小程序要求 HTTPS + 已备案）。</div>
 
 </body>
 </html>

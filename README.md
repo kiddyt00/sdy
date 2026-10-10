@@ -2,7 +2,7 @@
 
 自营微信小程序商城项目：商品、价格、库存、订单、配送、顾客全部自管理，完全独立于牵牛花中台，仅保留**月度 CSV 库存同步**。
 
-> 当前阶段：方案与决策已沉淀，进入「页面展示优先」开发（M1.1 顾客端商城 demo 进行中）。
+> 当前阶段：**M1 页面展示层 + M2 规则数据层 + M3 同步工具**均已完成并测试；下一步 M4 后端服务与生产部署。
 
 ## 文档
 
@@ -20,7 +20,8 @@
 ```
 sdy/
 ├── barcode-demo/          # 条码双库 demo（扫码台[扫码枪HID+摄像头扫一扫]/商品库/条码库/扫码日志/设置）
-├── mall-demo/             # 顾客端商城 demo（M1.1 已完成：首页/详情/购物车/结算/我的订单）
+├── mall-demo/             # 商城 demo（顾客端 5 页面 + 管理端 admin.html + 价格规则 tab）
+├── sync-demo/             # 牵牛花 CSV 对账（sync-csv.js 引擎 + sync.html 工作台 + 导出确认清单）
 ├── *.py                   # 腾讯文档同步/转换/权限工具链
 ├── 开发计划.html           # 开发计划
 ├── 细节讨论记录.html       # 讨论与决策
@@ -41,6 +42,15 @@ sdy/
 - **局域网**：`python3 -m http.server 8900` 后访问。
 - **真实阿里云 API**：`barcode-demo/appcode.txt` 配置 APPCODE 与网关（已被 .gitignore 排除），运行 `python3 proxy.py`；详见 `barcode-demo/README.md`。
 
+### mall-demo / sync-demo（商城、管理端、对账工作台）
+```bash
+cd mall-demo && python3 -m http.server 8910     # 商城 http://127.0.0.1:8910/mall.html
+                                                 # 管理端 /admin.html；对账台见 sync-demo/sync.html
+node mall-demo/test-mall.js && node mall-demo/test-pricing.js && node mall-demo/test-admin.js
+node barcode-demo/test-core.js && node sync-demo/test-sync.js
+```
+三个 demo 共用同源 localStorage 商品库 `bd_products`，需用同一个 http 端口打开才能互相看到数据。
+
 ### 腾讯文档推送
 ```bash
 .venv/bin/python3 convert_html.py 细节讨论记录.html        # → docx/md
@@ -50,4 +60,17 @@ sdy/
 
 ## 开发计划
 
-见 [开发计划.html](开发计划.html)：M0 基建已完成；**M1 页面展示层（顾客端商城 → 管理端 → 扫码体验）已全部完成并测试**；下一步 M2 规则数据 → M3 牵牛花同步（行动项 0：先验证牵牛花导出字段）→ M4 后端 → M5 小程序化 → M6 上线验证。依赖用户事项（牵牛花导出能力、小程序账号/商户号、配送 API 权限）见计划「依赖用户的事项」一节。
+见 [开发计划.html](开发计划.html)：M0 基建、**M1 页面展示层（顾客端商城 → 管理端 → 扫码体验）、M2 规则数据层（价格规则服务）、M3 同步工具（对账引擎 + 工作台）均已完成并测试**；下一步 **M4 后端服务**（Python 标准库 + SQLite）→ M5 小程序化 → M6 上线验证。依赖用户事项（牵牛花导出字段确认、**生产域名 + ICP 备案**、小程序账号/商户号、配送 API 权限）见计划「依赖用户的事项」一节。
+
+## 部署（M4，已勘察）
+
+- **生产服务器**：Ubuntu / 4 核 / 3.7G 内存 / 40G 盘 / Docker 29 + Compose v5（IP 与登录凭证只记本地 `.server_cred.md`，公开文档不披露）。
+- **范式**：参照同机 `yiguan` 项目——Docker Compose + 蓝绿 A/B 双实例 + 主机级 Nginx(80/443) 反代；镜像拉取走国内代理 `docker.1ms.run/library`。
+- **端口约定**：前端 8091/8092（蓝绿）、后端 8093，均绑 `127.0.0.1`；**已占用端口必须避开**：22/53/80/443/8081/8082（同机还有其他服务在跑）。
+- 服务器凭证与详细勘察记录只存本地 `.server_cred.md`（已 gitignore，绝不入库）。
+
+## 协作约定（家里 / 公司两地开发）
+
+- **开工先同步**：`git status` 确认无未提交改动后 `git pull`，避免覆盖另一端的工作。
+- **收工必推送**：本轮改动 commit + push 到 `github.com/kiddyt00/sdy`（main），保证云端代码最新。
+- **敏感信息绝不入库**：推送前三层扫描（工作区 / 暂存区 / 已提交历史）。
