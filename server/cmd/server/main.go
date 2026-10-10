@@ -250,6 +250,55 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		writeJSON(w, 200, o)
 	})
 
+	// 顾客收货地址簿（D18）：按手机号归档，顾客端一键带出。
+	// 只服务「少打字」：订单地址仍是下单当时的快照，改地址簿不影响历史订单。
+	mux.HandleFunc("/api/addresses", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			list, err := st.ListAddresses(r.URL.Query().Get("phone"))
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
+		case http.MethodPost:
+			var in store.Address
+			if !decode(w, r, &in) {
+				return
+			}
+			saved, err := st.SaveAddress(in)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, saved)
+		default:
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+		}
+	})
+
+	mux.HandleFunc("/api/addresses/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		raw := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/addresses/"), "/")
+		if raw == "" {
+			writeJSON(w, 400, map[string]string{"error": "缺少地址编号"})
+			return
+		}
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": "地址编号不合法"})
+			return
+		}
+		if err := st.DeleteAddress(r.URL.Query().Get("phone"), id); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "id": id})
+	})
+
 	// 条码解析链（本地优先，扫码只读，不改库存）
 	mux.HandleFunc("/api/barcode/resolve", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")

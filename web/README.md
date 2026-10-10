@@ -8,13 +8,13 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `web/index.html` | 顾客端页面（471 行）：首页/分类/搜索/扫码找货/商品详情/购物车/结算/我的订单；UI 层只调用 `Mall` 与 `SdyApi`，不自己算价 |
+| `web/index.html` | 顾客端页面（656 行）：首页/分类/搜索/扫码找货/商品详情/购物车/结算（常用地址一键带出）/我的订单/收货地址簿；UI 层只调用 `Mall` 与 `SdyApi`，不自己算价 |
 | `web/admin.html` | 管理端页面（861 行）：经营总览 KPI / 订单处理（含**小票打印**）/ 库存与流水 / **商品档案（建档·编辑·删除）** / 价格防护 / 顾客档案 / 系统与工具 |
 | `web/assets/theme.css` | 共享设计系统（416 行）：设计令牌 + 组件类 + 三档响应式（断点 1080 / 900 / 640px） |
-| `web/mall.js` | 领域逻辑（255 行，全局 `Mall`）：商品、购物车、订单、配送规则、localStorage 读写 |
+| `web/mall.js` | 领域逻辑（352 行，全局 `Mall`）：商品、购物车、订单、配送规则、**收货地址簿**、localStorage 读写 |
 | `web/mall-admin.js` | 后台逻辑（443 行，全局 `Admin`）：库存流水/入库/盘点、**商品档案 CRUD 与校验**、配送员派单、顾客档案聚合、**小票模型（`buildReceipt`）与门店抬头** |
 | `web/pricing.js` | 价格与配送费规则（65 行，全局 `Pricing`）：价格防护、运费计算 |
-| `web/sdy-api.js` | 后端连通层（334 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示 |
+| `web/sdy-api.js` | 后端连通层（374 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示 |
 | `web/test-*.js` | 6 套测试（见下），纯 Node 运行，无需浏览器 |
 
 页面之间只靠相对路径互链（`index.html` ↔ `admin.html`，管理端系统页再链到 `../barcode-demo/`、`../sync-demo/`）。
@@ -72,21 +72,21 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy
-node web/test-mall.js          # 44 项
+node web/test-mall.js          # 73 项
 node web/test-pricing.js       # 28 项
 node web/test-admin.js         # 98 项
-node web/test-sdy-api.js       # 41 项
-node web/test-page-boot.js     # 65 项
+node web/test-sdy-api.js       # 56 项
+node web/test-page-boot.js     # 95 项
 node web/test-integration.js   # 17 项（需后端在线）
 ```
 
 | 测试 | 实测结果 | 覆盖什么 | 需要后端 |
 | --- | --- | --- | --- |
-| `web/test-mall.js` | 通过 44 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机 | 否 |
+| `web/test-mall.js` | 通过 73 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机、**收货地址簿（默认地址语义、按手机号隔离、删默认顶替）** | 否 |
 | `web/test-pricing.js` | 通过 28 项 / 失败 0 项 | 配送费规则、价格防线、批发与无参考价豁免 | 否 |
 | `web/test-admin.js` | 通过 98 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额）、**商品档案归一化/校验/价格防线/三档删除约束**、**小票模型与门店抬头** | 否 |
-| `web/test-sdy-api.js` | 通过 41 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品 | 否（注入假 fetch） |
-| `web/test-page-boot.js` | 通过 65 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体**、**小票写入打印区与批量分页（不真打印）** | 否 |
+| `web/test-sdy-api.js` | 通过 56 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品、**地址簿在线/离线双路径（写成功自动重拉、失败不污染镜像）** | 否（注入假 fetch） |
+| `web/test-page-boot.js` | 通过 95 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体**、**小票写入打印区与批量分页（不真打印）**、**结算页地址带出与地址簿弹窗全流程** | 否 |
 | `web/test-integration.js` | 17 项（需后端在线；探测不到会自动跳过并 `exit 0`） | 真 fetch → 真后端：下单扣库存、运费、状态流转、非法流转 409、取消回补、比价巡检 | **是** |
 
 联调测试的地址取 `SDY_API_BASE`（不设则默认 `http://127.0.0.1:8093`）：
@@ -135,9 +135,19 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 - **抬头在管理端「系统与工具 → 小票抬头」改**，存 localStorage `mall_store`；店名必填且 ≤20 字，票尾留空回落默认文案。抬头只影响本机打印，**不上后端**。
 - **热敏尺寸**：`#receipt` 定宽 `72mm`（58mm 热敏纸可裁），`@page { margin: 6mm }`，一单一张不跨页。
 
+**收货地址簿（D18）**
+
+- **按手机号归档**：一个手机号一组常用地址，默认地址排最前、其余按入库顺序（`ORDER BY is_default DESC, id ASC`）。后端是 `customer_address` 表（`server/internal/store/store.go`），前端在 `localStorage.mall_addresses` 留一份镜像，离线时同一套语义照跑。
+- **默认地址语义（两套实现必须一致）**：第一条保存的地址自动成为默认；显式勾「设为默认地址」时把同手机号其它条目的默认标记摘掉；**删掉默认地址后由最早的一条顶为默认**；编辑一条已有地址时不传默认标记就保留原来的标记（不会因为改门牌丢掉默认）。
+- **结算时带出**：打开结算弹窗按当前手机号拉一次地址簿，默认地址直接回填收货人/手机号/地址，并在「常用地址（点一下带出）」里高亮选中项（品牌绿边框 + 浅绿底）；切换配送方式时刷新该区域，**自提不显示地址簿**；点某一条即回填表单。
+- **下单时写入**：「保存到地址簿，下次一键带出」（默认勾选）勾上才会写；填的内容与带出的那条**完全一致就不重复写**，改了内容则存成**新的一条**（`id: 0`），**绝不覆盖已有地址**——想改已有地址走「地址簿管理」的编辑。写失败只 `console.warn`，不影响已经入库的订单。
+- **地址簿管理弹窗**：顶部工具区「📍 地址簿」或结算弹窗里的「地址簿管理」都能打开；支持新增 / 编辑 / 设为默认 / 删除（删除有 `confirm` 二次确认）。
+- **订单是快照**：订单里存的是下单当时的收货人/电话/地址，之后改地址簿**不影响历史订单**（与「小票只读投影」同一条原则）。
+- **校验文案（前后端完全相同）**：`手机号不能为空`、`收货人不能为空`、`收货人不能超过 20 字`、`送货地址不能为空`、`送货地址不能超过 120 字`。
+
 **约定与坑**
 
-- **localStorage 键**：`bd_products`（商品库，与扫码台、对账工具**同源共用**）、`mall_cart`（购物车）、`mall_orders`（订单）、`mall_customer`（上次填写的收货信息）、`mall_couriers`（配送员名单）、`mall_stockLog`（库存流水，上限 500 条）、`mall_customers`（顾客备注）、`mall_store`（小票抬头：店名/电话/地址/票尾）、`sdy_api_base`（后端地址）。
+- **localStorage 键**：`bd_products`（商品库，与扫码台、对账工具**同源共用**）、`mall_cart`（购物车）、`mall_orders`（订单）、`mall_customer`（上次填写的收货信息）、`mall_addresses`（收货地址簿镜像）、`mall_couriers`（配送员名单）、`mall_stockLog`（库存流水，上限 500 条）、`mall_customers`（顾客备注）、`mall_store`（小票抬头：店名/电话/地址/票尾）、`sdy_api_base`（后端地址）。
 - **跨模块共用**：商城、扫码台、对账工作台必须用**同一个端口（同一源）**打开，才看到同一份 `bd_products`。
 - **历史坑（已修，勿回退）**：`mall.js` 在浏览器里声明了顶层 `const Mall`，`mall-admin.js` 若再声明一个 `Mall` 会直接 `SyntaxError: Identifier 'Mall' has already been declared`，导致整个后台脚本静默失效。所以后台注入时用的是 `MallCore` 这个名字，别改回去。
 - **库存页形态未定稿**：`web/mall-admin.js` 顶部注释写明库存页是**占位实现**（D1/D2/D4 待确认后可能调整），改动前先看 `../细节讨论记录.html`。
@@ -148,7 +158,7 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 
 - [`../README.md`](../README.md) — 仓库总览、里程碑状态、测试矩阵
 - [`../开发计划.html`](../开发计划.html) — 路线图与当前重心
-- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账 D1–D17（含库存页形态、扫码只读、商品档案写接口、小票约定等）
+- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账 D1–D18（含库存页形态、扫码只读、商品档案写接口、小票约定、收货地址簿等）
 - [`../独立小程序商城可行性分析与架构方案.html`](../独立小程序商城可行性分析与架构方案.html) — 架构与实现现状
 - [`../server/README.md`](../server/README.md) — 后端接口、环境变量、测试
 - [`../barcode-demo/README.md`](../barcode-demo/README.md) — 扫码台与双库解析链

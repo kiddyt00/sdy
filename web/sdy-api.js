@@ -288,6 +288,42 @@ const SdyApi = (() => {
     return res;
   }
 
+  // ---------------- 收货地址簿（D18） ----------------
+  // 在线时以后端为准，每次操作后把整册镜像回 localStorage（离线仍能一键带出默认地址）；
+  // 离线时直接用 Mall 的本地地址簿（同一套默认地址语义），页面代码无需分叉。
+  async function listAddresses(phone) {
+    const m = M();
+    if (mode_ !== 'server') return m.listAddresses(phone);
+    const res = await req('GET', '/api/addresses?phone=' + encodeURIComponent(phone));
+    const items = (res && res.items ? res.items : []);
+    try { m._saveAddresses(phone, items); } catch (e) {}
+    return items;
+  }
+
+  async function defaultAddress(phone) {
+    const list = await listAddresses(phone).catch(() => []);
+    return list.find(a => a.isDefault) || list[0] || null;
+  }
+
+  async function saveAddress(a) {
+    const m = M();
+    if (mode_ !== 'server') return m.saveAddress(a);
+    const saved = await req('POST', '/api/addresses', {
+      id: Number(a.id) || 0, phone: a.phone, contact: a.contact,
+      address: a.address, isDefault: !!a.isDefault
+    });
+    await listAddresses(a.phone).catch(() => null);   // 重新拉一遍，镜像与后端一致
+    return saved;
+  }
+
+  async function deleteAddress(phone, id) {
+    const m = M();
+    if (mode_ !== 'server') return m.deleteAddress(phone, id);
+    const res = await req('DELETE', '/api/addresses/' + encodeURIComponent(id) + '?phone=' + encodeURIComponent(phone));
+    await listAddresses(phone).catch(() => null);
+    return res;
+  }
+
   // 条码解析（扫码只读，不改库存——D8）
   async function resolveBarcode(code) {
     return req('GET', '/api/barcode/resolve?code=' + encodeURIComponent(code));
@@ -323,6 +359,10 @@ const SdyApi = (() => {
     upsertProduct: upsertProduct,
     updateProduct: updateProduct,
     deleteProduct: deleteProduct,
+    listAddresses: listAddresses,
+    defaultAddress: defaultAddress,
+    saveAddress: saveAddress,
+    deleteAddress: deleteAddress,
     resolveBarcode: resolveBarcode,
     pricingCheck: pricingCheck,
     fromServerProduct: fromServerProduct,

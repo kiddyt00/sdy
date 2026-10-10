@@ -448,3 +448,126 @@ func TestDeleteProductGuard(t *testing.T) {
 		t.Errorf("字典层应保留该条码，实际 %+v ok=%v", e, ok)
 	}
 }
+
+// TestAddressBook 顾客收货地址簿（D18）：默认地址规则、校验、删除顶替、按手机号隔离。
+func TestAddressBook(t *testing.T) {
+	st := newTestStore(t)
+
+	list, err := st.ListAddresses("13800000001")
+	if err != nil || len(list) != 0 || list == nil {
+		t.Fatalf("空地址簿应为空数组，实际 %v err=%v", list, err)
+	}
+	if _, err := st.ListAddresses("  "); !errors.Is(err, ErrBadInput) {
+		t.Errorf("空手机号应 ErrBadInput，实际 %v", err)
+	}
+
+	// 第一条自动成为默认地址
+	first, err := st.SaveAddress(Address{Phone: "13800000001", Contact: " 张三 ", Address: " 幸福路 1 号 "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == 0 || !first.IsDefault || first.Contact != "张三" || first.Address != "幸福路 1 号" {
+		t.Fatalf("第一条地址应自动默认且去掉首尾空格，实际 %+v", first)
+	}
+	if first.CreatedAt == "" || first.UpdatedAt == "" {
+		t.Errorf("应补上创建/更新时间，实际 %+v", first)
+	}
+
+	// 第二条默认不抢默认位，列表默认地址在前
+	second, err := st.SaveAddress(Address{Phone: "13800000001", Contact: "张三", Address: "幸福路 2 号"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.IsDefault {
+		t.Errorf("第二条不应自动成为默认，实际 %+v", second)
+	}
+	list, _ = st.ListAddresses("13800000001")
+	if len(list) != 2 || list[0].ID != first.ID {
+		t.Fatalf("列表应默认地址在前，实际 %+v", list)
+	}
+
+	// 显式设默认：旧的默认被摘掉
+	second.IsDefault = true
+	if _, err := st.SaveAddress(second); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = st.ListAddresses("13800000001")
+	if !list[0].IsDefault || list[0].ID != second.ID {
+		t.Fatalf("显式设默认后应换人，实际 %+v", list)
+	}
+	if list[1].IsDefault {
+		t.Errorf("旧默认应被摘掉，实际 %+v", list[1])
+	}
+
+	// 编辑不带 is_default：不改默认标记，只改内容
+	defaults := list[0]
+	defaults.Contact = "李四"
+	defaults.Address = "幸福路 2 号 3 单元"
+	saved, err := st.SaveAddress(defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.IsDefault || saved.Address != "幸福路 2 号 3 单元" || saved.Contact != "李四" {
+		t.Errorf("编辑应保默认标记并更新内容，实际 %+v", saved)
+	}
+	if saved.CreatedAt != defaults.CreatedAt {
+		t.Errorf("编辑不应改创建时间，实际 %q vs %q", saved.CreatedAt, defaults.CreatedAt)
+	}
+
+	// 校验
+	bad := []Address{
+		{Contact: "张三", Address: "幸福路"},
+		{Phone: "13800000001", Address: "幸福路"},
+		{Phone: "13800000001", Contact: "张三"},
+		{Phone: "13800000001", Contact: strings.Repeat("张", 21), Address: "幸福路"},
+		{Phone: "13800000001", Contact: "张三", Address: strings.Repeat("路", 121)},
+	}
+	for i, a := range bad {
+		if _, err := st.SaveAddress(a); !errors.Is(err, ErrBadInput) {
+			t.Errorf("第 %d 个非法地址应 ErrBadInput，实际 %v", i+1, err)
+		}
+	}
+	if _, err := st.SaveAddress(Address{ID: 9999, Phone: "13800000001", Contact: "张三", Address: "幸福路"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("改不存在的地址应 ErrNotFound，实际 %v", err)
+	}
+
+	// 删除：不存在的地址 / 非法编号
+	if err := st.DeleteAddress("13800000001", 9999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("删不存在的地址应 ErrNotFound，实际 %v", err)
+	}
+	if err := st.DeleteAddress("13800000001", 0); !errors.Is(err, ErrBadInput) {
+		t.Errorf("编号 0 应 ErrBadInput，实际 %v", err)
+	}
+	if err := st.DeleteAddress("", 1); !errors.Is(err, ErrBadInput) {
+		t.Errorf("空手机号应 ErrBadInput，实际 %v", err)
+	}
+
+	// 删掉默认地址 → 剩下最早的一条顶为默认
+	if err := st.DeleteAddress("13800000001", second.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = st.ListAddresses("13800000001")
+	if len(list) != 1 || list[0].ID != first.ID || !list[0].IsDefault {
+		t.Fatalf("删掉默认后剩下的一条应变默认，实际 %+v", list)
+	}
+
+	// 按手机号隔离
+	if _, err := st.SaveAddress(Address{Phone: "13800000002", Contact: "王五", Address: "和平路 9 号"}); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := st.ListAddresses("13800000002")
+	if len(other) != 1 || other[0].Contact != "王五" {
+		t.Fatalf("另一个手机号的地址簿应独立，实际 %+v", other)
+	}
+	if mine, _ := st.ListAddresses("13800000001"); len(mine) != 1 {
+		t.Errorf("本机号地址簿不应被影响，实际 %+v", mine)
+	}
+
+	// 删光
+	if err := st.DeleteAddress("13800000001", first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if mine, _ := st.ListAddresses("13800000001"); len(mine) != 0 {
+		t.Errorf("删光后应为空，实际 %+v", mine)
+	}
+}

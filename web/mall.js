@@ -15,7 +15,7 @@
 const Mall = (() => {
 
   // ---------------- 常量与存储 ----------------
-  const KEYS = { products: 'bd_products', cart: 'mall_cart', orders: 'mall_orders' };
+  const KEYS = { products: 'bd_products', cart: 'mall_cart', orders: 'mall_orders', addresses: 'mall_addresses' };
   const DELIVERY_RULES = { pickupFee: 0, minFree: 30, fee: 3 }; // 配送满 30 免、否则 3 元（占位）
   const STATUS_FLOW = {                    // 订单状态机：合法迁移表
     pending:    ['delivering', 'ready'],   // 待备货 → 配送中 | 待自提
@@ -220,6 +220,98 @@ const Mall = (() => {
     return Object.assign({}, o, { statusLabel: STATUS_META[o.status].label, statusCls: STATUS_META[o.status].cls });
   }
 
+  // ---------------- 收货地址簿（D18） ----------------
+  // 与后端 server/internal/store 的 Address 同语义：按手机号归档、第一条自动默认、
+  // 显式 isDefault 才顶替默认、编辑不动默认标记、删掉默认由剩下最早的一条顶替。
+  // 订单里的地址仍是下单当时的快照 —— 改地址簿不影响历史订单。
+  let _addrSeq = 0;
+  function addrPhone(phone) { return String(phone == null ? '' : phone).trim(); }
+  function _addrBook() {
+    const m = loadLS(KEYS.addresses, null);
+    return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+  }
+  function _addrWrite(book) { saveLS(KEYS.addresses, book); }
+  function _addrNormalize(input) {
+    const a = input || {};
+    const phone = addrPhone(a.phone);
+    const contact = String(a.contact == null ? '' : a.contact).trim();
+    const address = String(a.address == null ? '' : a.address).trim();
+    if (!phone) throw new Error('手机号不能为空');
+    if (!contact) throw new Error('收货人不能为空');
+    if (contact.length > 20) throw new Error('收货人不能超过 20 字');
+    if (!address) throw new Error('送货地址不能为空');
+    if (address.length > 120) throw new Error('送货地址不能超过 120 字');
+    return {
+      id: Number(a.id) || 0, phone: phone, contact: contact, address: address,
+      isDefault: !!a.isDefault, createdAt: a.createdAt || '', updatedAt: a.updatedAt || ''
+    };
+  }
+  // 默认地址排最前，其余按加入先后
+  function listAddresses(phone) {
+    const p = addrPhone(phone);
+    if (!p) throw new Error('手机号不能为空');
+    return (_addrBook()[p] || []).slice()
+      .sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0) || a.id - b.id);
+  }
+  function defaultAddress(phone) {
+    const list = listAddresses(phone);
+    return list.length ? list[0] : null;
+  }
+  function saveAddress(input) {
+    const a = _addrNormalize(input);
+    const all = _addrBook();
+    const book = (all[a.phone] || []).slice();
+    const now = new Date().toISOString();
+    if (!book.length) a.isDefault = true;              // 第一条地址就是默认地址
+    if (a.id) {
+      const i = book.findIndex(x => x.id === a.id);
+      if (i < 0) throw new Error('地址不存在');
+      a.createdAt = book[i].createdAt || now;
+      a.isDefault = a.isDefault || book[i].isDefault;  // 不传 isDefault 时不摘掉默认标记
+      a.updatedAt = now;
+      book[i] = a;
+    } else {
+      _addrSeq += 1;
+      a.id = Date.now() * 1000 + (_addrSeq % 1000);
+      a.createdAt = now; a.updatedAt = now;
+      book.push(a);
+    }
+    if (a.isDefault) book.forEach(x => { if (x.id !== a.id) x.isDefault = false; });
+    all[a.phone] = book;
+    _addrWrite(all);
+    return listAddresses(a.phone).filter(x => x.id === a.id)[0];
+  }
+  function deleteAddress(phone, id) {
+    const p = addrPhone(phone);
+    if (!p) throw new Error('手机号不能为空');
+    const n = Number(id);
+    if (!n) throw new Error('地址编号不合法');
+    const all = _addrBook();
+    const book = (all[p] || []).slice();
+    const i = book.findIndex(x => x.id === n);
+    if (i < 0) throw new Error('地址不存在');
+    const wasDefault = book[i].isDefault;
+    book.splice(i, 1);
+    if (wasDefault && book.length) {
+      const oldest = book.slice().sort((a, b) => a.id - b.id)[0];
+      book.forEach(x => { x.isDefault = x.id === oldest.id; });
+    }
+    all[p] = book;
+    _addrWrite(all);
+    return { ok: true, id: n };
+  }
+  // 在线模式同步：把服务端地址簿整体覆盖进本地镜像（离线时仍能带出默认地址）
+  function _saveAddresses(phone, list) {
+    const p = addrPhone(phone);
+    if (!p) return;
+    const all = _addrBook();
+    all[p] = (list || []).map(x => ({
+      id: Number(x.id) || 0, phone: p, contact: x.contact || '', address: x.address || '',
+      isDefault: !!x.isDefault, createdAt: x.createdAt || '', updatedAt: x.updatedAt || ''
+    }));
+    _addrWrite(all);
+  }
+
   // ---------------- 测试辅助 ----------------
   function _resetForTest() {
     Object.keys(mem).forEach(k => delete mem[k]);
@@ -246,6 +338,11 @@ const Mall = (() => {
     cancelOrder: cancelOrder,
     advanceOrder: advanceOrder,
     orderView: orderView,
+    listAddresses: listAddresses,
+    defaultAddress: defaultAddress,
+    saveAddress: saveAddress,
+    deleteAddress: deleteAddress,
+    _saveAddresses: _saveAddresses,
     _resetForTest: _resetForTest,
     _load: loadLS,   // 供管理端模块共用同一存储（含 Node 测试内存）
     _save: saveLS

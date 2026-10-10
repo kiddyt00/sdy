@@ -34,13 +34,20 @@
 <div class="badges">
   <span class="bg-blue">版本 v2（2026-10-10 重写）</span><span class="bg-green">M0–M4 已完成</span>
   <span class="bg-orange">当前重心：M5′ Web 端商城</span>
-  <span class="bg-purple">依据：架构方案 + 细节讨论记录（D1–D17）</span>
+  <span class="bg-purple">依据：架构方案 + 细节讨论记录（D1–D18）</span>
+  <span class="bg-gray">2026-10-10 本机暂停</span>
 </div>
 
 <div class="callout blue">
 <b>一句话路线：</b>页面展示优先 → 规则与数据层 → 牵牛花对账 → 后端服务 → <u>Web 端商城现代化与功能实现（当前）</u> → 小程序化（暂缓） → 上线验证。
 先让「看得见」的页面把全流程跑通，再逐层填真实逻辑与后端，降低返工、随时可演示给合伙人看。<br>
 <b>2026-10-10 路线调整（用户决定）：</b>小程序先缓缓，<b>先把商城做成 Web 端、先把功能实现</b>。M5 小程序化由「下一里程碑」下调为「<b>暂缓</b>（骨架已归档、可随时续）」，当前重心＝Web 端商城的功能与体验。
+</div>
+
+<div class="callout yellow">
+<b>⏸ 本机暂停（2026-10-10，第 13 轮结束时）：</b>用户决定「本机上暂停开发这个项目」，本轮进度已总结并同步到仓库（commit 见根 README）。<br>
+<b>Web 端功能任务池进度：8 项完成 3 项</b>——①商品建档/编辑/删除 ✔、②订单打印/小票 ✔、③顾客端收货地址簿 ✔；<b>下一轮从 ④销售报表/日报 开始</b>（⑤批量改价 ⑥商品图片与分类管理 ⑦批发价与顾客等级 ⑧上线部署验证）。<br>
+<b>续做方式：</b>先 <code>git pull --rebase</code>，读根 <code>README.md</code>「当前状态 / 下一步（待续）」与本文任务池第 4 项即可接上；不要重做已完成的三项。
 </div>
 
 <h2>一、目标与边界</h2>
@@ -59,8 +66,8 @@
 <tr><td><b>M1 页面展示层</b></td><td>全流程页面可见可走通</td><td>顾客端商城、管理端、扫码建档体验</td><td class="ok">✔ 完成</td></tr>
 <tr><td><b>M2 规则与数据层</b></td><td>订单状态机、价格规则、库存联动、双库逻辑服务化</td><td>核心逻辑模块 + 自动化测试</td><td class="ok">✔ 完成</td></tr>
 <tr><td><b>M3 牵牛花对账</b></td><td>月度 CSV 对账</td><td>对账引擎、对账工作台、导出字段确认清单</td><td class="ok">✔ 工具就绪（待真实导出文件核对列名）</td></tr>
-<tr><td><b>M4 后端服务</b></td><td>数据模型 + API + 条码代理 + 部署件</td><td>Go 后端、六表、规则服务端化、Docker 蓝绿部署件</td><td class="ok">✔ 完成，本地联调通过</td></tr>
-<tr><td><b>M5′ Web 端商城</b></td><td>现代化界面 + 功能补齐（顾客端 / 管理端）</td><td>设计系统 + 两页重做 + 后续功能任务池</td><td class="doing">● 当前重心</td></tr>
+<tr><td><b>M4 后端服务</b></td><td>数据模型 + API + 条码代理 + 部署件</td><td>Go 后端、七表、规则服务端化、Docker 蓝绿部署件</td><td class="ok">✔ 完成，本地联调通过</td></tr>
+<tr><td><b>M5′ Web 端商城</b></td><td>现代化界面 + 功能补齐（顾客端 / 管理端）</td><td>设计系统 + 两页重做 + 后续功能任务池（已完成 3/8 项）</td><td class="paused">⏸ 进行中，2026-10-10 本机暂停</td></tr>
 <tr><td><b>M5 小程序化</b></td><td>顾客端 + 管理端小程序</td><td>小程序骨架（<b>已归档</b> <code>archive/miniprogram/</code>）、商户号/支付、配送 API</td><td class="paused">⏸ 暂缓（待小程序账号 + 商户号）</td></tr>
 <tr><td><b>M6 上线验证</b></td><td>灰度试运营、规则调优</td><td>生产部署、蓝绿上线、生鲜/储值/发票等 P1+</td><td class="todo">⬜ 未开始（待已备案域名）</td></tr>
 </table>
@@ -101,8 +108,8 @@
 <h3>M4 后端服务 ✔ 本地联调通过</h3>
 <table>
 <tr><th>项</th><th>内容</th></tr>
-<tr><td>数据模型</td><td>六表：<code>product</code> / <code>barcode_lib</code> / <code>customer</code> / <code>orders</code> / <code>order_item</code> / <code>sync_batch</code></td></tr>
-<tr><td>API</td><td><code>/healthz</code>、<code>/api/products</code>、<code>/api/products/stock</code>（手动改库存）、<code>/api/orders</code>、<code>/api/orders/{id}</code>、<code>/api/orders/{id}/advance</code>、<code>/api/barcode/resolve</code>、<code>/api/barcode/lib</code>、<code>/api/pricing/check</code>；静态目录可托管页面</td></tr>
+<tr><td>数据模型</td><td>七表：<code>product</code> / <code>barcode_lib</code> / <code>customer</code> / <code>customer_address</code>（收货地址簿，D18） / <code>orders</code> / <code>order_item</code> / <code>sync_batch</code></td></tr>
+<tr><td>API</td><td><code>/healthz</code>、<code>/api/products</code>、<code>/api/products/stock</code>（手动改库存）、<code>/api/addresses</code>（收货地址簿，D18）、<code>/api/orders</code>、<code>/api/orders/{id}</code>、<code>/api/orders/{id}/advance</code>、<code>/api/barcode/resolve</code>、<code>/api/barcode/lib</code>、<code>/api/pricing/check</code>；静态目录可托管页面</td></tr>
 <tr><td>事务与规则服务端化</td><td>事务下单（统一校验库存 → 扣减 → 落单，不足则整单回滚）、取消回补、状态机非法流转 409；配送费与比价防线只在服务端执行</td></tr>
 <tr><td>条码代理</td><td>APPCODE 只从环境变量读、绝不下发前端；配额按 HTTP 200 计（查无也计）、非 200 不计；连续失败熔断当日；查到永久回填字典、查无标记 90 天</td></tr>
 <tr><td>前端接入（D12/D13）</td><td>商城页面走 <code>web/sdy-api.js</code>、扫码台走 <code>barcode-demo/bd-api.js</code>；后端在线为唯一真源，离线自动降级为本地演示，同一套页面代码</td></tr>
@@ -124,7 +131,7 @@
 <tr><th style="width:34px">序</th><th>任务</th><th>内容要点</th><th>验收</th></tr>
 <tr><td>1</td><td>商品建档 / 编辑表单 <b class="ok">✔ 第 11 轮完成</b></td><td>管理端新增商品（条码、名称、规格、分类、进价/售价、单位、图片）、编辑与上下架；建档人工确认（红线）。<br><b>已交付：</b>「商品档案」视图（搜索 + 分类筛选 + 只看低库存 + 4 张统计卡 + 表格）与建档/编辑/删除弹窗；前端归一化校验（条码 1–32 位、名称 ≤40 字、价格非负、比价防线前置）与后端同口径校验；新增 <code>DELETE /api/products/{code}</code>；<b>编辑不改库存</b>（<code>stock</code> 不传 = 保留原值）；删除要求库存为 0 且无进行中订单，删档保留条码字典层（D6）。<br><b>仍待：</b>商品图片与上下架 → 并入第 6 项</td><td>建档后顾客端立即可见；重复条码被拦；服务端校验价格防线</td></tr>
 <tr><td>2</td><td>订单打印 / 小票 <b class="ok">✔ 第 12 轮完成</b></td><td>配送单小票（店名、单号、商品明细、金额、地址电话、备注）浏览器打印样式<br><b>已交付：</b>订单页每单「🖨 小票」+ 面板右上角「🖨 批量打印待备货」（多张自动分页、只唤起一次打印）；<code>Admin.buildReceipt(order)</code> 纯函数生成票面模型与 32 字宽纯文本；票面含抬头 / 单号 / 时间 / 状态 / 顾客电话 / 配送地址与配送员（自提写「到店自提」）/ 逐行「单价 × 数量 = 金额」/ 件数 / 小计 / 配送费 / 应收 / 票尾，已取消订单盖「作废」；抬头在「系统与工具 → 小票抬头」维护（<code>mall_store</code>，不上后端）；纯前端 <code>@media print</code> 实现，零打印库依赖、热敏 72mm 一单一页<br><b>仍待：</b>订单备注字段（当前订单模型无备注）→ 并入第 4 项报表时一起补</td><td>一单一票、金额与订单一致、明细齐全</td></tr>
-<tr><td>3</td><td>顾客端收货地址簿</td><td>常用地址增删改、默认地址、下单自动带出；手机号聚合顾客</td><td>地址只在本机/服务端（视 D12），下单带出正确</td></tr>
+<tr><td>3</td><td>顾客端收货地址簿 <b class="ok">✔ 第 13 轮完成</b></td><td>常用地址增删改、默认地址、下单自动带出；手机号聚合顾客<br><b>已交付：</b>Go 端 <code>customer_address</code> 表（含 <code>phone</code> 索引）+ 四个 store 方法 + <code>/api/addresses</code>（GET 列表 / POST 新增·编辑 / DELETE 删除）；顾客端结算弹窗新增「常用地址（点一下带出）」与顶部「📍 地址簿」管理弹窗（新增 / 编辑 / 设为默认 / 删除）；默认地址下单自动回填，勾选「保存到地址簿」时<b>原样下单不重复写、改了内容存成新的一条</b>（绝不覆盖已有地址）；订单地址是下单当时快照，改地址簿不影响历史订单（<b>D18</b>）<br><b>仍待：</b>按手机号聚合的顾客档案（管理端顾客页目前仍从订单聚合）→ 并入第 4 项一起看</td><td>默认地址一键带出；新增/编辑/设默认/删除均生效；本地与后端同一套默认语义（Go 15+4 单测、前端 73/56/95 套件 + 真浏览器 CDP 验收通过）</td></tr>
 <tr><td>4</td><td>销售报表 / 日报</td><td>按日/周统计订单数、营业额、客单价、热销商品、配送费合计；可导出 CSV</td><td>数字与订单明细一致；导出可直接对账</td></tr>
 <tr><td>5</td><td>批量改价 / 批量操作</td><td>按分类或筛选结果批量改价、批量上下架；参考价导入后可一键巡检</td><td>批量结果可预览、越线价格被拦截</td></tr>
 <tr><td>6</td><td>商品图片与分类管理</td><td>分类增删改、排序；商品图片（本地占位图/URL）</td><td>顾客端分类与排序同步</td></tr>
@@ -177,20 +184,20 @@
 <table>
 <tr><th>里程碑</th><th>状态</th><th>产出与验证</th></tr>
 <tr><td>M0 基建</td><td class="ok">✔ 完成</td><td>仓库 · README · 开发计划 · 细节讨论记录 · 文档同步链路</td></tr>
-<tr><td>M1 页面展示层</td><td class="ok">✔ 完成</td><td>顾客端（mall.js 44 项测试）· 管理端（mall-admin.js 98 项，含小票模型）· 扫码体验（双库 7 组）</td></tr>
+<tr><td>M1 页面展示层</td><td class="ok">✔ 完成</td><td>顾客端（mall.js 73 项测试）· 管理端（mall-admin.js 98 项，含小票模型）· 扫码体验（双库 7 组）</td></tr>
 <tr><td>M2 规则与数据层</td><td class="ok">✔ 完成</td><td>价格规则 28 项 · 状态机/库存联动 · 双库 resolve 服务化</td></tr>
 <tr><td>M3 牵牛花对账</td><td class="ok">✔ 工具就绪</td><td><code>sync-demo/sync-csv.js</code> 62 项 · 对账工作台 · 导出确认清单；待真实文件核对列名</td></tr>
-<tr><td>M4 后端服务</td><td class="ok">✔ 完成</td><td>Go + SQLite 六表 · 事务下单 · 规则服务端化 · 商品档案增删改 · 条码链（配额/熔断）· API · 部署件 · <b>27 个 Go 单测</b>（M4 时 21，第 11 轮 +6）+ 冒烟；三端接后端（商城通道 41 + 联调 17 + 页面冒烟 65；扫码台通道 55 + 页面 28 + 联调 34）</td></tr>
+<tr><td>M4 后端服务</td><td class="ok">✔ 完成</td><td>Go + SQLite 七表 · 事务下单 · 规则服务端化 · 商品档案增删改 · 收货地址簿（D18） · 条码链（配额/熔断）· API · 部署件 · <b>29 个 Go 单测</b>（M4 时 21，第 11 轮 +6、第 13 轮 +2）+ 冒烟；三端接后端（商城通道 56 + 联调 17 + 页面冒烟 95；扫码台通道 55 + 页面 28 + 联调 34）</td></tr>
 <tr><td><b>M5′ Web 端商城（第 9 轮）</b></td><td class="ok">✔ 完成</td><td>仓库清理（<code>mall-demo/</code>→<code>web/</code>、<code>mall.html</code>→<code>index.html</code>、小程序归档）· 设计系统 <code>web/assets/theme.css</code> · 顾客端与管理端重做 · 真实浏览器 CDP 验收（修掉 <code>mall-admin.js</code> 顶层 const 重名致命 bug）· 联调测试与库状态解耦</td></tr>
-<tr><td>M5′ 功能补齐</td><td class="doing">● 进行中</td><td><b>第 12 轮：任务池 ②「订单打印 / 小票」完成</b>——小票模型 <code>buildReceipt</code>（只读投影）+ 门店抬头设置 + 单张/批量打印（<code>@media print</code>），前端套件 75 → 98（后台）/ 51 → 65（页面冒烟），真浏览器打印媒体仿真通过（打印时仅 <code>#printRoot</code> 可见、`@page` 生效、0 报错）。<br><b>第 11 轮：任务池 ①「商品建档 / 编辑表单」完成</b>——管理端商品档案视图与建档/编辑/删除弹窗、Go 侧写接口校验 + 删除接口、<b>Go 单测 21 → 27</b>、前端套件 32 → 75 / 35 → 41 / 21 → 51；真浏览器 CDP 与真后端 curl 端到端均通过。剩余见任务池 3–8 项</td></tr>
+<tr><td>M5′ 功能补齐</td><td class="paused">⏸ 已暂停（3/8 项）</td><td><b>第 13 轮：任务池 ③「顾客端收货地址簿」完成</b>——Go <code>customer_address</code> + <code>ListAddresses/SaveAddress/GetAddress/DeleteAddress</code> + <code>/api/addresses</code> 三个方法（+2 Go 单测）；顾客端结算「常用地址点一下带出」+「📍 地址簿」管理弹窗（增/改/设默认/删）；下单写入语义：完全一致不重复写、改了内容存新的一条（不覆盖已有地址）；前端套件 44 → 73 / 41 → 56 / 65 → 95，真浏览器 CDP 验收 0 报错；文档台账新增 <b>D18</b>。<br><b>第 12 轮：任务池 ②「订单打印 / 小票」完成</b>——小票模型 <code>buildReceipt</code>（只读投影）+ 门店抬头设置 + 单张/批量打印（<code>@media print</code>）。（历史明细见下方原记录）<br><b>第 11 轮：任务池 ①「商品建档 / 编辑表单」完成</b>——管理端商品档案视图与建档/编辑/删除弹窗、Go 侧写接口校验 + 删除接口、<b>Go 单测 21 → 27</b>。剩余见任务池 4–8 项</td></tr>
 <tr><td>M5 小程序化</td><td class="paused">⏸ 暂缓</td><td>骨架归档 <code>archive/miniprogram/</code>（测试 62 + 47 全绿）</td></tr>
 <tr><td>M6 上线验证</td><td class="todo">⬜ 未开始</td><td>待已备案域名</td></tr>
 </table>
 
 <div class="callout yellow">本计划随开发推进更新（每完成一项回来勾选一次；逐轮细节见 <code>细节讨论记录.html</code>）。<br>
-<b>文档状态（第 12 轮）：</b>本轮完成「待做任务池」第 2 项，根 README 测试矩阵、<code>web/README.md</code> 已同步更新（小票打印约定、抬头存储键 <code>mall_store</code>、用例数 98 / 65）；文档分工见 D15（一事实一 owner：状态只在根 README）。<br>
-<b>当前回归基线（全绿）：</b>Go <b>27 单测</b>（含 HTTP 层 3 个）+ 端到端冒烟；Web <b>44 + 28 + 98 + 41 + 65</b>；扫码台 <b>7 组 + 55 + 28 + 34</b>；对账 <b>62</b>；小程序归档套件 <b>62 + 47 + 21</b>；另有 <b>17 + 34</b> 项真后端联调。<br>
-<b>下一轮建议：</b>任务池第 3 项「顾客端收货地址簿」——顾客端下单时地址仍靠手输（<code>mall_customer</code> 只记上次填写），做地址簿能直接减少熟客下单步骤；纯前端 + 一个后端可选字段即可交付。第 4 项「销售报表 / 日报」同样不依赖外部审批，可接着做。<br>
+<b>文档状态（第 13 轮）：</b>本轮完成「待做任务池」第 3 项，<b>并在此处暂停本机开发</b>；根 <code>README.md</code>（状态表 / 任务池进度 / 下一步待续）、<code>web/README.md</code>（新增「收货地址簿（D18）」小节）、<code>server/README.md</code>（接口表 + 七表 + 29 单测）、<code>.agent_rules.md</code>（规则 16 暂停点）均已同步；<code>细节讨论记录.html</code> 追加第 13 轮记录与 <b>D18</b> 决策行。文档分工见 D15（一事实一 owner：状态只在根 README）。<br>
+<b>当前回归基线（全绿）：</b>Go <b>29 单测</b>（HTTP 层 4 个）+ 端到端冒烟；Web <b>73 + 28 + 98 + 56 + 95</b>；扫码台 <b>7 组 + 55 + 28 + 34</b>；对账 <b>62</b>；小程序归档套件 <b>62 + 47 + 21</b>；另有 <b>17 + 34</b> 项真后端联调。<br>
+<b>下一轮建议：</b>任务池第 4 项「销售报表 / 日报」——按日/周聚合营业额、单量、客单价、热销商品、配送费，纯本地订单表可算，不依赖外部审批；可顺手补上订单备注字段与「按手机号聚合顾客档案」。第 5–8 项依次为批量改价、商品图片与分类管理、批发价与顾客等级、上线部署验证。<br>
 <b>并行需要用户推进：</b>① 行动项 0 牵牛花导出字段确认（带清单页去谈）；② 生产域名 + 备案；③ 是否申请小程序账号 + 商户号（决定 M5 何时解冻）。</div>
 
 </body>

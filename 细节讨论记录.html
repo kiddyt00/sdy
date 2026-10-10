@@ -295,6 +295,21 @@
   </ul>
 </div>
 
+<div class="callout green">
+  <strong>第 13 轮（2026-10-10）任务池第 3 项：顾客端收货地址簿（本轮结束后本机暂停开发）</strong>
+  <p>熟客下单的痛点从「不会填」变成「每次都要重填」：地址只在 <code>mall_customer</code> 里记一份上次填写的值，改门牌就得整段重输。本轮把地址做成可管理的地址簿。</p>
+  <ul>
+    <li><strong>数据落在顾客侧</strong>：新增表 <code>customer_address(id, phone, contact, address, is_default, created_at, updated_at)</code> + <code>phone</code> 索引，按<b>手机号归档</b>（家庭店的顾客身份就是手机号，不引入账号体系）。订单里的地址仍是<b>下单当时的快照</b>——之后改地址簿<b>不会</b>改动历史订单（对账和配送单都以订单快照为准）。</li>
+    <li><strong>四个 store 方法</strong>：<code>ListAddresses(phone)</code>（<code>ORDER BY is_default DESC, id ASC</code>，空册返回非 nil 空切片）、<code>SaveAddress(a)</code>（<code>id=0</code> 新增 / 带 id 编辑，事务内保证「首条自动默认」「设为默认则摘掉同号其它条」）、<code>GetAddress(phone,id)</code>、<code>DeleteAddress(phone,id)</code>（删掉默认地址后由<b>剩下最早的一条顶替</b>，不留无默认状态）。HTTP 层是 <code>GET /api/addresses?phone=</code> / <code>POST /api/addresses</code> / <code>DELETE /api/addresses/{id}?phone=</code>。</li>
+    <li><strong>编辑不摘默认</strong>：编辑请求不带 <code>isDefault</code> 时<b>原默认标记保留</b>（只改门牌号不该让人丢掉默认地位）——这一点 Go 与前端 <code>Mall</code> 两套实现语义完全一致，各有单测钉住。</li>
+    <li><strong>下单写入语义（本轮最关键的一条）</strong>：结算页勾选「保存到地址簿」时——<b>如果填的就是已选中的那条原样内容，不重复写</b>；<b>改了内容则存成新的一条</b>，<b>绝不覆盖已有地址</b>（要改已有地址走「地址簿管理」的编辑）。这样「送爸妈家」和「送店里」两个地址不会被下一次下单悄悄覆盖掉。</li>
+    <li><strong>界面</strong>：结算弹窗新增「常用地址（点一下带出）」列表（选中条高亮），顶部工具栏加「📍 地址簿」入口；管理弹窗支持新增 / 编辑 / 设为默认 / 删除，手机号默认带出上次填写的。</li>
+    <li><strong>验证</strong>：Go 单测 27 → <b>29</b>（<code>TestAddressBook</code> 15 项 store 用例、<code>TestAddressHTTPFlow</code> 覆盖三个方法 + 错误码）；前端套件 44 → <b>73</b>（mall.js）、41 → <b>56</b>（sdy-api 在线/离线双路径）、65 → <b>95</b>（页面冒烟）；真浏览器 CDP 走完整流程（空册提示 → 下单存默认 → 原样下单不重复写 → 改门牌新增一条且旧地址保留 → 一键带出与高亮 → 增/改/设默认/删），<b>0 报错、0 横向溢出</b>。</li>
+    <li><strong>环境教训</strong>：headless Chrome 里页面调用 <code>confirm()</code> 会阻塞渲染进程，CDP 的 <code>Runtime.evaluate(awaitPromise:true)</code> <b>永不返回</b>（表现为脚本静默挂死）；CDP 客户端必须监听 <code>Page.javascriptDialogOpening</code> 并回 <code>Page.handleJavaScriptDialog({accept:true})</code>，已写入 <code>.agent_rules.md</code> 规则 13。</li>
+    <li><strong>暂停</strong>：用户本轮结束下令「本机上暂停开发这个项目」；进度与待办已总结并同步仓库，<b>下一轮从任务池第 4 项「销售报表 / 日报」开始</b>。</li>
+  </ul>
+</div>
+
 <h2>三、已定决策汇总</h2>
 <table>
   <tr><th>决策</th><th>来源</th><th>对主方案的影响</th></tr>
@@ -310,6 +325,7 @@
   <tr><td><b>文档角色分工（D15）：一事实一 owner</b>——① <b>指令面</b>：只有 <code>.agent_rules.md</code> 对 agent 有约束力；② <b>地图</b>：根 <code>README.md</code>（总览 / 快速上手）+ <code>开发计划.html</code>（路线图与当前重心）+ 模块 README（<code>web/</code>、<code>server/</code>、<code>barcode-demo/</code>、<code>sync-demo/</code> 各管一域）；③ <b>状态</b>：里程碑与阻塞只在根 README 维护，其它文档只引用不复述；④ <b>历史</b>：<code>细节讨论记录.html</code>（决策台账，只追加校正）+ <code>独立小程序商城可行性分析与架构方案.html</code>（立项论证，变更以「现状校正（日期）」追加）</td><td>第 10 轮（用户指令：清理之后把文档也重新写一下）</td><td>文档从「按轮次堆补丁」转为「一个事实一个 owner」；规则 14（禁全局 sed、方向变化整篇重写）与规则 15（文档分工）写入 <code>.agent_rules.md</code>；三份 HTML 仍走 pull → 改 → convert → push → 设权限 流水线</td></tr>
   <tr><td><b>商品档案写接口语义（D16）</b>：建档与编辑共用 <code>POST /api/products</code>（覆盖式 upsert，按条码为主键），<b><code>stock</code> 字段采用指针语义——不传就是「不改库存」</b>，只有显式传值才写库；前端编辑表单根本不渲染库存输入。<b>删除</b>走 <code>DELETE /api/products/{code}</code>，两道闸：库存必须为 0、没有进行中（非 <code>done</code>/<code>cancelled</code>）订单引用；<b>删档不删条码字典层（D6 沉淀）</b>，所以删除只影响经营档案，不影响扫码识别能力。建档/编辑的服务端校验（条码与名称必填、价格与库存非负、比价防线超价 400）与前端归一化校验同口径</td><td>第 11 轮（做任务池第 1 项「商品建档 / 编辑表单」时定下）</td><td>避免「编辑商品把库存清零」这类静默数据事故；库存只有一个入口（<code>/api/products/stock</code> 与库存页三操作）与一条流水，与 D8「扫码只读、库存手动调整」一致</td></tr>
   <tr><td><b>订单小票约定（D17）</b>：小票是<b>只读投影</b>——<code>Admin.buildReceipt(order)</code> 只看订单与抬头，不改订单/库存/价格；打印走<b>纯前端 <code>@media print</code> + <code>#printRoot</code>、零打印库依赖</b>，热敏 72mm 一单一页；门店抬头（店名/电话/地址/票尾）存本机 <code>mall_store</code>、<b>不上后端</b>；批量打印只唤起一次打印并按订单分页；已取消订单盖「作废」仍可打（留痕）</td><td>第 12 轮（做任务池第 2 项「订单打印 / 小票」时定下）</td><td>不给家庭店加打印中间件与后端接口；小票内容永远可由订单重算，不引入第二份订单数据；后续若要 A4 对账单，复用同一 <code>buildReceipt</code> 模型换样式即可</td></tr>
+  <tr><td><b>收货地址簿（D18）</b>：地址按<b>手机号</b>归档在 <code>customer_address</code> 表（<code>phone</code> 索引，无账号体系），顾客端结算「常用地址点一下带出」+「📍 地址簿」管理弹窗（增 / 改 / 设默认 / 删）；默认语义三条——<b>首条自动默认</b>、<b>设为默认则摘掉同号其它条</b>、<b>删掉默认后由剩下最早一条顶替</b>；<b>编辑不传 <code>isDefault</code> 时原默认标记保留</b>；下单写入<b>只增不改</b>——内容与已选地址完全一致时不重复写，改了内容则存成新的一条，<b>绝不覆盖已有地址</b>；<b>订单地址是下单当时的快照</b>，改地址簿不影响历史订单。离线时本地 <code>localStorage.mall_addresses</code> 与后端同一套默认语义（两套实现各有单测钉住）</td><td>第 13 轮（做任务池第 3 项「顾客端收货地址簿」时定下）</td><td>熟客二次下单从「重填地址」变成「点一下」；不引入顾客账号体系（手机号即身份）；历史订单与配送单的口径不被地址簿改动污染；后端不存「顾客档案」的地址副本，避免两处真源</td></tr>
   <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
 </table>
 

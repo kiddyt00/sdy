@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -197,4 +198,92 @@ func TestHealthzAndOptions(t *testing.T) {
 	if got := res.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "DELETE") {
 		t.Errorf("预检应允许 DELETE，实际 %q", got)
 	}
+}
+
+// TestAddressHTTPFlow 收货地址簿 HTTP 层（D18）：增改查删 + 错误映射 + 默认地址轮换。
+func TestAddressHTTPFlow(t *testing.T) {
+	ts := newTestServer(t)
+
+	// 没有手机号 → 400
+	if code, body := do(t, ts, http.MethodGet, "/api/addresses", ""); code != 400 || !strings.Contains(body, "手机号") {
+		t.Fatalf("缺手机号应 400，实际 %d %s", code, body)
+	}
+
+	// 新增第一条 → 自动默认
+	code, body := do(t, ts, http.MethodPost, "/api/addresses",
+		`{"phone":"13800000001","contact":"张三","address":"幸福路 1 号"}`)
+	if code != 200 || !strings.Contains(body, `"isDefault":true`) {
+		t.Fatalf("首条地址应 200 且默认，实际 %d %s", code, body)
+	}
+	var first store.Address
+	if err := json.Unmarshal([]byte(body), &first); err != nil || first.ID == 0 {
+		t.Fatalf("解析新增地址失败: %v (%s)", err, body)
+	}
+
+	// 列表里能看到
+	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001", "")
+	if code != 200 || !strings.Contains(body, `"total":1`) || !strings.Contains(body, "幸福路 1 号") {
+		t.Fatalf("地址列表应有 1 条，实际 %d %s", code, body)
+	}
+
+	// 第二条显式设为默认 → 列表默认地址换人且排最前
+	code, body = do(t, ts, http.MethodPost, "/api/addresses",
+		`{"phone":"13800000001","contact":"张三","address":"幸福路 2 号","isDefault":true}`)
+	if code != 200 {
+		t.Fatalf("新增第二条失败: %d %s", code, body)
+	}
+	var second store.Address
+	_ = json.Unmarshal([]byte(body), &second)
+	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001", "")
+	var list struct {
+		Items []store.Address `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("解析地址列表失败: %v (%s)", err, body)
+	}
+	if len(list.Items) != 2 || !list.Items[0].IsDefault || list.Items[0].ID != second.ID {
+		t.Fatalf("默认地址应换到最新一条并排最前，实际 %+v", list.Items)
+	}
+
+	// 校验：缺收货人 / 缺地址
+	if code, body := do(t, ts, http.MethodPost, "/api/addresses", `{"phone":"13800000001","address":"幸福路"}`); code != 400 || !strings.Contains(body, "收货人") {
+		t.Fatalf("缺收货人应 400，实际 %d %s", code, body)
+	}
+	if code, body := do(t, ts, http.MethodPost, "/api/addresses", `{"phone":"13800000001","contact":"张三"}`); code != 400 || !strings.Contains(body, "送货地址") {
+		t.Fatalf("缺地址应 400，实际 %d %s", code, body)
+	}
+
+	// 删除：缺编号 / 编号不合法 / 方法不支持
+	if code, body := do(t, ts, http.MethodDelete, "/api/addresses/", ""); code != 400 || !strings.Contains(body, "缺少地址编号") {
+		t.Fatalf("缺编号应 400，实际 %d %s", code, body)
+	}
+	if code, body := do(t, ts, http.MethodDelete, "/api/addresses/abc?phone=13800000001", ""); code != 400 || !strings.Contains(body, "编号不合法") {
+		t.Fatalf("编号不合法应 400，实际 %d %s", code, body)
+	}
+	if code, body := do(t, ts, http.MethodPut, "/api/addresses/"+itoa(first.ID)+"?phone=13800000001", ""); code != 405 {
+		t.Fatalf("PUT 应 405，实际 %d %s", code, body)
+	}
+
+	// 删掉默认地址 → 剩下的一条顶为默认
+	code, body = do(t, ts, http.MethodDelete, "/api/addresses/"+itoa(second.ID)+"?phone=13800000001", "")
+	if code != 200 || !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("删除应 200，实际 %d %s", code, body)
+	}
+	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001", "")
+	_ = json.Unmarshal([]byte(body), &list)
+	if len(list.Items) != 1 || list.Items[0].ID != first.ID || !list.Items[0].IsDefault {
+		t.Fatalf("删掉默认后剩下的一条应变默认，实际 %+v", list.Items)
+	}
+
+	// 重复删除 → 404；缺手机号 → 400
+	if code, _ := do(t, ts, http.MethodDelete, "/api/addresses/"+itoa(second.ID)+"?phone=13800000001", ""); code != 404 {
+		t.Fatalf("重复删除应 404，实际 %d", code)
+	}
+	if code, _ := do(t, ts, http.MethodDelete, "/api/addresses/"+itoa(first.ID), ""); code != 400 {
+		t.Fatalf("缺手机号应 400，实际 %d", code)
+	}
+}
+
+func itoa(n int64) string {
+	return strconv.FormatInt(n, 10)
 }

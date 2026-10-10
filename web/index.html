@@ -17,6 +17,20 @@
   .topnav .tn.on { background: #fff; color: var(--ink); border-color: var(--line); font-weight: 500; box-shadow: var(--sh-1); }
   .detail-head { display: flex; gap: 16px; }
   .detail-head .dph { width: 96px; height: 96px; border-radius: var(--r); background: linear-gradient(140deg,#f8fafc,#eef2f7); display: grid; place-items: center; font-size: 44px; flex: 0 0 96px; }
+  /* 收货地址簿（D18） */
+  .addr-list { display: flex; flex-direction: column; gap: 8px; }
+  .addr-item {
+    border: 1px solid var(--line); border-radius: var(--r-sm); padding: 9px 12px;
+    background: #fff; font-size: 13px; line-height: 1.5; cursor: pointer;
+  }
+  .addr-item:hover { border-color: #cbd5e1; }
+  .addr-item.on { border-color: var(--brand); background: var(--brand-light); }
+  .addr-item .who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .addr-item .ad { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .addr-item .ops { display: flex; gap: 6px; margin-top: 8px; }
+  .chk { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+  .chk input { width: 15px; height: 15px; accent-color: var(--brand); }
+  .fld-head { display: flex; align-items: center; justify-content: space-between; }
 </style>
 </head>
 <body>
@@ -48,6 +62,7 @@
         <input id="q" placeholder="搜商品名 / 品牌 / 条码" oninput="doSearch()">
       </div>
       <button class="btn" onclick="openScan()">📷 扫码找货</button>
+      <button class="btn" onclick="openAddrBook()">📍 地址簿</button>
     </div>
   </div>
 </header>
@@ -119,13 +134,21 @@
         <div class="dopt" id="optDelivery" onclick="pickDelivery('delivery')"><b>送货上门</b><span>满 30 元免，否则 3 元</span></div>
       </div>
     </div>
+    <div class="field mt-lg hide" id="addrPickWrap">
+      <div class="fld-head">
+        <label>常用地址（点一下带出）</label>
+        <button class="btn btn-xs" type="button" onclick="openAddrBook()">地址簿管理</button>
+      </div>
+      <div class="addr-list" id="addrPick"></div>
+    </div>
     <div class="row mt-lg" style="gap:12px">
-      <div class="field grow"><label>收货人</label><input class="input" id="cName" placeholder="怎么称呼"></div>
-      <div class="field grow"><label>手机号</label><input class="input" id="cPhone" placeholder="11 位手机号" maxlength="11"></div>
+      <div class="field grow"><label>收货人</label><input class="input" id="cName" placeholder="怎么称呼" maxlength="20"></div>
+      <div class="field grow"><label>手机号</label><input class="input" id="cPhone" placeholder="11 位手机号" maxlength="11" onchange="onPhoneChange()"></div>
     </div>
     <div class="field mt hide" id="addrField">
       <label>送货地址</label>
-      <input class="input" id="cAddr" placeholder="小区 / 楼栋 / 门牌">
+      <input class="input" id="cAddr" placeholder="小区 / 楼栋 / 门牌" maxlength="120">
+      <label class="chk mt" id="addrSaveWrap"><input type="checkbox" id="addrSave" checked> 保存到地址簿，下次一键带出</label>
     </div>
     <div class="card mt-lg" style="padding:14px 16px">
       <div class="sum-line"><span>商品小计（<span id="coCount">0</span> 件）</span><span id="coSubtotal">¥0.00</span></div>
@@ -137,6 +160,28 @@
   <div class="modal-foot">
     <button class="btn" onclick="closeAll()">再逛逛</button>
     <button class="btn btn-primary" id="btnSubmit" onclick="submitOrder()">提交订单</button>
+  </div>
+</div>
+
+<!-- ============ 收货地址簿（D18） ============ -->
+<div class="modal" id="dlgAddr" style="width:540px">
+  <div class="modal-head"><h3 style="font-size:16px">收货地址簿</h3><button class="icon-btn" onclick="closeAll()">✕</button></div>
+  <div class="modal-body">
+    <div class="muted" style="font-size:12px;margin-bottom:8px">按手机号保存常用地址；默认地址下单时自动带出。</div>
+    <div class="addr-list" id="addrBookList"></div>
+    <div class="card mt-lg" style="padding:14px 16px">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:10px" id="afTitle">新增地址</div>
+      <div class="row" style="gap:12px">
+        <div class="field grow"><label>收货人</label><input class="input" id="afContact" placeholder="怎么称呼" maxlength="20"></div>
+        <div class="field grow"><label>手机号</label><input class="input" id="afPhone" placeholder="11 位手机号" maxlength="11"></div>
+      </div>
+      <div class="field mt"><label>送货地址</label><input class="input" id="afAddr" placeholder="小区 / 楼栋 / 门牌" maxlength="120"></div>
+      <label class="chk mt"><input type="checkbox" id="afDefault"> 设为默认地址</label>
+      <div class="row mt" style="justify-content:flex-end;gap:8px">
+        <button class="btn" type="button" onclick="resetAddrForm()">清空</button>
+        <button class="btn btn-primary" type="button" onclick="saveAddrForm()">保存地址</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -190,6 +235,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const yuan = n => '¥' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
 
 let curCat = '全部', curFilter = '', view = 'home', selCode = null, detailQty = 1, deliveryType = 'pickup';
+let pickedAddrId = 0, editAddrId = 0;   // 地址簿（D18）：当前选中的地址 / 正在编辑的地址
 
 let toastTimer = null;
 function toast(msg, ms) {
@@ -200,7 +246,7 @@ function toast(msg, ms) {
 }
 function show(id) { const e = $(id); e.className = e.className.replace(' show', '') + ' show'; $('mask').className = 'mask show'; }
 function closeAll() {
-  ['cartSheet', 'dlgCheckout', 'dlgDetail', 'dlgScan'].forEach(id => { const e = $(id); e.className = e.className.replace(' show', ''); });
+  ['cartSheet', 'dlgCheckout', 'dlgDetail', 'dlgScan', 'dlgAddr'].forEach(id => { const e = $(id); e.className = e.className.replace(' show', ''); });
   $('mask').className = 'mask';
 }
 
@@ -322,11 +368,139 @@ function renderCartBadge() {
   }
 }
 
+/* ---------------- 收货地址簿（D18） ---------------- */
+function curPhone() { return (($('cPhone') && $('cPhone').value) || '').trim(); }
+function bookPhone() {
+  const v = (($('afPhone') && $('afPhone').value) || '').trim();
+  return v || curPhone();
+}
+function addrListOf(phone) { try { return Mall.listAddresses(phone); } catch (e) { return []; } }
+async function refreshAddresses(phone) {
+  if (!phone) return [];
+  try { return await SdyApi.listAddresses(phone); }
+  catch (e) { return addrListOf(phone); }
+}
+function renderAddrPick() {
+  const wrap = $('addrPickWrap');
+  if (deliveryType !== 'delivery') { wrap.className = 'field mt-lg hide'; return; }
+  wrap.className = 'field mt-lg';
+  const list = addrListOf(curPhone());
+  $('addrPick').innerHTML = list.length ? list.map(a =>
+    '<div class="addr-item' + (a.id === pickedAddrId ? ' on' : '') + '" onclick="pickAddr(' + a.id + ')">' +
+      '<div class="who"><b>' + esc(a.contact) + '</b><span class="mono">' + esc(a.phone) + '</span>' +
+      (a.isDefault ? '<span class="badge st-done">默认</span>' : '') + '</div>' +
+      '<div class="ad">' + esc(a.address) + '</div>' +
+    '</div>').join('')
+    : '<div class="muted" style="font-size:12.5px">还没有存过地址；填一次并勾选「保存到地址簿」就会记住。</div>';
+}
+function pickAddr(id) {
+  const a = addrListOf(curPhone()).find(x => x.id === id);
+  if (!a) return;
+  pickedAddrId = id;
+  $('cName').value = a.contact || '';
+  $('cPhone').value = a.phone || '';
+  $('cAddr').value = a.address || '';
+  renderAddrPick();
+}
+async function onPhoneChange() {
+  pickedAddrId = 0;
+  await refreshAddresses(curPhone());
+  renderAddrPick();
+}
+async function openAddrBook() {
+  const phone = curPhone() || (((Mall._load('mall_customer', null) || {}).phone) || '');
+  resetAddrForm();
+  if (phone) $('afPhone').value = phone;
+  await refreshAddresses(phone);
+  renderAddrBook();
+  closeAll(); show('dlgAddr');
+}
+function renderAddrBook() {
+  const phone = bookPhone();
+  const list = phone ? addrListOf(phone) : [];
+  $('addrBookList').innerHTML = list.length ? list.map(a =>
+    '<div class="addr-item">' +
+      '<div class="who"><b>' + esc(a.contact) + '</b><span class="mono">' + esc(a.phone) + '</span>' +
+      (a.isDefault ? '<span class="badge st-done">默认</span>' : '') + '</div>' +
+      '<div class="ad">' + esc(a.address) + '</div>' +
+      '<div class="ops">' +
+        '<button class="btn btn-xs" onclick="editAddr(' + a.id + ')">编辑</button>' +
+        (a.isDefault ? '' : '<button class="btn btn-xs" onclick="setDefaultAddr(' + a.id + ')">设为默认</button>') +
+        '<button class="btn btn-xs" onclick="delAddr(' + a.id + ')">删除</button>' +
+      '</div>' +
+    '</div>').join('')
+    : '<div class="muted" style="font-size:12.5px">' + (phone ? '这个手机号还没存过地址，先在下面填一条。' : '先填手机号，再保存地址。') + '</div>';
+}
+function editAddr(id) {
+  const a = addrListOf(bookPhone()).find(x => x.id === id);
+  if (!a) return;
+  editAddrId = a.id;
+  $('afTitle').textContent = '编辑地址';
+  $('afContact').value = a.contact || '';
+  $('afPhone').value = a.phone || '';
+  $('afAddr').value = a.address || '';
+  $('afDefault').checked = !!a.isDefault;
+}
+function resetAddrForm() {
+  editAddrId = 0;
+  $('afTitle').textContent = '新增地址';
+  $('afContact').value = '';
+  $('afPhone').value = curPhone() || (((Mall._load('mall_customer', null) || {}).phone) || '');
+  $('afAddr').value = '';
+  $('afDefault').checked = false;
+}
+async function saveAddrForm() {
+  const payload = {
+    id: editAddrId,
+    phone: (($('afPhone').value) || '').trim(),
+    contact: (($('afContact').value) || '').trim(),
+    address: (($('afAddr').value) || '').trim(),
+    isDefault: !!$('afDefault').checked
+  };
+  try {
+    const saved = await SdyApi.saveAddress(payload);
+    if (saved && saved.id) pickedAddrId = saved.id;
+    toast('地址已保存');
+    renderAddrBook(); renderAddrPick();
+  } catch (e) { toast(e.message, 3600); }
+}
+async function setDefaultAddr(id) {
+  const a = addrListOf(bookPhone()).find(x => x.id === id);
+  if (!a) return;
+  try {
+    await SdyApi.saveAddress({ id: a.id, phone: a.phone, contact: a.contact, address: a.address, isDefault: true });
+    toast('已设为默认地址');
+    renderAddrBook(); renderAddrPick();
+  } catch (e) { toast(e.message, 3600); }
+}
+async function delAddr(id) {
+  if (typeof confirm === 'function' && !confirm('删除这条地址？')) return;
+  try {
+    await SdyApi.deleteAddress(bookPhone(), id);
+    if (pickedAddrId === id) pickedAddrId = 0;
+    toast('地址已删除');
+    renderAddrBook(); renderAddrPick();
+  } catch (e) { toast(e.message, 3600); }
+}
+
 /* ---------------- 结算 ---------------- */
-function goCheckout() {
+async function goCheckout() {
   if (!Mall.cartSummary().count) return toast('购物车是空的');
   const last = Mall._load('mall_customer', null);
   if (last) { $('cName').value = last.name || ''; $('cPhone').value = last.phone || ''; $('cAddr').value = last.address || ''; }
+  pickedAddrId = 0;
+  const phone = curPhone();
+  if (phone) {
+    const list = await refreshAddresses(phone);
+    const def = list.find(a => a.isDefault) || list[0];
+    if (def) {   // 有地址簿就一键带出默认地址
+      $('cName').value = def.contact || $('cName').value;
+      $('cPhone').value = def.phone || $('cPhone').value;
+      $('cAddr').value = def.address || '';
+      pickedAddrId = def.id;
+    }
+  }
+  renderAddrPick();
   renderCheckout();
   closeAll(); show('dlgCheckout');
 }
@@ -335,6 +509,7 @@ function pickDelivery(t) {
   $('optPickup').className = 'dopt' + (t === 'pickup' ? ' on' : '');
   $('optDelivery').className = 'dopt' + (t === 'delivery' ? ' on' : '');
   $('addrField').className = 'field mt' + (t === 'delivery' ? '' : ' hide');
+  renderAddrPick();
   renderCheckout(); renderCart();
 }
 function renderCheckout() {
@@ -361,6 +536,16 @@ async function submitOrder() {
   try {
     const order = await SdyApi.createOrder({ deliveryType: deliveryType, customer: { name: name, phone: phone, address: address } });
     Mall._save('mall_customer', { name: name, phone: phone, address: address });
+    if (deliveryType === 'delivery' && $('addrSave') && $('addrSave').checked) {
+      // 顺手存进地址簿（D18）：与带出的那条一模一样就不重复写；改了内容则存成新的一条，
+      // 绝不覆盖已有地址（要改已有地址走「地址簿管理」的编辑）。失败不影响下单结果。
+      const picked = pickedAddrId ? addrListOf(phone).filter(a => a.id === pickedAddrId)[0] : null;
+      const same = picked && picked.contact === name && picked.address === address;
+      if (!same) {
+        try { await SdyApi.saveAddress({ id: 0, phone: phone, contact: name, address: address, isDefault: false }); }
+        catch (e) { console.warn('地址簿保存失败：' + e.message); }
+      }
+    }
     toast((SdyApi.on() ? '下单成功：' : '本地演示（未入库）：') + order.id, 3000);
     closeAll(); refreshAll();
     if (SdyApi.on()) switchView('orders');

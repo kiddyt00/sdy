@@ -93,6 +93,18 @@ type NewOrderInputItem struct {
 	Qty  float64 `json:"qty"`
 }
 
+// Address 顾客收货地址簿条目（D18）：按手机号归档，顾客端一键带出、管理端可见。
+// 订单里的地址仍是下单当时的快照，地址簿只负责「少打字」，改地址簿不影响历史订单。
+type Address struct {
+	ID        int64  `json:"id"`
+	Phone     string `json:"phone"`
+	Contact   string `json:"contact"`
+	Address   string `json:"address"`
+	IsDefault bool   `json:"isDefault,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
 // Store 数据访问对象。
 type Store struct {
 	db  *sql.DB
@@ -135,6 +147,16 @@ var schemaStmts = []string{
 		note TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT ''
 	)`,
+	`CREATE TABLE IF NOT EXISTS customer_address (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		phone TEXT NOT NULL DEFAULT '',
+		contact TEXT NOT NULL DEFAULT '',
+		address TEXT NOT NULL DEFAULT '',
+		is_default INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT '',
+		updated_at TEXT NOT NULL DEFAULT ''
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_customer_address_phone ON customer_address(phone)`,
 	`CREATE TABLE IF NOT EXISTS orders (
 		id TEXT PRIMARY KEY,
 		customer_name TEXT NOT NULL DEFAULT '',
@@ -638,6 +660,158 @@ func (s *Store) TouchCustomer(phone, name string) error {
 	_, err := s.db.Exec(`INSERT INTO customer (phone,name,created_at) VALUES (?,?,?)
 		ON CONFLICT(phone) DO UPDATE SET name=excluded.name`, phone, name, nowStr())
 	return err
+}
+
+// ListAddresses 列出某手机号的收货地址簿，默认地址排最前（D18）。
+func (s *Store) ListAddresses(phone string) ([]Address, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return nil, fmt.Errorf("%w: 手机号不能为空", ErrBadInput)
+	}
+	rows, err := s.db.Query(`SELECT id,phone,contact,address,is_default,created_at,updated_at
+		FROM customer_address WHERE phone = ? ORDER BY is_default DESC, id ASC`, phone)
+	if err != nil {
+		return nil, fmt.Errorf("查询收货地址失败: %w", err)
+	}
+	defer rows.Close()
+	out := []Address{}
+	for rows.Next() {
+		var a Address
+		var def int
+		if err := rows.Scan(&a.ID, &a.Phone, &a.Contact, &a.Address, &def, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("读取收货地址失败: %w", err)
+		}
+		a.IsDefault = def == 1
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// SaveAddress 新增或修改一条收货地址（D18）。
+// 语义：同一手机号的第一条地址自动成为默认；is_default=true 时把其它条目的默认标记清掉；
+// 不传 is_default 的编辑不会摘掉现有默认标记（避免「改个门牌把默认地址弄丢」）。
+func (s *Store) SaveAddress(a Address) (Address, error) {
+	a.Phone = strings.TrimSpace(a.Phone)
+	a.Contact = strings.TrimSpace(a.Contact)
+	a.Address = strings.TrimSpace(a.Address)
+	if a.Phone == "" {
+		return Address{}, fmt.Errorf("%w: 手机号不能为空", ErrBadInput)
+	}
+	if a.Contact == "" {
+		return Address{}, fmt.Errorf("%w: 收货人不能为空", ErrBadInput)
+	}
+	if len([]rune(a.Contact)) > 20 {
+		return Address{}, fmt.Errorf("%w: 收货人不能超过 20 字", ErrBadInput)
+	}
+	if a.Address == "" {
+		return Address{}, fmt.Errorf("%w: 送货地址不能为空", ErrBadInput)
+	}
+	if len([]rune(a.Address)) > 120 {
+		return Address{}, fmt.Errorf("%w: 送货地址不能超过 120 字", ErrBadInput)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Address{}, fmt.Errorf("保存地址失败: %w", err)
+	}
+	defer tx.Rollback()
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM customer_address WHERE phone = ?`, a.Phone).Scan(&count); err != nil {
+		return Address{}, fmt.Errorf("查询地址数失败: %w", err)
+	}
+	if count == 0 {
+		a.IsDefault = true // 第一条地址就是默认地址
+	}
+	a.UpdatedAt = nowStr()
+	if a.ID == 0 {
+		if a.CreatedAt == "" {
+			a.CreatedAt = a.UpdatedAt
+		}
+		r, err := tx.Exec(`INSERT INTO customer_address (phone,contact,address,is_default,created_at,updated_at)
+			VALUES (?,?,?,?,?,?)`, a.Phone, a.Contact, a.Address, boolInt(a.IsDefault), a.CreatedAt, a.UpdatedAt)
+		if err != nil {
+			return Address{}, fmt.Errorf("新增地址失败: %w", err)
+		}
+		a.ID, err = r.LastInsertId()
+		if err != nil {
+			return Address{}, fmt.Errorf("新增地址失败: %w", err)
+		}
+	} else {
+		var r sql.Result
+		if a.IsDefault {
+			r, err = tx.Exec(`UPDATE customer_address SET contact=?,address=?,is_default=1,updated_at=?
+				WHERE id=? AND phone=?`, a.Contact, a.Address, a.UpdatedAt, a.ID, a.Phone)
+		} else {
+			r, err = tx.Exec(`UPDATE customer_address SET contact=?,address=?,updated_at=?
+				WHERE id=? AND phone=?`, a.Contact, a.Address, a.UpdatedAt, a.ID, a.Phone)
+		}
+		if err != nil {
+			return Address{}, fmt.Errorf("修改地址失败: %w", err)
+		}
+		if n, _ := r.RowsAffected(); n == 0 {
+			return Address{}, fmt.Errorf("%w: 地址不存在", ErrNotFound)
+		}
+	}
+	if a.IsDefault {
+		if _, err := tx.Exec(`UPDATE customer_address SET is_default=0 WHERE phone=? AND id<>?`, a.Phone, a.ID); err != nil {
+			return Address{}, fmt.Errorf("设置默认地址失败: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Address{}, fmt.Errorf("保存地址失败: %w", err)
+	}
+	// 回读一次，返回库里的事实（含自动补上的 created_at）
+	return s.GetAddress(a.Phone, a.ID)
+}
+
+// GetAddress 按编号取一条地址。
+func (s *Store) GetAddress(phone string, id int64) (Address, error) {
+	var a Address
+	var def int
+	err := s.db.QueryRow(`SELECT id,phone,contact,address,is_default,created_at,updated_at
+		FROM customer_address WHERE id=? AND phone=?`, id, strings.TrimSpace(phone)).
+		Scan(&a.ID, &a.Phone, &a.Contact, &a.Address, &def, &a.CreatedAt, &a.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Address{}, fmt.Errorf("%w: 地址不存在", ErrNotFound)
+	}
+	if err != nil {
+		return Address{}, fmt.Errorf("查询地址失败: %w", err)
+	}
+	a.IsDefault = def == 1
+	return a, nil
+}
+
+// DeleteAddress 删除一条地址；删掉的若是默认地址，自动把剩下最早的一条顶为默认（D18）。
+func (s *Store) DeleteAddress(phone string, id int64) error {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return fmt.Errorf("%w: 手机号不能为空", ErrBadInput)
+	}
+	if id <= 0 {
+		return fmt.Errorf("%w: 地址编号不合法", ErrBadInput)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("删除地址失败: %w", err)
+	}
+	defer tx.Rollback()
+	var def int
+	err = tx.QueryRow(`SELECT is_default FROM customer_address WHERE id=? AND phone=?`, id, phone).Scan(&def)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: 地址不存在", ErrNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("查询地址失败: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM customer_address WHERE id=? AND phone=?`, id, phone); err != nil {
+		return fmt.Errorf("删除地址失败: %w", err)
+	}
+	if def == 1 {
+		if _, err := tx.Exec(`UPDATE customer_address SET is_default=1
+			WHERE id = (SELECT id FROM customer_address WHERE phone=? ORDER BY id ASC LIMIT 1)`, phone); err != nil {
+			return fmt.Errorf("顶替默认地址失败: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // RecordSyncBatch 记录一次同步批次（M3 对账结果入库）。

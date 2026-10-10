@@ -211,6 +211,58 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     ok(!!Mall.getProduct('6901234567892'), '在线：删除失败后本地镜像仍在（不做幽灵删除）');
   }
 
+  /* ---------- 收货地址簿（D18） ---------- */
+  section('⑥ 收货地址簿：离线走本地 / 在线走后端并回镜像');
+  {
+    fresh();
+    const a = await SdyApi.saveAddress({ phone: '13800000001', contact: '王阿姨', address: '幸福路1号 3单元 501' });
+    ok(a.id > 0 && a.isDefault === true, '离线：保存第一条 → 本地自动默认');
+    const l1 = await SdyApi.listAddresses('13800000001');
+    ok(l1.length === 1 && l1[0].contact === '王阿姨', '离线：listAddresses 读本地地址簿');
+    const d = await SdyApi.defaultAddress('13800000001');
+    ok(d && d.id === a.id, '离线：defaultAddress 返回默认地址');
+    await SdyApi.deleteAddress('13800000001', a.id);
+    ok((await SdyApi.listAddresses('13800000001')).length === 0, '离线：deleteAddress 走本地');
+    let msg = '';
+    try { await SdyApi.saveAddress({ phone: '13800000001', contact: '', address: '乙' }); } catch (e) { msg = e.message; }
+    ok(msg === '收货人不能为空', '离线：本地校验文案与后端一致（' + msg + '）');
+  }
+  {
+    const f = mkFetch(serverRoutes([
+      { method: 'GET', path: '/api/addresses?phone=13800000001', body: { total: 1, items: [
+        { id: 11, phone: '13800000001', contact: '王阿姨', address: '幸福路1号 3单元 501', isDefault: true, createdAt: '2026-10-11T02:00:00Z', updatedAt: '2026-10-11T02:00:00Z' }
+      ] } },
+      { method: 'POST', path: '/api/addresses', body: function (c) {
+        return { id: 12, phone: c.body.phone, contact: c.body.contact, address: c.body.address, isDefault: false, createdAt: '2026-10-11T03:00:00Z', updatedAt: '2026-10-11T03:00:00Z' };
+      } },
+      { method: 'DELETE', path: '/api/addresses/11?phone=13800000001', body: { ok: true, id: 11 } }
+    ]));
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
+    const items = await SdyApi.listAddresses('13800000001');
+    ok(items.length === 1 && items[0].isDefault === true, '在线：GET /api/addresses 取后端地址');
+    ok(Mall.listAddresses('13800000001')[0].contact === '王阿姨', '在线：整册镜像回本地（离线仍能一键带出）');
+    ok(Mall.listAddresses('13800000001')[0].phone === '13800000001', '在线：镜像条目回填 phone');
+    const saved = await SdyApi.saveAddress({ phone: '13800000001', contact: '王叔叔', address: '幸福路2号 1单元 101' });
+    ok(saved && saved.id === 12, '在线：POST /api/addresses 透出后端返回');
+    const post = f.calls.filter(c => c.method === 'POST' && c.path === '/api/addresses')[0];
+    ok(!!post && post.body.id === 0 && post.body.isDefault === false, '在线：POST body 只送 id/phone/contact/address/isDefault');
+    ok(!!post && post.body.phone === '13800000001' && post.body.address === '幸福路2号 1单元 101', '在线：POST body 带手机号与地址');
+    const gets = f.calls.filter(c => c.path === '/api/addresses?phone=13800000001');
+    ok(gets.length === 2, '在线：写成功后自动重拉一次镜像');
+    await SdyApi.deleteAddress('13800000001', 11);
+    const del = f.calls.filter(c => c.method === 'DELETE')[0];
+    ok(!!del && del.path === '/api/addresses/11?phone=13800000001', '在线：DELETE /api/addresses/{id}?phone=');
+  }
+  {
+    const f = mkFetch(serverRoutes([
+      { method: 'POST', path: '/api/addresses', status: 400, body: { error: '送货地址不能为空' } }
+    ]));
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
+    let msg = '';
+    try { await SdyApi.saveAddress({ phone: '13800000001', contact: '甲', address: '乙' }); } catch (e) { msg = e.message; }
+    ok(msg.indexOf('送货地址不能为空') >= 0, '在线：后端 400 原文透出（' + msg + '）');
+    ok(f.calls.filter(c => c.path === '/api/addresses?phone=13800000001').length === 0, '在线：写入失败不再重拉镜像');
+  }
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

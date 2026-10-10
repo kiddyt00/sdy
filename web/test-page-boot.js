@@ -290,6 +290,115 @@ const online = {
     ok(ctx.printOrder('M00000') === undefined && printed === 0, '打印不存在的订单不唤起打印（只提示）');
   }
 
+  /* ---------- 顾客端：收货地址簿（D18） ---------- */
+  section('⑦ index.html · 收货地址簿（结算带出 / 保存 / 管理）');
+  {
+    const env = await bootPage('index.html', offline);
+    const ctx = env.ctx;
+    const PHONE = '13800000001';
+    // 结算/地址簿相关元素在启动时未被页面访问过，先按 id 取出来再断言
+    ['cPhone', 'cName', 'cAddr', 'addrSave', 'addrPick', 'addrPickWrap', 'addrField', 'dlgCheckout', 'dlgAddr',
+      'afPhone', 'afContact', 'afAddr', 'afDefault', 'afTitle', 'addrBookList', 'toast'].forEach(function (id) {
+      env.els[id] = ctx.document.getElementById(id);
+    });
+    const els = env.els;
+    const fill = function (name, addr) { els.cName.value = name; els.cAddr.value = addr; els.addrSave.checked = true; };
+    const newOrder = async function (addr) {          // 真实流程：重新点结算 → 带出默认地址 → 按需改地址 → 下单
+      Mall.addToCart('6901234567892', 2);
+      await ctx.goCheckout();
+      ctx.pickDelivery('delivery');
+      if (addr) els.cAddr.value = addr;
+      els.addrSave.checked = true;
+      await ctx.submitOrder();
+    };
+
+    // 1) 空地址簿：给提示，不报错
+    Mall.addToCart('6901234567892', 2);
+    els.cPhone.value = PHONE;
+    await ctx.goCheckout();
+    ok(els.dlgCheckout.className.indexOf('show') >= 0, 'goCheckout 打开结算弹窗');
+    ctx.pickDelivery('delivery');
+    ok(els.addrField.className.indexOf('hide') < 0, '选配送 → 显示地址输入');
+    ok(els.addrPickWrap.className.indexOf('hide') < 0, '选配送 → 显示常用地址区');
+    ok(els.addrPick.innerHTML.indexOf('还没有存过地址') >= 0, '空地址簿给出提示文案');
+    ctx.pickDelivery('pickup');
+    ok(els.addrPickWrap.className.indexOf('hide') >= 0, '选自提 → 收起常用地址区');
+
+    // 2) 下单勾选「保存到地址簿」→ 写入并成为默认
+    ctx.pickDelivery('delivery');
+    fill('王阿姨', '幸福路1号 3单元 501');
+    await ctx.submitOrder();
+    let book = Mall.listAddresses(PHONE);
+    ok(book.length === 1 && book[0].contact === '王阿姨', '下单后自动存进地址簿');
+    ok(book[0].isDefault === true, '第一条地址成为默认地址');
+    ok(book[0].address === '幸福路1号 3单元 501', '存下来的地址内容正确');
+
+    // 3) 带出的默认地址原样下单 → 不重复写；改了门牌 → 存成新的一条且不覆盖旧地址
+    await newOrder(null);
+    ok(Mall.listAddresses(PHONE).length === 1, '带出默认地址原样下单 → 不重复写地址簿');
+    await newOrder('幸福路1号 3单元 502');
+    book = Mall.listAddresses(PHONE);
+    ok(book.length === 2, '换了地址再下单 → 新增一条');
+    ok(book.filter(a => a.address === '幸福路1号 3单元 501').length === 1 && book[0].isDefault === true, '旧地址仍在且仍是默认（不被覆盖）');
+
+    // 4) 再结算：默认地址一键带出并高亮
+    els.cName.value = ''; els.cAddr.value = '';
+    Mall._save('mall_customer', { name: '', phone: PHONE, address: '' });
+    Mall.addToCart('6901234567892', 2);
+    await ctx.goCheckout();
+    ok(els.cName.value === '王阿姨' && els.cAddr.value === '幸福路1号 3单元 501', '默认地址自动带出收货人与地址');
+    ctx.pickDelivery('delivery');
+    ok(els.addrPick.innerHTML.indexOf('王阿姨') >= 0 && els.addrPick.innerHTML.indexOf('默认') >= 0, '常用地址区列出地址并标默认');
+    ok(els.addrPick.innerHTML.indexOf('addr-item on') >= 0, '带出的那条高亮选中');
+
+    // 5) 地址簿管理弹窗
+    await ctx.openAddrBook();
+    ok(els.dlgAddr.className.indexOf('show') >= 0, 'openAddrBook 打开地址簿弹窗');
+    ok(els.afPhone.value === PHONE, '管理弹窗预填手机号');
+    ok(els.addrBookList.innerHTML.indexOf('王阿姨') >= 0, '管理弹窗列出地址');
+    ok(els.addrBookList.innerHTML.indexOf('编辑') >= 0 && els.addrBookList.innerHTML.indexOf('删除') >= 0, '每条含编辑/删除按钮');
+    ok((els.addrBookList.innerHTML.match(/设为默认/g) || []).length === 1, '只有非默认那条显示「设为默认」');
+
+    // 6) 新增一条：不抢默认，默认仍排最前
+    const id1 = Mall.defaultAddress(PHONE).id;
+    els.afContact.value = '王叔叔';
+    els.afAddr.value = '幸福路2号 1单元 101';
+    els.afDefault.checked = false;
+    await ctx.saveAddrForm();
+    book = Mall.listAddresses(PHONE);
+    ok(book.length === 3, '新增地址成功（共 3 条）');
+    ok(Mall.defaultAddress(PHONE).id === id1, '新地址不抢默认');
+
+    // 7) 校验拦截：文案与后端一致
+    els.afContact.value = '';
+    await ctx.saveAddrForm();
+    ok(els.toast.textContent === '收货人不能为空', '空收货人被拦截并提示：' + els.toast.textContent);
+    ok(Mall.listAddresses(PHONE).length === 3, '被拦截时不写入');
+    els.afContact.value = '王叔叔';
+
+    // 8) 编辑 + 设为默认
+    const id2 = Mall.listAddresses(PHONE).filter(a => a.contact === '王叔叔')[0].id;
+    ctx.editAddr(id2);
+    ok(els.afTitle.textContent === '编辑地址' && els.afContact.value === '王叔叔', '编辑回填表单');
+    els.afAddr.value = '幸福路2号 1单元 102';
+    await ctx.saveAddrForm();
+    ok(Mall.listAddresses(PHONE).filter(a => a.address === '幸福路2号 1单元 102').length === 1, '编辑保存生效');
+    await ctx.setDefaultAddr(id2);
+    ok(Mall.defaultAddress(PHONE).id === id2, '「设为默认」生效');
+    ok(els.addrBookList.innerHTML.indexOf('设为默认') >= 0, '换默认后原默认那条出现「设为默认」按钮');
+
+    // 9) 删除默认 → 剩下最早一条顶为默认
+    await ctx.delAddr(id2);
+    book = Mall.listAddresses(PHONE);
+    ok(book.length === 2 && book.filter(a => a.id === id1).length === 1, '删除地址生效');
+    ok(book.filter(a => a.isDefault).length === 1 && Mall.defaultAddress(PHONE).id === id1, '删掉默认地址 → 剩下最早一条顶为默认');
+
+    // 10) 清空按钮
+    ctx.editAddr(id1);
+    ctx.resetAddrForm();
+    ok(els.afTitle.textContent === '新增地址' && els.afContact.value === '' && els.afPhone.value === PHONE, 'resetAddrForm 清空表单并保留手机号');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

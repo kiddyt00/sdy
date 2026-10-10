@@ -200,7 +200,7 @@
     <tr><th style="width:34%">立项时的判断</th><th>当前实际（已实现 / 已调整）</th></tr>
     <tr><td>形态：<strong>微信小程序为主</strong>（uni-app，C 端 8 页）</td><td><strong>先做 Web 端商城，小程序暂缓</strong>（用户 2026-10-10 决定）：顾客端 <code>web/index.html</code>（手机浏览器直接下单）+ 管理端 <code>web/admin.html</code>，共用设计系统 <code>web/assets/theme.css</code>；小程序骨架已写完并归档 <code>archive/miniprogram/</code>（4 页 + utils + 62/47 项测试，随时可续）</td></tr>
     <tr><td>技术栈：GoFrame/Gin + uni-app + Vue3/Element + MySQL 8 + Redis</td><td><strong>Go 1.24 标准库 <code>net/http</code> + <code>modernc.org/sqlite</code></strong>（纯 Go 驱动、CGO_ENABLED=0 静态单文件）<strong>+ 原生 HTML/CSS/JS（无构建步骤）</strong>；未引入 MySQL/Redis/前端框架 —— 单店量级不需要，运维更省钱</td></tr>
-    <tr><td>路线：P0–P3 四期，3 个月跑通双业务线 MVP</td><td>重组为 <strong>M0–M6 里程碑</strong>：M0 基建 / M1 页面层 / M2 规则数据 / M3 牵牛花 CSV 对账 / M4 Go 后端（HTTP API + 条码解析链 + Docker 蓝绿部署件）<strong>均已完成并测试</strong>；<strong>M5 小程序化暂缓</strong>；<strong>M5′ Web 端商城现代化进行中</strong>；M6 上线待已备案域名</td></tr>
+    <tr><td>路线：P0–P3 四期，3 个月跑通双业务线 MVP</td><td>重组为 <strong>M0–M6 里程碑</strong>：M0 基建 / M1 页面层 / M2 规则数据 / M3 牵牛花 CSV 对账 / M4 Go 后端（HTTP API + 条码解析链 + Docker 蓝绿部署件）<strong>均已完成并测试</strong>；<strong>M5 小程序化暂缓</strong>；<strong>M5′ Web 端商城现代化进行中（任务池 8 项完成 3 项：商品建档 / 订单小票 / 收货地址簿，2026-10-10 本机暂停）</strong>；M6 上线待已备案域名</td></tr>
     <tr><td>同步：先验证牵牛花能否导出 CSV（行动项 0 最优先）</td><td>同步口径确定为<strong>月度 CSV 对账</strong>，工具已就绪（<code>sync-demo/sync-csv.js</code> 对账引擎 + 工作台 + 导出确认清单，62 项测试）；<strong>仍需拿到真实导出文件核对列名 —— 行动项 0 尚未闭环</strong></td></tr>
     <tr><td>登录/支付/配送：微信支付 + 4 家第三方配送 API</td><td>均未接入（依赖小程序账号、商户号、配送权限）；当前 MVP 用<strong>自建规则</strong>：自提 0 元 / 配送满 30 元免、否则 3 元，<strong>规则只在 Go 服务端执行</strong>，页面不再自己算</td></tr>
   </table>
@@ -230,13 +230,13 @@
 <!-- ================= 0 实施现状 ================= -->
 <section id="s0">
   <h2><span class="no">0</span>实施现状与本次更新（2026-10-10）</h2>
-  <div class="callout green"><strong>一句话：</strong>本文最初是「可行性分析 + 架构设计」，现在它同时是一份<strong>实施记录</strong>。截至第 12 轮：<strong>M0–M4 已完成并测试</strong>，<strong>小程序化（M5）按用户要求暂缓并归档</strong>，当前重心是 <strong>Web 端商城的功能补全</strong>（第 12 轮完成「待做任务池」第 2 项：订单打印 / 小票；第 11 轮完成第 1 项：商品建档 / 编辑表单）。</div>
+  <div class="callout green"><strong>一句话：</strong>本文最初是「可行性分析 + 架构设计」，现在它同时是一份<strong>实施记录</strong>。截至第 13 轮：<strong>M0–M4 已完成并测试</strong>，<strong>小程序化（M5）按用户要求暂缓并归档</strong>，当前重心是 <strong>Web 端商城的功能补全</strong>（第 13 轮完成「待做任务池」第 3 项：顾客端收货地址簿；第 12 轮第 2 项：订单打印 / 小票；第 11 轮第 1 项：商品建档 / 编辑表单）。<strong>2026-10-10 用户决定本机暂停开发</strong>，进度与待办已同步仓库，下一轮从任务池第 4 项「销售报表 / 日报」续做。</div>
 
   <h3>0.1 已落地的东西（仓库实况）</h3>
   <table>
     <tr><th>目录</th><th>内容</th><th>状态</th></tr>
-    <tr><td><code>web/</code></td><td>顾客端 <code>index.html</code> + 经营管理台 <code>admin.html</code>（总览 / 订单（含<strong>小票打印</strong>）/ 库存 / <strong>商品档案</strong> / 价格防护 / 顾客 / 系统七视图）+ 设计系统 <code>assets/theme.css</code> + 领域逻辑 <code>mall.js</code> / <code>mall-admin.js</code> / <code>pricing.js</code> + 后端数据通道 <code>sdy-api.js</code></td><td>✅ 已完成（第 9 轮现代化重做；第 11 轮补商品建档/编辑/删除；第 12 轮补订单小票打印）</td></tr>
-    <tr><td><code>server/</code></td><td>Go 后端：六表数据层、事务下单、订单状态机、价格与配送规则、商品档案增删改校验、条码解析链（配额熔断）、HTTP API、Docker 蓝绿部署件</td><td>✅ 27 个单测（含 HTTP 层 3 个）+ 端到端冒烟通过</td></tr>
+    <tr><td><code>web/</code></td><td>顾客端 <code>index.html</code> + 经营管理台 <code>admin.html</code>（总览 / 订单（含<strong>小票打印</strong>）/ 库存 / <strong>商品档案</strong> / 价格防护 / 顾客 / 系统七视图）+ 设计系统 <code>assets/theme.css</code> + 领域逻辑 <code>mall.js</code> / <code>mall-admin.js</code> / <code>pricing.js</code> + 后端数据通道 <code>sdy-api.js</code></td><td>✅ 已完成（第 9 轮现代化重做；第 11 轮补商品建档/编辑/删除；第 12 轮补订单小票打印；第 13 轮补<strong>顾客端收货地址簿</strong>）</td></tr>
+    <tr><td><code>server/</code></td><td>Go 后端：七表数据层（含 <code>customer_address</code>）、事务下单、订单状态机、价格与配送规则、商品档案增删改校验、收货地址簿接口、条码解析链（配额熔断）、HTTP API、Docker 蓝绿部署件</td><td>✅ 29 个单测（含 HTTP 层 4 个）+ 端到端冒烟通过</td></tr>
     <tr><td><code>barcode-demo/</code></td><td>扫码台（手机摄像头 / 扫码枪 HID）+ 商品库 / 条码库 / 扫码日志 + 后端通道 <code>bd-api.js</code></td><td>✅ APPCODE 只在服务端</td></tr>
     <tr><td><code>sync-demo/</code></td><td>牵牛花 CSV 对账引擎 + 对账工作台 + 导出确认清单</td><td>✅ 工具就绪（待真实导出文件核对列名）</td></tr>
     <tr><td><code>archive/miniprogram/</code></td><td>微信小程序骨架（4 页 + tabBar + <code>utils</code> 三件套 + 两套测试）</td><td>⏸ 暂缓归档，可随时续做</td></tr>
@@ -255,7 +255,7 @@
     <tr><th>文档</th><th>定位</th></tr>
     <tr><td>本文（可行性分析与架构方案）</td><td>为什么做、怎么做、选型与成本的完整推演 + 第 0 章实施现状</td></tr>
     <tr><td><code>开发计划.html</code></td><td>里程碑路线图、当前重心与待办、依赖用户的事项、进度跟踪</td></tr>
-    <tr><td><code>细节讨论记录.html</code></td><td>逐轮讨论记录与 D1–D17 决策汇总（每条决策含来源与影响）</td></tr>
+    <tr><td><code>细节讨论记录.html</code></td><td>逐轮讨论记录与 D1–D18 决策汇总（每条决策含来源与影响）</td></tr>
     <tr><td><code>README.md</code> · <code>web/README.md</code> · <code>server/README.md</code></td><td>仓库落地说明：目录结构、运行方式、测试命令</td></tr>
   </table>
   <p style="color:var(--muted)">三份中文文档均会推送到腾讯文档便于共同编辑，<strong>每次推送都会生成新链接</strong>（导出接口每人每天 9 次配额，故推送按轮次合并进行），最新链接见每轮汇报与仓库 README。</p>
@@ -267,7 +267,8 @@
     <li><strong>小程序账号 + 商户号</strong>：M5 续做前置，申请周期 1–2 周；微信支付也要靠它。</li>
     <li><strong>第三方配送 API 权限</strong>（美团配送 / 达达 / 闪送 / 顺丰同城）：零售即时配送接入前各需 1–2 周审核。</li>
     <li><strong>D1–D5 待确认</strong>：入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算。</li>
-    <li><strong>下一轮候选（Web 端功能）</strong>：后台商品建档与编辑表单、订单打印（拣货单/小票）、销售日报与报表、顾客收货地址簿、批量改价。</li>
+    <li><strong>下一轮候选（Web 端功能）</strong>：任务池第 4–8 项 —— 销售报表 / 日报、批量改价（必须过比价防线）、商品图片与分类管理、批发价与顾客等级、上线部署验证。</li>
+    <li><strong>⏸ 本机暂停（2026-10-10）</strong>：用户决定暂停本机开发，已完成 ①商品建档 ②订单小票 ③收货地址簿 三项；续做先 <code>git pull --rebase</code>，再从根 <code>README.md</code>「下一步（待续）」的任务池第 4 项接着做。</li>
   </ul>
 </section>
 

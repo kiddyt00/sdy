@@ -166,6 +166,49 @@ throws(() => Mall.updateProduct('6900000000000', { refPrice: 1 }), '更新不存
   Mall.clearCart();
 }
 
+// ============ ⑧ 收货地址簿（D18） ============
+section('⑧ 收货地址簿');
+fresh();
+const P1 = '13800000001', P2 = '13800000002';
+ok(Array.isArray(Mall.listAddresses(P1)) && Mall.listAddresses(P1).length === 0, '新手机号 → 空地址簿');
+throws(() => Mall.listAddresses('  '), '空手机号查地址簿 → 拦截');
+const a1 = Mall.saveAddress({ phone: P1, contact: ' 王阿姨 ', address: ' 幸福路1号 3单元 501 ' });
+ok(a1.isDefault === true, '第一条地址自动成为默认');
+ok(a1.contact === '王阿姨' && a1.address === '幸福路1号 3单元 501', '收货人/地址两端空格被裁掉');
+ok(a1.id > 0 && a1.createdAt, '拿到 id 与 createdAt');
+const a2 = Mall.saveAddress({ phone: P1, contact: '王叔叔', address: '幸福路1号 3单元 502' });
+ok(a2.isDefault === false, '第二条不抢默认');
+ok(Mall.defaultAddress(P1).id === a1.id, 'defaultAddress 返回第一条');
+ok(Mall.listAddresses(P1).length === 2 && Mall.listAddresses(P1)[0].id === a1.id, '列表默认地址排最前');
+const a3 = Mall.saveAddress({ phone: P1, contact: '王叔叔', address: '幸福路2号 1单元 101', isDefault: true });
+ok(Mall.defaultAddress(P1).id === a3.id, '显式 isDefault 顶替默认');
+ok(Mall.listAddresses(P1).filter(x => x.isDefault).length === 1, '任何时刻只有一个默认地址');
+{
+  const ed = Mall.saveAddress({ id: a1.id, phone: P1, contact: '王阿姨', address: '幸福路1号 3单元 501 改' });
+  ok(ed.address.endsWith('改'), '编辑地址生效');
+  ok(ed.createdAt === a1.createdAt, '编辑保留 createdAt');
+  ok(ed.isDefault === false, '编辑不传 isDefault → 不摘掉也不抢默认');
+  ok(Mall.defaultAddress(P1).id === a3.id, '默认地址仍是 a3');
+}
+throws(() => Mall.saveAddress({ id: 999999, phone: P1, contact: '谁', address: '哪' }), '编辑不存在的地址 → 拦截');
+throws(() => Mall.saveAddress({ phone: '', contact: '甲', address: '乙' }), '缺手机号 → 拦截');
+throws(() => Mall.saveAddress({ phone: P1, contact: '', address: '乙' }), '缺收货人 → 拦截');
+throws(() => Mall.saveAddress({ phone: P1, contact: '甲', address: '' }), '缺地址 → 拦截');
+throws(() => Mall.saveAddress({ phone: P1, contact: '甲'.repeat(21), address: '乙' }), '收货人 21 字 → 拦截');
+throws(() => Mall.saveAddress({ phone: P1, contact: '甲', address: '乙'.repeat(121) }), '地址 121 字 → 拦截');
+Mall.saveAddress({ phone: P2, contact: '李叔', address: '和平小区 7 栋 202' });
+ok(Mall.listAddresses(P2).length === 1 && Mall.defaultAddress(P2).contact === '李叔', '按手机号隔离，各自独立默认');
+ok(Mall.listAddresses(P1).length === 3, 'P1 不受 P2 影响');
+throws(() => Mall.deleteAddress(P1, 0), '删除 id=0 → 拦截');
+throws(() => Mall.deleteAddress('', a1.id), '删除空手机号 → 拦截');
+throws(() => Mall.deleteAddress(P1, 999999), '删除不存在的地址 → 拦截');
+Mall.deleteAddress(P1, a3.id);   // 删默认 → 剩下最早一条顶上
+ok(Mall.listAddresses(P1).length === 2, '删除后剩 2 条');
+ok(Mall.defaultAddress(P1).id === a1.id, '删掉默认地址 → 剩下最早一条顶为默认');
+Mall._saveAddresses(P1, [{ id: 501, contact: '同步人', address: '云端地址', isDefault: true }]);
+ok(Mall.listAddresses(P1).length === 1 && Mall.defaultAddress(P1).contact === '同步人', '_saveAddresses 覆盖本地镜像（在线同步用）');
+ok(Mall.listAddresses(P1)[0].phone === P1, '镜像条目回填 phone');
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

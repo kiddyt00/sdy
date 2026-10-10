@@ -8,10 +8,10 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `server/cmd/server/main.go` | 进程入口（438 行）：环境变量、建库与种子数据、路由表、CORS/日志中间件、超时与优雅退出、云端条码 HTTP 客户端 |
-| `server/cmd/server/main_test.go` | HTTP 层单测（200 行，3 个）：商品建档/编辑/删除全流程、库存语义、CORS 预检 |
-| `server/internal/store/store.go` | 数据层（681 行）：6 张表、事务下单、状态机、库存回补、商品档案增删改校验、条码字典 |
-| `server/internal/store/store_test.go` | 数据层单测（450 行，14 个） |
+| `server/cmd/server/main.go` | 进程入口（487 行）：环境变量、建库与种子数据、路由表、CORS/日志中间件、超时与优雅退出、云端条码 HTTP 客户端 |
+| `server/cmd/server/main_test.go` | HTTP 层单测（289 行，4 个）：商品建档/编辑/删除全流程、库存语义、**收货地址簿全流程**、CORS 预检 |
+| `server/internal/store/store.go` | 数据层（855 行）：7 张表、事务下单、状态机、库存回补、商品档案增删改校验、**收货地址簿**、条码字典 |
+| `server/internal/store/store_test.go` | 数据层单测（573 行，15 个） |
 | `server/internal/pricing/pricing.go` | 价格与配送规则（111 行），与 `web/pricing.js` 语义一致 |
 | `server/internal/pricing/pricing_test.go` | 规则单测（95 行，4 个） |
 | `server/internal/barcode/barcode.go` | 条码解析链（143 行）：商品档案 → 本地字典 → 云端，含查无 TTL 与失败熔断 |
@@ -86,6 +86,9 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | POST | `/api/products` | 建档/编辑商品（**自动写入条码字典层**）：服务端校验条码/名称必填、价格非负、库存非负，并执行比价防线（超价 `400`，批发与无参考价豁免）；`stock` 字段**不传 = 不改库存**（编辑表单不改库存），传了才写；成功返回保存后的商品，`syncStatus` 置 `pending` |
 | DELETE | `/api/products/{code}` | 删除商品档案（任务池①）：库存必须为 0（否则 `409` 提示先盘点为 0）、没有进行中订单引用（否则 `409`）；删档**保留条码字典层记录**（D6 永久沉淀）；成功返回 `{ok:true, code}` |
 | POST | `/api/products/stock` | 手动改库存 `{code, stock}`（D8：库存一律手动调整，扫码只读）；同时把 `syncStatus` 置为 `pending` |
+| GET | `/api/addresses?phone=` | 收货地址簿列表（D18）：默认地址排最前，其余按入库顺序；`phone` 为空返回 `400` |
+| POST | `/api/addresses` | 新增/编辑收货地址 `{id, phone, contact, address, isDefault}`：`id=0` 新增（**第一条自动成为默认**），带 `id` 则按 `id + phone` 更新（不存在返回 `404`）；`isDefault=true` 时摘掉同手机号其它条目的默认标记 |
+| DELETE | `/api/addresses/{id}?phone=` | 删除一条（不存在 `404`、编号非法 `400`）；**删掉默认地址后由最早的一条顶为默认** |
 | GET | `/api/orders?status=` | 订单列表 |
 | POST | `/api/orders` | 下单（事务内校验 → 扣库存 → 写订单，避免超卖），成功返回 `201` |
 | GET | `/api/orders/{id}` | 订单详情 |
@@ -95,7 +98,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | GET | `/api/pricing/check` | 比价防线巡检，返回 `{total, over, violations}` |
 | — | `/`（其余路径） | 静态文件（`STATIC_DIR`） |
 
-**错误码**：`400` 参数不合法 / `404` 资源不存在 / `409` 库存不足或状态不允许流转 / `405` 方法不支持 / `500` 其他。领域错误到 HTTP 码的映射写在 `server/cmd/server/main.go:392` 的 `writeErr`，用 `errors.Is` 判断 `store.ErrBadInput` / `ErrNotFound` / `ErrStockLess` / `ErrConflict`。
+**错误码**：`400` 参数不合法 / `404` 资源不存在 / `409` 库存不足或状态不允许流转 / `405` 方法不支持 / `500` 其他。领域错误到 HTTP 码的映射写在 `server/cmd/server/main.go:441` 的 `writeErr`，用 `errors.Is` 判断 `store.ErrBadInput` / `ErrNotFound` / `ErrStockLess` / `ErrConflict`。（`ErrBadInput` 的响应文案统一带「参数不合法: 」前缀，前端 `sdy-api.js` 原样透出，所以页面上看到的校验提示可能带这个前缀。）
 
 所有接口都带 CORS（`Access-Control-Allow-Origin: *`），`OPTIONS` 直接返回 `204`，方便扫码台在别的端口调试。请求体上限 1 MiB（`http.MaxBytesReader`）。
 
@@ -103,7 +106,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy/server
-go test ./... -count=1        # 27 个单测
+go test ./... -count=1        # 29 个单测
 ./smoke.sh                    # 起真服务跑 HTTP 全流程
 ```
 
@@ -113,10 +116,10 @@ go test ./... -count=1        # 27 个单测
 | --- | --- | --- |
 | `server/internal/barcode` | 6 | `TestResolveProductFirst`、`TestResolveLibSecond`、`TestResolveCloudBackfill`、`TestResolveCloudNotFoundTTL`、`TestResolveCircuitBreaker`、`TestResolveEdgeCases` |
 | `server/internal/pricing` | 4 | `TestDeliveryFee`、`TestDeliveryFeeCustomConfig`、`TestCheckRetailPrice`、`TestPricingCheck` |
-| `server/internal/store` | 14 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard` |
-| `server/cmd/server` | 3 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestHealthzAndOptions` |
+| `server/internal/store` | 15 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook` |
+| `server/cmd/server` | 4 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestAddressHTTPFlow`、`TestHealthzAndOptions` |
 
-合计 **27 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
+合计 **29 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
 
 `./smoke.sh` 会 `go build` 一个临时二进制，用 `mktemp` 建临时库（**不碰 `server/data/sdy.db`**），起在 `127.0.0.1:8099`（`SMOKE_PORT` 可改，**默认不占用 8093**），轮询 `/healthz` 就绪后依次验证 8 项：健康检查 → 商品数 → 条码解析 → 下单 → 下单后库存 → 非法流转返回 409 → 取消回补库存 → 比价巡检，最后退出并清理进程与临时文件。实测输出以 `✅ 冒烟通过` 结束（下单示例：`6901234567892` 库存 120 → 118，取消后回到 120）。
 
@@ -140,13 +143,14 @@ go vet ./...
 - **价格防线**：`salePrice ≤ round2(refPrice × 0.95)`；批发商品（`ExcludeWholesale: true`）与无参考价（`refPrice <= 0`）自动跳过。默认配置：自提 0 元、满 30 元免运费否则 3 元。
 - **商品档案校验**：`POST /api/products` 在 store 层校验条码/名称必填、价格非负、库存非负，并**在服务端执行比价防线**（`UpsertProduct` 内调 `pricing.CheckRetailPrice`，超价返回 `400`，批发与无参考价豁免）；缺省单位补「件」、分类补「未分类」。**`stock` 不传 = 保留原库存**（指针区分「没传」与「传 0」），保证管理端编辑表单不会误清库存。
 - **删除商品档案**：`DeleteProduct` 先查在库量与进行中订单，再删行；**条码字典层（`barcode_lib`）不删**——D6 的永久沉淀，删档后扫码仍能识别。
+- **D18 收货地址簿**：`customer_address` 按手机号一档多条（`phone` 建索引），`ListAddresses/SaveAddress/GetAddress/DeleteAddress` 四个方法守住三条语义——第一条自动为默认、`isDefault=true` 时摘掉同号其它默认、删掉默认后由最早一条顶替；`SaveAddress` 不传 `isDefault` 时**不动原有默认标记**（避免改门牌丢默认），更新不存在的 `id` 返回 `404`。订单里存的仍是下单当时的地址快照，改地址簿不影响历史订单。
 - **D8 扫码只读**：`/api/barcode/resolve` 只识别、不写价格库存；库存只能通过 `/api/products/stock` 手动改。
 - **D6 双库**：建档（`POST /api/products`）会**顺带把条码写进字典层**（`source=product`），所以建过档的码永久走本地命中，不再花云端配额。字典层的命中计数不会被 upsert 重置。
 
 **持久化与运行**
 
 - SQLite 非内存库时统一追加 `?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)`；`:memory:` 时强制 `SetMaxOpenConns(1)`（否则每个连接会看到不同的内存库）。WAL 模式让容器里两个实例可以同时读写，写锁最多等 5 秒。
-- 6 张表：`product`、`barcode_lib`、`customer`、`orders`、`order_item`、`sync_batch`。**`sync_batch`（对账批次）目前只有表和 store 方法，HTTP 层没有暴露接口**。
+- 7 张表：`product`、`barcode_lib`、`customer`、`customer_address`（收货地址簿，D18）、`orders`、`order_item`、`sync_batch`。**`sync_batch`（对账批次）目前只有表和 store 方法，HTTP 层没有暴露接口**。
 - 首次启动且**库为空**时写入 6 个示例商品（可口可乐/农夫山泉/心相印抽纸/旺旺雪饼/青岛啤酒/伊利纯牛奶），方便联调。条码、售价、库存与前端 `web/mall.js` 的种子一致，但**分类/规格等文案两边略有出入**（如心相印抽纸这里分类是「日用品」、前端写「纸品」；青岛啤酒这里规格是「330ml 罐装」、前端写「500ml 罐」）。
 - HTTP 超时：读头 5s、读 15s、写 30s、空闲 60s；收到 `SIGINT`/`SIGTERM` 后 `Shutdown` 最多 10s，**蓝绿滚动更新时不丢请求**。
 - 日志中间件只记 `/api/` 前缀的请求（含耗时 ms），避免静态资源刷屏。
@@ -177,7 +181,7 @@ cp .env.example .env         # 填 BARCODE_APPCODE 等（.env 不入库）
 
 - [`../README.md`](../README.md) — 仓库总览、里程碑状态、测试矩阵
 - [`../开发计划.html`](../开发计划.html) — 路线图（M4 后端、M6 部署）
-- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账（D6 双库、D8 扫码只读、D12 单一真源等）
+- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账（D6 双库、D8 扫码只读、D12 单一真源、D18 收货地址簿等）
 - [`../独立小程序商城可行性分析与架构方案.html`](../独立小程序商城可行性分析与架构方案.html) — 架构与实现现状
 - [`../web/README.md`](../web/README.md) — 商城 Web 端（`web/sdy-api.js` 是它的数据通道）
 - [`../barcode-demo/README.md`](../barcode-demo/README.md) — 扫码台（`barcode-demo/bd-api.js` 是它的数据通道）
