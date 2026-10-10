@@ -610,9 +610,61 @@ const DemoApp = (() => {
     toast('演示就绪：输入条码回车查询，或点示例码直接试扫', 'info');
   }
 
+  // ---------------- 摄像头扫码（M1.3：手机/电脑摄像头，走同一双库解析链） ----------------
+  let camStream = null, camTimer = null, camDetector_ = null;
+  function camSupported() {
+    return typeof navigator !== 'undefined' && !!navigator.mediaDevices &&
+      !!navigator.mediaDevices.getUserMedia && 'BarcodeDetector' in window;
+  }
+  function camDetector() {
+    if (!camDetector_ && 'BarcodeDetector' in window) {
+      camDetector_ = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'] });
+    }
+    return camDetector_;
+  }
+  async function startCamera() {
+    const v = $('#camVideo'), tip = $('#camTip');
+    if (!v) return toast('页面缺少摄像头区域', 'error');
+    if (!camSupported()) {
+      const m = '当前浏览器不支持摄像头扫码（需 getUserMedia + BarcodeDetector）。请改用 Chrome/Edge 桌面或安卓端，或使用扫码枪 / 手动输入。';
+      if (tip) tip.textContent = m;
+      return toast(m, 'error');
+    }
+    if (camStream) return stopCamera();
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      v.srcObject = camStream; v.style.display = 'block';
+      if (tip) tip.textContent = '';
+      $('#btnCam').textContent = '⏹ 停止扫码';
+      toast('摄像头已开启：对准条码自动识别', 'info');
+      camTimer = setInterval(detectOnce, 260);
+    } catch (e) {
+      toast('无法打开摄像头：' + e.message + '（需允许权限，或改用扫码枪/手动输入）', 'error');
+    }
+  }
+  async function detectOnce() {
+    const v = $('#camVideo');
+    if (!v || !v.videoWidth) return;
+    try {
+      const d = camDetector();
+      if (!d) return;
+      const codes = await d.detect(v);
+      if (codes && codes.length) { stopCamera(); doScan(codes[0].rawValue, true); }
+    } catch (e) { /* 单帧识别失败忽略，下一帧继续 */ }
+  }
+  function stopCamera() {
+    clearInterval(camTimer); camTimer = null;
+    if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+    const v = $('#camVideo');
+    if (v) { v.srcObject = null; v.style.display = 'none'; }
+    const b = $('#btnCam');
+    if (b) b.textContent = '📷 摄像头扫一扫';
+  }
+
   // ---------------- 导出（浏览器 + Node 测试） ----------------
   return {
     init, resolve, createProduct, deleteProduct, seedData, renderAll,
+    startCamera, stopCamera,
     _state: state,
     _test: {
       normCode, isValid, endOfTodayTs,

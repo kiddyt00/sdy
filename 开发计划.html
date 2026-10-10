@@ -86,20 +86,22 @@
 </table>
 <p><b>产出：</b><code>mall-demo/</code>（mall.html + mall.js + 测试）。<b>数据约定：</b>与 barcode-demo 共用 <code>bd_products</code>（商品库档案），扫码建档后商城立即可售。</p>
 
-<h3>M1.2 管理端 demo 扩展（下一步）</h3>
+<h3>M1.2 管理端 demo 扩展（✔ 已完成 2026-10-10）</h3>
+<div class="callout green">M1.2 已完成：<code>mall-demo/admin.html</code> + <code>mall-admin.js</code>——订单管理（状态操作 + 4 人配送员分配/改派）、库存管理（改数/入库单/盘点，D8 手动 + 自动流水）、顾客管理（手机号聚合 + 标签/备注档案）；32 项管理端测试通过。库存页形态仍待 D1/D2/D4 确认后细化。</div>
 <ul>
 <li><b>库存管理页</b>：入库单（手动录数量，D8）、盘点差异调整、直接改数；整车到货按箱调整</li>
 <li><b>订单管理页</b>：订单列表、状态操作（备货/发配送/标记自提）、4 人配送任务分配雏形</li>
 <li><b>顾客管理页</b>：私域顾客名单、消费次数/金额统计雏形</li>
 </ul>
 
-<h3>M1.3 扫码体验完善（随 1.2）</h3>
+<h3>M1.3 扫码体验完善（✔ 已完成 2026-10-10，浏览器版）</h3>
+<div class="callout green">M1.3 已完成（浏览器版）：<code>barcode-demo</code> 扫码台新增「📷 摄像头扫一扫」（getUserMedia + BarcodeDetector，自动识别后走同一双库解析链）与扫码枪 HID 键盘模式（聚焦即扫、回车即查）；双库命中徽标 + 建档入口沿用。手机摄像头回调（wx.scanCode）留到 M5 小程序化实现。</div>
 <ul>
 <li>手机摄像头扫码（wx.scanCode 回调 → resolve）；扫码枪 HID 回车（零驱动）</li>
 <li>双库命中徽标（本地商品/本地字典/云端/查无）与建档入口（D6）</li>
 </ul>
 
-<div class="callout green">M1 整体验收：顾客端与管理端 demo 全流程可本地跑通；核心逻辑均有 node 自动化测试；任一页面可直接演示给合伙人。</div>
+<div class="callout green">M1 页面展示层 整体验收 ✔：顾客端（mall.html）、管理端（admin.html）、扫码体验（barcode-demo 摄像头/扫码枪）全流程可本地跑通；核心逻辑均有 node 自动化测试（40+32+双库 7 组）；任一页面可直接演示给合伙人。下一步 M2 规则与数据层。</div>
 
 <h2>五、M2 规则与数据层</h2>
 <table>
@@ -160,11 +162,12 @@
 <tr><th>里程碑</th><th>状态</th><th>产出/链接</th></tr>
 <tr><td>M0 基建</td><td class="ok">✔ 完成</td><td>GitHub 仓库 · README · 本计划 · 文档同步链路</td></tr>
 <tr><td>M1.1 顾客端商城 demo</td><td class="ok">✔ 完成</td><td>mall-demo/（首页/详情/购物车/结算/我的订单 + 40 项测试）</td></tr>
-<tr><td>M1.2 管理端扩展</td><td class="doing">● 下一步</td><td>库存管理（入库/盘点/改数，D8 手动）· 订单管理 · 顾客管理</td></tr>
-<tr><td>M2/M3/M4/M5/M6</td><td class="todo">○ 待办</td><td>—</td></tr>
+<tr><td>M1.2 管理端扩展</td><td class="ok">✔ 完成</td><td>admin.html 订单/库存/顾客三页 + mall-admin.js + 32 项测试</td></tr>
+<tr><td>M1.3 扫码体验</td><td class="ok">✔ 完成</td><td>barcode-demo 摄像头扫一扫 + 扫码枪 HID + 双库徽标（wx.scanCode 待 M5）</td></tr>
+<tr><td>M2 规则与数据层</td><td class="doing">● 下一步</td><td>价格规则服务化 · 双库 resolve 服务化 · 库存联动（核心逻辑已散落在 demo 中，待抽层）</td></tr>
 </table>
 
-<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。下一轮：M1.1 顾客端商城 demo 落地 + 测试。</div>
+<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。M1 页面展示层（顾客端/管理端/扫码体验）已全部落地并测试。下一轮：M2 规则与数据层（价格规则服务化 + 双库 resolve 服务化）→ M3 牵牛花 CSV 同步（行动项 0 需先验证牵牛花导出字段）。</div>
 
 </body>
 </html>

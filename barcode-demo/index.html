@@ -102,7 +102,11 @@
       <div class="scan-row">
         <input id="scanInput" placeholder="输入或扫码 8/12/13/14 位数字条码，回车查询" autocomplete="off" spellcheck="false">
         <button class="btn primary" id="btnScan">查询</button>
+        <button class="btn" id="btnCam" onclick="DemoApp.startCamera()">📷 摄像头扫一扫</button>
       </div>
+      <div class="hint">扫码枪 = 键盘（HID 模式）：点击条码框聚焦后直接扫，回车即查。摄像头模式对准条码自动识别，走同一条双库解析链。</div>
+      <video id="camVideo" autoplay playsinline muted style="display:none;width:100%;max-width:420px;border-radius:8px;background:#000"></video>
+      <div class="hint" id="camTip" style="display:none;color:#b45309"></div>
       <div class="hint">示例码（点击直接试扫，模拟手机扫码）：</div>
       <div class="chips">
         <button class="chip" data-code="6901234567892">① 已建档商品</button>
