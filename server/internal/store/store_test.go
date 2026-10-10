@@ -301,3 +301,36 @@ func TestListOrdersAndCustomer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestListLib(t *testing.T) {
+	st := newTestStore(t)
+	seed(t, st) // 建档即沉淀字典层 → 2 条
+	if err := st.UpsertLib(LibEntry{Code: "6909", Source: "cloud", Status: "not_found",
+		ExpiresAt: "2027-01-01T00:00:00+08:00"}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := st.ListLib(0)
+	if err != nil {
+		t.Fatalf("ListLib 失败: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("期望 3 条字典项，实际 %d：%+v", len(all), all)
+	}
+	codes := map[string]string{}
+	for _, e := range all {
+		codes[e.Code] = e.Source
+	}
+	if codes["6901"] != "product" {
+		t.Errorf("建档应沉淀 source=product 的字典项，实际 %q", codes["6901"])
+	}
+	if codes["6909"] != "cloud" {
+		t.Errorf("期望云端字典项 source=cloud，实际 %q", codes["6909"])
+	}
+	one, err := st.ListLib(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one) != 1 {
+		t.Errorf("limit 未生效：期望 1 条，实际 %d", len(one))
+	}
+}

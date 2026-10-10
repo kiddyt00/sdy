@@ -9,11 +9,15 @@
 |---|---|
 | `index.html` | 演示页（扫码台 / 商品库 / 条码库 / 日志 / 设置） |
 | `app.js` | 全部逻辑：三库存储(localStorage)、resolve 三级链路、去重锁/串行/配额/熔断、Mock 与阿里云双 Provider |
+| `bd-api.js` | **后端通道**：接 Go 后端时解析链/建档全走服务端，APPCODE 只留在服务端；后端不在则自动退回本地演示 |
 | `proxy.py` | 本地联调服务器：静态托管 + 转发 `/barcode` 到阿里云网关（注入 APPCODE，规避 CORS） |
 | `test-core.js` | 核心链路自动化测试（`node test-core.js`，不依赖浏览器） |
+| `test-api.js` | 后端通道测试（假 fetch，覆盖离线/在线/解析映射/建档/列表镜像，55 项） |
+| `test-page-boot.js` | 页面启动冒烟（假 DOM 跑 bd-api.js + app.js，离线/在线两条路径，28 项） |
+| `test-integration.js` | **真后端**联调（需先起 Go 服务，34 项；后端不在则自动跳过） |
 | `appcode.txt` | 你自己的配置（不提交）：第一行 APPCODE，第二行网关地址 |
 
-## 运行方式（三档）
+## 运行方式（四档）
 
 **方式一 · 纯离线演示（推荐先跑这个）**
 直接用浏览器打开 `index.html` 即可（`file://` 也支持，数据存 localStorage）。
@@ -26,7 +30,18 @@ python3 -m http.server 8900     # 或 python3 proxy.py（附带 /barcode 转发�
 ```
 打开 http://127.0.0.1:8900
 
-**方式三 · 接真实阿里云市场 API**
+**方式二·B · 接 Go 后端（M4 收尾 · 推荐生产方式）**
+```
+cd server
+STATIC_DIR=.. go run ./cmd/server          # 默认 127.0.0.1:8093，需在 server/ 目录内启动
+# 打开 http://127.0.0.1:8093/barcode-demo/
+```
+页面顶部胶囊显示 **🟢 后端已连接（规则在服务端）**：解析链（档案 → 字典 → 云端）、查无 TTL、熔断、建档全部由 Go 服务执行，
+条码字典与商品库以服务端为真源镜像到页面；服务端未配 `BARCODE_APPCODE` 时提示「纯本地模式」。
+后端不在 → 胶囊变 **🟡 本地演示（后端未连接）**，页面照常可用。
+后端地址也可在「设置 → 后端地址」里填（留空＝同源），写入 localStorage `bd_api_base`。
+
+**方式三 · 接真实阿里云市场 API（仅本地联调）**
 1. 在阿里云市场开通「商品条码查询」服务，控制台拿到 APPCODE 与网关完整地址（含路径，如 `https://gscode.market.alicloudapi.com/getBarcode`）
 2. 新建 `appcode.txt`：
    ```
@@ -36,7 +51,30 @@ python3 -m http.server 8900     # 或 python3 proxy.py（附带 /barcode 转发�
 3. `python3 proxy.py`，浏览器打开 http://127.0.0.1:8900（若 8900 被占用：`BARCODE_PORT=8911 python3 proxy.py`）
 4. 演示页「设置」→ Provider 选「阿里云市场」，网关填 `http://127.0.0.1:8900`，APPCODE 留空即可（由 proxy 注入）
 
-> 生产环境：云端调用必须放后端，前端不得持有 APPCODE。
+> 生产环境：云端调用一律在 Go 服务端（环境变量 `BARCODE_APPCODE`），前端不持有 APPCODE。方式三只是没有后端时的本地调试手段。
+
+## 测试
+
+```
+node barcode-demo/test-core.js        # 7 组核心链路
+node barcode-demo/test-api.js         # 55 项：离线降级 / 在线探测 / 解析映射 / 建档 / 镜像 / base 优先级
+node barcode-demo/test-page-boot.js   # 28 项：页面启动（离线 + 在线两条路径）
+# 真后端联调（先起服务）
+cd server && ADDR=127.0.0.1:8097 DB_PATH=/tmp/sdy-bd.db STATIC_DIR=.. go run ./cmd/server &
+SDY_API_BASE=http://127.0.0.1:8097 node barcode-demo/test-integration.js   # 34 项
+```
+
+## 接后端后行为变化一览
+
+| 场景 | 离线（本地演示） | 在线（Go 后端） |
+|---|---|---|
+| 解析链 | 浏览器内 product → lib → Mock/阿里云 | `GET /api/barcode/resolve`（服务端三级链，含 TTL/熔断） |
+| 查无标记 | 本浏览器 localStorage，换浏览器即失效 | 服务端 `barcode_lib`，**全店共享**，返回剩余天数 |
+| 一键建档 | 写 localStorage | `POST /api/products`（商品档案 + 字典层一次写入，重复建档被拦） |
+| 商品库 / 条码库表格 | 本地种子数据 | 服务端镜像（`GET /api/products`、`GET /api/barcode/lib`） |
+| 删除商品 | 可用（演示） | 禁用（删档会破坏与牵牛花对账口径） |
+| APPCODE | 存在浏览器 localStorage（仅调试） | 只在服务端环境变量，页面不持有 |
+
 
 ## 演示场景（扫码台「示例码」小按钮，点击直接试扫）
 
@@ -65,4 +103,5 @@ python3 -m http.server 8900     # 或 python3 proxy.py（附带 /barcode 转发�
 - **价格与库存永不自动填云端值**：价格用自家定价，库存以自家入库/盘点为准
 - **扫码只读、不改库存**：扫条码只做识别/建档/查询，库存一律手动调整（建档期初值、整车到货、盘点时在商品库改数）
 - 阿里云条码 API **按次计费**：HTTP 200 即扣配额（查无也是 HTTP 200 + `status:"400"`，同样扣）；HTTP 非 200 不扣
+- **配额与熔断由调用方负责**：接后端后配额/熔断在服务端（`/healthz` 暴露 `cloudFails`/`circuitOpen`），页面不再自己计数
 - Demo 数据仅存本浏览器，刷新/换浏览器即恢复初始；「重置演示数据」一键恢复种子数据

@@ -119,10 +119,16 @@ func TestResolveCloudNotFoundTTL(t *testing.T) {
 	if e.ExpiresAt != want {
 		t.Errorf("TTL 期望 %s，实际 %s", want, e.ExpiresAt)
 	}
+	if got.ExpiresAt != want {
+		t.Errorf("结果应带查无到期时间供前端算剩余天数，期望 %s，实际 %q", want, got.ExpiresAt)
+	}
 	// TTL 内再扫：直接返回查无，不消耗配额
 	again, _ := r.Resolve("6900000000000")
 	if again.Source != "not_found" || fc.calls != 1 {
 		t.Errorf("TTL 内应本地返回查无，实际 source=%s calls=%d", again.Source, fc.calls)
+	}
+	if again.ExpiresAt == "" {
+		t.Errorf("本地 not_found 命中也要带 expiresAt")
 	}
 	// TTL 过期后重新查云端
 	now = now.AddDate(0, 0, 91)

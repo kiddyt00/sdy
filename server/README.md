@@ -40,16 +40,21 @@ BARCODE_APPCODE=你的AppCode go run ./cmd/server
 | POST | `/api/orders` | 下单（服务端校验库存 → 扣减 → 生成订单，事务内完成，避免超卖） |
 | GET | `/api/orders/{id}` | 订单详情 |
 | POST | `/api/orders/{id}/advance` | 状态流转 `{to: delivering|ready|done|cancelled}` |
-| GET | `/api/barcode/resolve?code=` | 条码解析链：商品档案 → 本地字典 → 云端（查到永久回填；查无标记 90 天；连续失败 5 次熔断当日） |
+| GET | `/api/barcode/resolve?code=` | 条码解析链：商品档案 → 本地字典 → 云端（查到永久回填；查无标记 90 天；连续失败 5 次熔断当日；`not_found` 时返回 `expiresAt` 供前端算剩余天数） |
+| GET | `/api/barcode/lib?limit=` | 条码字典层列表（默认 200 条，扫码台「本地条码库」看数据用，只读） |
 | GET | `/api/pricing/check` | 比价防线巡检（售价 ≤ 牵牛花参考价 × 0.95） |
 
 错误码：`400` 参数不合法 / `404` 不存在 / `409` 库存不足或状态不允许流转。
+`/healthz` 额外返回 `cloudConfigured`（是否配了 APPCODE）、`cloudFails`、`circuitOpen`，供前端显示后端状态。
+
+前端接入：`mall-demo/sdy-api.js`（顾客端/管理端）与 `barcode-demo/bd-api.js`（扫码台）是两个页面的数据通道，
+后端是唯一真源；服务端未启动时页面自动降级为本地演示，不报错、不白屏。
 
 ## 测试
 
 ```bash
 cd server
-go test ./...        # 20 个单测：解析链/熔断/价格规则/状态机/事务扣库存
+go test ./...        # 21 个单测：解析链/熔断/价格规则/状态机/事务扣库存
 ./smoke.sh           # 起真实服务跑一遍 HTTP 全流程（下单→扣库存→状态流转→取消回补）
 ```
 

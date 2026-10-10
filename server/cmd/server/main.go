@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -212,6 +213,22 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, out)
+	})
+
+	// 条码字典层列表（扫码台「本地条码库」看数据用，只读）
+	mux.HandleFunc("/api/barcode/lib", func(w http.ResponseWriter, r *http.Request) {
+		limit := 200
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		list, err := st.ListLib(limit)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
 	})
 
 	// 价格防线巡检

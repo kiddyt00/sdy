@@ -40,6 +40,8 @@ type Result struct {
 	Spec   string `json:"spec,omitempty"`
 	Source string `json:"source"` // product / lib / cloud / not_found / cloud_error / blocked
 	Error  string `json:"error,omitempty"`
+	// ExpiresAt 仅 not_found 时给出查无标记到期时间（前端据此算剩余天数）。
+	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
 // Resolver 解析器（含配额保护状态，需单实例复用）。
@@ -83,7 +85,7 @@ func (r *Resolver) Resolve(code string) (Result, error) {
 	// ② 本地条码字典层（永久缓存；not_found 标记按注入时钟判断是否过期）
 	if e, ok := r.st.GetLibAt(code, r.now()); ok {
 		if e.Status == "not_found" {
-			return Result{Code: code, Found: false, Source: "not_found"}, nil
+			return Result{Code: code, Found: false, Source: "not_found", ExpiresAt: e.ExpiresAt}, nil
 		}
 		r.st.TouchLib(code)
 		return Result{Code: code, Found: true, Name: e.Name, Spec: e.Spec, Source: "lib"}, nil
@@ -111,11 +113,12 @@ func (r *Resolver) Resolve(code string) (Result, error) {
 
 	if !found {
 		// 查无：写 TTL 标记，避免短期内反复消耗配额（业务 400 同样消耗配额）
+		expires := r.now().AddDate(0, 0, r.cfg.TTLDays).Format(time.RFC3339)
 		_ = r.st.UpsertLib(store.LibEntry{
 			Code: code, Source: "cloud", Status: "not_found",
-			ExpiresAt: r.now().AddDate(0, 0, r.cfg.TTLDays).Format(time.RFC3339),
+			ExpiresAt: expires,
 		})
-		return Result{Code: code, Found: false, Source: "not_found"}, nil
+		return Result{Code: code, Found: false, Source: "not_found", ExpiresAt: expires}, nil
 	}
 
 	// 查到：永久回填字典层（下次本地直接命中）

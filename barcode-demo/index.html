@@ -79,10 +79,13 @@
     <div class="sub">对应《细节讨论记录》§2.7 三级链路：product → barcode_lib → 云端（仅双库未命中才调用）</div>
   </div>
   <div class="stats">
-    <span>Provider：<b id="statProvider">—</b></span>
-    <span>今日云端调用 <b id="statCount">0</b> / <b id="statQuota">—</b></span>
-    <div class="quota-bar"><i id="statPct"></i></div>
-    <span id="statCircuit" style="display:none" class="badge badge-orange">云端熔断中</span>
+    <span id="modeBadge" style="background:rgba(255,255,255,.18);padding:4px 10px;border-radius:999px;font-weight:600">⏳ 正在探测后端…</span>
+    <span id="cloudStats" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <span>Provider：<b id="statProvider">—</b></span>
+      <span>今日云端调用 <b id="statCount">0</b> / <b id="statQuota">—</b></span>
+      <div class="quota-bar"><i id="statPct"></i></div>
+      <span id="statCircuit" style="display:none" class="badge badge-orange">云端熔断中</span>
+    </span>
   </div>
 </header>
 
@@ -165,6 +168,10 @@
           <label style="font-size:13px;display:block;margin-top:10px">网关地址（云市场商品页分配，形如 https://xxx.market.alicloudapi.com）
             <input id="setGateway" style="width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
           </label>
+          <label style="font-size:13px;display:block;margin-top:10px">后端地址（留空 = 同源；接后端后解析与建档都在服务端执行）
+            <input id="setApiBase" placeholder="如 http://127.0.0.1:8093" style="width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
+          </label>
+          <div class="note" id="apiNote" style="margin-top:10px"></div>
         </div>
         <div>
           <div class="grid2" style="margin-bottom:10px">
@@ -184,9 +191,10 @@
 </div>
 
 <footer>
-  设计依据：《独立小程序商城 · 细节讨论记录》§2.7（本地条码库=字典层 / 商品库=档案层 / 云端仅兜底）。红线提醒：云端数据只做候选，建档必须人工确认；价格与库存永不自动填云端值。阿里云条码查询按次计费、非 200 不扣费、业务码非 0 视为无数据。本 Demo 数据仅存本地浏览器，用于演示与流程验证。
+  设计依据：《独立小程序商城 · 细节讨论记录》§2.7（本地条码库=字典层 / 商品库=档案层 / 云端仅兜底）。红线提醒：云端数据只做候选，建档必须人工确认；价格与库存永不自动填云端值。阿里云条码查询按次计费、非 200 不扣费、业务码非 0 视为无数据。<b>接入后端后</b>：解析链与建档都在 Go 服务端执行，APPCODE 只存在于服务端环境变量，页面不持有任何密钥；未连后端时退回纯浏览器演示（数据仅存本地）。
 </footer>
 
+<script src="bd-api.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

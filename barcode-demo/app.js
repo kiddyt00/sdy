@@ -8,6 +8,12 @@
 
 const DemoApp = (() => {
 
+  // ---------------- 后端通道（bd-api.js） ----------------
+  // 后端在线 → 解析链与建档都在服务端执行（APPCODE 只在服务端）；离线 → 纯浏览器演示。
+  const api = (typeof BdApi !== 'undefined' && BdApi) ? BdApi
+    : (typeof require === 'function' ? (function () { try { return require('./bd-api.js'); } catch (e) { return null; } })() : null);
+  const apiOnline = () => !!(api && api.online());
+
   // ---------------- 常量与存储 ----------------
   const LS = {
     products: 'bd_products',
@@ -199,6 +205,21 @@ const DemoApp = (() => {
     if (!isValid(code)) return { source: 'invalid', code, msg: '条码格式不合法（需 8/12/13/14 位数字）' };
     const now = nowTs();
 
+    // ⓪ 后端在线：三级链路由 Go 服务执行（配额/熔断/TTL 都在服务端），页面只展示
+    if (apiOnline()) {
+      try {
+        const r = await api.resolveForDemo(code);
+        logScan({ code, time: now, source: r.source, detail: '服务端解析 —— ' + serverDetail(r) });
+        await syncMirror('lib');   // 命中次数/查无标记在服务端变了，刷新字典镜像
+        persist();
+        return r;
+      } catch (e) {
+        logScan({ code, time: now, source: 'cloud_error', detail: '服务端解析失败：' + e.message });
+        persist();
+        return { source: 'cloud_error', code, msg: '后端解析失败：' + e.message };
+      }
+    }
+
     // ① 商品库（档案层）——命中即完整详情，永不调云端
     const p = state.products.find(x => x.code === code);
     if (p) {
@@ -258,6 +279,31 @@ const DemoApp = (() => {
     } finally {
       state.codeLock.delete(code);
     }
+  }
+
+  // 服务端解析结果的人类可读说明（日志/展示用）
+  function serverDetail(r) {
+    switch (r.source) {
+      case 'product': return '商品库命中（服务端档案）';
+      case 'lib': return '条码字典命中（服务端已沉淀）';
+      case 'cloud': return '云端查到 → 已永久回填字典层';
+      case 'none': return '云端查无 → 已记查无标记' + (r.remainDays ? '（剩余 ' + r.remainDays + ' 天）' : '');
+      case 'blocked': return '云端熔断（当日不再调用）：' + (r.msg || '');
+      case 'cloud_error': return '云端调用失败：' + (r.msg || '');
+      default: return r.msg || '条码不合法';
+    }
+  }
+
+  // 把服务端数据拉回本地做镜像（只读展示；后端始终是真源）
+  async function syncMirror(what) {
+    if (!apiOnline()) return;
+    try {
+      const jobs = [];
+      if (what !== 'lib') jobs.push(api.listProducts().then(list => { state.products = list; }));
+      if (what !== 'products') jobs.push(api.listLib(300).then(list => { state.lib = list; }));
+      await Promise.all(jobs);
+      persist();
+    } catch (e) { /* 后端抖动时保留本地镜像，不打断扫码 */ }
   }
 
   // 实际云端调用（计数 + 重试1次 + 熔断累计）
@@ -342,8 +388,26 @@ const DemoApp = (() => {
     return p;
   }
   function deleteProduct(code) {
+    // 接了后端不许在演示页删档：删除会与牵牛花对账口径不一致
+    if (apiOnline()) {
+      toast('已接后端：演示用的「删除」不可用（删档会影响对账口径），请在商品库改数或下架', 'err');
+      return false;
+    }
     state.products = state.products.filter(x => x.code !== code);
     persist();
+    return true;
+  }
+
+  // 人工确认后的建档入库（在线＝写服务端；离线＝写本地演示数据）
+  async function saveProduct(fields) {
+    if (apiOnline()) {
+      const p = await api.createProduct(fields);
+      await syncMirror('all');
+      logScan({ code: p.code, time: nowTs(), source: 'create', detail: '建档（服务端）：' + p.name });
+      persist();
+      return p;
+    }
+    return createProduct(fields);
   }
 
   // =====================================================================
@@ -373,6 +437,8 @@ const DemoApp = (() => {
     cloud:    { text: '云端查到·已回填条码库', cls: 'badge-purple', note: '候选仅供参考，建档需人工确认' },
     none:     { text: '查无', cls: 'badge-gray', note: '已记查无标记（TTL 90 天），可手工建档' },
     quota:    { text: '配额用尽', cls: 'badge-orange', note: '' },
+    throttled:{ text: '并发合并', cls: 'badge-gray', note: '' },
+    create:   { text: '建档', cls: 'badge-green', note: '' },
     blocked:  { text: '云端熔断', cls: 'badge-orange', note: '' },
     cloud_error: { text: '云端调用失败', cls: 'badge-orange', note: '' },
     invalid:  { text: '条码不合法', cls: 'badge-red', note: '' }
@@ -417,8 +483,9 @@ const DemoApp = (() => {
       }
       box.appendChild(actions);
     } else if (r.source === 'none') {
-      const remain = r.remainDays != null ? r.remainDays : r.entry.notFoundUntil - nowTs() > 0 ? Math.ceil((r.entry.notFoundUntil - nowTs()) / 86400000) : '—';
-      box.appendChild(el('div', 'note warn', '云端也无此条码数据；已记「查无」标记，' + remain + ' 天内不再重复查云端。'));
+      const remain = r.remainDays != null ? r.remainDays
+        : (r.entry && r.entry.notFoundUntil ? Math.ceil((r.entry.notFoundUntil - nowTs()) / 86400000) : '—');
+      box.appendChild(el('div', 'note warn', '云端也无此条码数据；已记「查无」标记，' + remain + ' 天内不再重复查云端。' + (r.server ? '（服务端标记，全店共享）' : '')));
       const b = el('button', 'btn primary', '手工建档');
       b.onclick = () => openForm({ code: r.code });
       box.appendChild(el('div', 'actions')).appendChild(b);
@@ -441,7 +508,7 @@ const DemoApp = (() => {
     const card = el('div', 'modal');
     card.innerHTML =
       '<h3>人工确认建档 → 商品库</h3>' +
-      '<div class="note">条码：<b>' + esc(src.code || '') + '</b>' + (src.source ? '（条码库来源：' + { cloud: '云端回填', migrate: '迁移沉淀', manual: '手工' }[src.source] || src.source : '手工建档') + '）</div>' +
+      '<div class="note">条码：<b>' + esc(src.code || '') + '</b>' + (src.source ? '（条码库来源：' + { cloud: '云端回填', migrate: '迁移沉淀', manual: '手工', product: '建档沉淀', lib: '字典' }[src.source] || src.source : '手工建档') + '）</div>' +
       '<label>名称 *<input id="f_name" value="' + esc(src.name || '') + '"></label>' +
       '<label>品牌 <input id="f_brand" value="' + esc(src.brand || '') + '"></label>' +
       '<label>规格 <input id="f_spec" value="' + esc(src.spec || '') + '"></label>' +
@@ -452,16 +519,16 @@ const DemoApp = (() => {
       '<label>期初库存 <input id="f_stock" type="number" value="0"></label>' +
       '<div class="note warn">云端数据仅作候选：请人工核对名称/规格；价格与库存用自家值，绝不自动填云端值。库存仅手动填写/调整（扫码不改库存）。</div>' +
       '<div class="actions"><button class="btn ghost" id="f_cancel">取消</button><button class="btn primary" id="f_save">确认建档</button></div>';
-    const save = () => {
+    const save = async () => {
       try {
-        const p = createProduct({
+        const p = await saveProduct({
           code: src.code || '', name: $('#f_name').value.trim(), brand: $('#f_brand').value.trim(),
           spec: $('#f_spec').value.trim(), category: $('#f_category').value.trim(),
           unit: $('#f_unit').value.trim(), costPrice: $('#f_cost').value, salePrice: $('#f_sale').value,
           stock: $('#f_stock').value
         });
         modal.remove();
-        toast('建档成功：' + p.name + '（待同步牵牛花）', 'ok');
+        toast('建档成功：' + p.name + (apiOnline() ? '（已写入服务端商品库 + 条码字典）' : '（待同步牵牛花）'), 'ok');
         lastResult = resolve(p.code);
         lastResult.then(renderResult);
         renderTables();
@@ -475,7 +542,7 @@ const DemoApp = (() => {
     $('#f_name').focus();
   }
 
-  // 用量看板
+  // 用量看板（本地模式）+ 后端模式提示
   function renderHeader() {
     const u = usageToday();
     const pct = state.settings.quota ? Math.min(100, Math.round(u.count / state.settings.quota * 100)) : 0;
@@ -486,6 +553,26 @@ const DemoApp = (() => {
     $('#statPct').textContent = pct + '%';
     $('#statProvider').textContent = state.settings.provider === 'ali' ? '阿里云市场（真实）' : 'Mock（内置样例）';
     $('#statCircuit').style.display = circuit ? 'inline-block' : 'none';
+
+    // 后端通道状态
+    const st = api ? api.status() : { online: false, detail: '未加载 bd-api.js', label: '🟡 本地演示（离线可用）' };
+    const badge = $('#modeBadge');
+    if (badge) {
+      badge.textContent = st.online ? st.label : '🟡 本地演示（后端未连接）';
+      badge.style.background = st.online ? 'rgba(34,197,94,.35)' : 'rgba(251,191,36,.28)';
+      badge.title = st.detail || '';
+    }
+    const cs = $('#cloudStats');
+    if (cs) cs.style.display = st.online ? 'none' : 'flex';   // 服务端模式下配额/熔断由服务端管
+    const note = $('#apiNote');
+    if (note) {
+      note.innerHTML = st.online
+        ? '✅ 已连接后端 <b>' + esc(st.base || '同源') + '</b>：解析链与建档都由 Go 服务执行，APPCODE 只在服务端环境变量 <code>BARCODE_APPCODE</code> 里，本页面不持有任何密钥。'
+          + (st.cloudConfigured ? '' : '<br>⚠️ 服务端未配 APPCODE → 云端查码不可用（纯本地模式，字典层仍会永久沉淀）。')
+          + (st.circuitOpen ? '<br>⚠️ 服务端云端查询当日已熔断（连续失败 ' + st.cloudFails + ' 次）。' : '')
+        : '未连接后端：当前为<b>纯浏览器演示</b>（Mock 云端 / proxy.py 转发）。生产环境一律由服务端调用，前端不持有 APPCODE。'
+          + (st.detail ? '<br>探测结果：' + esc(st.detail) : '');
+    }
   }
 
   // 管理视图表格
@@ -502,7 +589,7 @@ const DemoApp = (() => {
       tr.appendChild(el('td', '', p.stock + ' ' + esc(p.unit || '')));
       tr.appendChild(el('td', '', esc(p.syncStatus || '')));
       const d = el('button', 'link-btn', '删');
-      d.onclick = () => { deleteProduct(p.code); renderTables(); toast('已删除：' + p.name, 'info'); };
+      d.onclick = () => { if (deleteProduct(p.code)) { renderTables(); toast('已删除：' + p.name, 'info'); } };
       tr.appendChild(el('td', '')).appendChild(d);
       pt.appendChild(tr);
     });
@@ -514,10 +601,10 @@ const DemoApp = (() => {
       const tr = el('tr');
       tr.appendChild(el('td', 'mono', esc(e.code)));
       tr.appendChild(el('td', '', esc(e.name || '（查无记录）')));
-      tr.appendChild(el('td', '', { cloud: '云端', migrate: '迁移', manual: '手工' }[e.source] || e.source));
+      tr.appendChild(el('td', '', { cloud: '云端回填', migrate: '迁移沉淀', manual: '手工建档', product: '建档沉淀', lib: '字典' }[e.source] || e.source));
       if (e.status === 'not_found') {
-        const remain = Math.max(1, Math.ceil((e.notFoundUntil - nowTs()) / 86400000));
-        tr.appendChild(el('td', '', '<span class="badge badge-gray">查无</span> 剩余 ' + remain + ' 天'));
+        const remain = e.notFoundUntil ? Math.max(1, Math.ceil((e.notFoundUntil - nowTs()) / 86400000)) : null;
+        tr.appendChild(el('td', '', '<span class="badge badge-gray">查无</span>' + (remain ? ' 剩余 ' + remain + ' 天' : '')));
       } else {
         tr.appendChild(el('td', '', '<span class="badge badge-blue">normal</span>'));
       }
@@ -574,6 +661,19 @@ const DemoApp = (() => {
     $('#setTtl').onchange = e => { state.settings.ttlDays = Math.max(1, parseInt(e.target.value, 10) || 90); persist(); };
     $('#setFailSim').checked = !!state.settings.failSim;
     $('#setFailSim').onchange = e => { state.settings.failSim = e.target.checked; persist(); toast('云端失败模拟已' + (e.target.checked ? '开启' : '关闭'), 'info'); };
+    // 后端地址：留空 = 同源（页面与后端同端口时零配置）
+    if ($('#setApiBase')) {
+      $('#setApiBase').value = api ? api.base() : '';
+      $('#setApiBase').onchange = async e => {
+        if (!api) return;
+        api.setBase(e.target.value.trim());
+        e.target.value = api.base();
+        const st = await api.detect();
+        if (st.online) await syncMirror('all');
+        renderAll();
+        toast(st.online ? '已连接后端：' + (st.base || '同源') : '后端未连接 → 继续本地演示', st.online ? 'ok' : 'err');
+      };
+    }
     $('#btnReset').onclick = () => { if (confirm('重置全部演示数据？')) { seedData(); renderAll(); toast('已重置为演示初始数据', 'ok'); } };
     $('#btnExport').onclick = () => {
       const blob = new Blob([JSON.stringify({ products: state.products, lib: state.lib, log: state.log, settings: state.settings, usage: usageToday() }, null, 2)], { type: 'application/json' });
@@ -608,6 +708,18 @@ const DemoApp = (() => {
     renderAll();
     $('#scanInput').focus();
     toast('演示就绪：输入条码回车查询，或点示例码直接试扫', 'info');
+    // 探测后端（只探一次，不轮询）：在线则拉到真数据并把解析链交给服务端
+    (async function initApi() {
+      if (!api) { renderHeader(); return; }
+      const st = await api.detect();
+      if (st.online) {
+        await syncMirror('all');
+        renderAll();
+        toast('后端已连接：解析/建档走服务端（' + (st.cloudConfigured ? '云端条码已启用' : '纯本地模式，未配 APPCODE') + '）', 'ok');
+      } else {
+        renderHeader();
+      }
+    })();
   }
 
   // ---------------- 摄像头扫码（M1.3：手机/电脑摄像头，走同一双库解析链） ----------------
@@ -663,7 +775,7 @@ const DemoApp = (() => {
 
   // ---------------- 导出（浏览器 + Node 测试） ----------------
   return {
-    init, resolve, createProduct, deleteProduct, seedData, renderAll,
+    init, resolve, createProduct, saveProduct, deleteProduct, seedData, renderAll, syncMirror,
     startCamera, stopCamera,
     _state: state,
     _test: {

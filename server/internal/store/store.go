@@ -348,6 +348,28 @@ func (s *Store) TouchLib(code string) {
 	_, _ = s.db.Exec(`UPDATE barcode_lib SET hits=hits+1, updated_at=? WHERE code=?`, nowStr(), code)
 }
 
+// ListLib 全量字典项（最近更新的排前面；limit<=0 表示默认 200 条，便于扫码台查看「本地条码库」）。
+func (s *Store) ListLib(limit int) ([]LibEntry, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.Query(`SELECT code,name,spec,source,status,hits,expires_at,updated_at
+		FROM barcode_lib ORDER BY updated_at DESC, code LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("查询条码字典失败: %w", err)
+	}
+	defer rows.Close()
+	out := []LibEntry{}
+	for rows.Next() {
+		var e LibEntry
+		if err := rows.Scan(&e.Code, &e.Name, &e.Spec, &e.Source, &e.Status, &e.Hits, &e.ExpiresAt, &e.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 /* ------------------------------ 订单 ------------------------------ */
 
 // stateFlow 订单状态机：pending → delivering / ready → done；pending → cancelled。
