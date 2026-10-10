@@ -11,7 +11,7 @@
 const BdApi = require('./bd-api.js');
 
 const BASE = process.env.SDY_API_BASE || 'http://127.0.0.1:8093';
-const NEW_CODE = '6999888777666';   // 联调专用：建档后留在临时库里，验证「建档即可查」
+const NEW_CODE = '699' + String(Date.now()).slice(-10);  // 联调专用：每跑一次换号，避免重复跑时撞「该条码已在商品库」
 
 let pass = 0, fail = 0;
 function ok(cond, msg) {
@@ -44,12 +44,14 @@ function group(n) { console.log('\n▶ ' + n); }
 
   group('2. 商品库镜像（服务端为真源）');
   const ps = await BdApi.listProducts();
-  eq(ps.length, 6, '种子商品 6 条');
+  ok(ps.length >= 6, '种子商品至少 6 条（联调库可能已被追加建档），实际 ' + ps.length);
   const coke = ps.find(p => p.code === '6901234567892');
   ok(!!coke, '应含可口可乐 6901234567892');
   eq(coke.name, '可口可乐', '名称来自服务端');
   eq(coke.salePrice, 2.5, '售价 2.5');
-  eq(coke.stock, 120, '库存 120');
+  ok(typeof coke.stock === 'number' && coke.stock >= 0, '库存为数字');
+  // 联调库可能已被真实下单/改数动过，故只记基线、不断言等于种子值
+  const cokeStock = coke.stock;
   eq(coke.unit, '罐', '单位 罐');
   ok(coke.server === true, '镜像项标记 server=true');
 
@@ -68,7 +70,7 @@ function group(n) { console.log('\n▶ ' + n); }
   eq(r.source, 'product', '已建档码 → 档案层命中');
   eq(r.product.name, '可口可乐', '档案命中带出名称');
   eq(r.product.salePrice, 2.5, '档案命中带出价格（非云端价）');
-  eq(r.product.stock, 120, '档案命中带出库存');
+  eq(r.product.stock, cokeStock, '档案命中带出库存（与商品库一致）');
 
   r = await BdApi.resolveForDemo('6901234567892'.slice(0, 12) + '0'); // 未建档且形如条码
   eq(r.source, 'cloud_error', '未配 APPCODE → 纯本地模式（cloud_error）');
@@ -83,6 +85,7 @@ function group(n) { console.log('\n▶ ' + n); }
     });
   } catch (e) { err5 = e.message; }
   eq(err5, '', '建档请求不应报错：' + err5);
+  created = created || {};   // 建档失败时后续断言给出可读结果而不是 TypeError
   eq(created.code, NEW_CODE, '返回服务端商品条码');
   eq(created.salePrice, 5.5, '售价按人工填写写入');
   eq(created.stock, 12, '期初库存按人工填写写入');

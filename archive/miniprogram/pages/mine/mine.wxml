@@ -1,0 +1,36 @@
+<view class="page">
+  <view class="section">
+    <view class="row">
+      <view class="shop-name">{{shop.name}}</view>
+      <view class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
+    </view>
+    <view class="muted">营业时间 {{shop.hours}}</view>
+    <view class="hint">{{statusDetail}}</view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">我的</view>
+    <view class="row link" bindtap="goOrders"><view>我的订单</view><view class="muted">›</view></view>
+    <view class="row link" bindtap="goCart"><view>购物车</view><view class="muted">{{cartCount}} 件 ›</view></view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">后端地址（开发用）</view>
+    <view class="field">
+      <input class="input" placeholder="http://127.0.0.1:8093" value="{{apiBase}}" bindinput="onBase" />
+    </view>
+    <view class="btn btn-primary btn-block" bindtap="saveBase">保存并重连</view>
+    <view class="muted" style="margin-top:12rpx">
+      开发：先在电脑上起 Go 后端，再在微信开发者工具「详情 → 本地设置」勾选「不校验合法域名」。
+      上线：这里会自动换成已备案的 HTTPS 域名，无需顾客设置。
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">店铺说明</view>
+    <view class="muted">{{shop.notice}}</view>
+    <view class="btn btn-ghost btn-block" style="margin-top:16rpx" bindtap="clearAll">清空本地演示数据</view>
+  </view>
+
+  <view class="muted" style="text-align:center;margin:24rpx 0">顾客端小程序 · M5 第一版（下单未接支付）</view>
+</view>

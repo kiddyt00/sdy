@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小邻里超市 · 经营管理台</title>
+<meta name="theme-color" content="#0f172a">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📊</text></svg>">
+<link rel="stylesheet" href="assets/theme.css">
+<style>
+  /* 只补 theme.css 没覆盖到的：库存行第三块要跨两列 + 移动端侧栏开关 */
+  .stkrow .opgrid { grid-column: 1 / -1; }
+  .stkrow .scur b.low { color: var(--amber); }
+  .stkrow .scur b.zero { color: var(--red); }
+  .side-toggle { display: none; }
+  @media (max-width: 900px) { .side-toggle { display: inline-flex; } }
+</style>
+</head>
+<body>
+<div class="mask" id="mask" onclick="closeAll()"></div>
+
+<div class="layout">
+  <!-- ============ 侧边栏 ============ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="logo">🛒</div>
+      <div>
+        <div class="bn">小邻里超市</div>
+        <div class="bs">经营管理台</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <div class="nv on" id="navDash" onclick="switchTab('dash')"><i>📊</i>经营总览</div>
+      <div class="nv" id="navOrders" onclick="switchTab('orders')"><i>🧾</i>订单处理<span class="badge st-warn" id="navOrderBadge" style="margin-left:auto"></span></div>
+      <div class="nv" id="navStock" onclick="switchTab('stock')"><i>📦</i>库存与流水</div>
+      <div class="nv" id="navPricing" onclick="switchTab('pricing')"><i>🛡️</i>价格防护</div>
+      <div class="nv" id="navCust" onclick="switchTab('cust')"><i>👥</i>顾客档案</div>
+      <div class="nv" id="navSys" onclick="switchTab('sys')"><i>⚙️</i>系统与工具</div>
+    </nav>
+    <div class="foot">
+      <a href="index.html" style="color:#cbd5e1">← 回到顾客端商城</a>
+      <div style="margin-top:6px">M4 后端已接入 · 未接支付</div>
+    </div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <div class="content">
+    <div class="topbar">
+      <div class="row">
+        <button class="btn btn-xs side-toggle" onclick="toggleSide()">☰</button>
+        <h1 id="crumb">经营总览</h1>
+      </div>
+      <div class="row">
+        <span class="pill-mode" id="modeBadge">⏳ 正在探测后端…</span>
+        <button class="btn btn-xs" onclick="refreshAll()">↻ 刷新</button>
+      </div>
+    </div>
+
+    <!-- ---------- 总览 ---------- -->
+    <section class="page" id="viewDash">
+      <div class="kpis">
+        <div class="kpi accent">
+          <div class="k-label">今日订单<span style="margin-left:auto">🧾</span></div>
+          <div class="k-value" id="kpiOrders">0</div>
+          <div class="k-foot" id="kpiOrdersSub">含全部状态</div>
+        </div>
+        <div class="kpi">
+          <div class="k-label">待处理<span style="margin-left:auto">⏰</span></div>
+          <div class="k-value" id="kpiPending">0</div>
+          <div class="k-foot" id="kpiPendingSub">尽快备货 / 派送</div>
+        </div>
+        <div class="kpi">
+          <div class="k-label">今日营业额<span style="margin-left:auto">💰</span></div>
+          <div class="k-value" id="kpiRevenue">¥0.00</div>
+          <div class="k-foot" id="kpiRevenueSub">已取消订单不计入</div>
+        </div>
+        <div class="kpi">
+          <div class="k-label">库存预警<span style="margin-left:auto">📦</span></div>
+          <div class="k-value" id="kpiLow">0</div>
+          <div class="k-foot" id="kpiLowSub">库存 ≤ 5 的商品</div>
+        </div>
+        <div class="kpi">
+          <div class="k-label">顾客档案<span style="margin-left:auto">👥</span></div>
+          <div class="k-value" id="kpiCust">0</div>
+          <div class="k-foot" id="kpiCustSub">下单后自动沉淀</div>
+        </div>
+      </div>
+
+      <div class="stack mt-lg">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>最近订单</h3>
+            <button class="btn btn-xs" onclick="switchTab('orders')">全部订单 →</button>
+          </div>
+          <div class="panel-body"><div id="dashOrders"></div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>库存预警</h3>
+            <button class="btn btn-xs" onclick="switchTab('stock')">去入库 →</button>
+          </div>
+          <div class="panel-body"><div id="dashLow"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 订单 ---------- -->
+    <section class="page hide" id="viewOrders">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>订单处理</h3>
+          <div class="acts">
+            <span class="muted" style="font-size:12px">配送员名单</span>
+            <input class="input input-sm" id="couriers" style="width:170px" placeholder="张三,李四" onchange="saveCouriers()">
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="chips" style="margin-bottom:14px"><div id="filters" class="chips"></div></div>
+          <div id="orders"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 库存 ---------- -->
+    <section class="page hide" id="viewStock">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>库存与流水</h3>
+          <span class="sub">整箱饮料直接改数；到货记入库；月底盘点校准</span>
+        </div>
+        <div class="panel-body tight"><div id="stockRows"></div></div>
+      </div>
+      <div class="panel mt-lg">
+        <div class="panel-head"><h3>库存流水<span class="sub" id="stockLogCount"></span></h3></div>
+        <div class="panel-body"><div id="stockLog"></div></div>
+      </div>
+    </section>
+
+    <!-- ---------- 价格 ---------- -->
+    <section class="page hide" id="viewPricing">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>价格防护</h3>
+          <span class="sub">零售价不高于牵牛花参考价 −5%（批发商品跳过）</span>
+        </div>
+        <div class="panel-body">
+          <div class="row-between" id="pricingSummary" style="margin-bottom:12px"></div>
+          <div class="table-wrap" id="pricingTable"></div>
+          <button class="btn btn-primary mt" onclick="saveRefs()">保存全部参考价</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 顾客 ---------- -->
+    <section class="page hide" id="viewCust">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>顾客档案</h3>
+          <div class="search" style="width:250px">
+            <span>🔎</span>
+            <input id="custQ" placeholder="搜姓名 / 手机 / 标签" oninput="renderCust()">
+          </div>
+        </div>
+        <div class="panel-body"><div id="custList"></div></div>
+      </div>
+    </section>
+
+    <!-- ---------- 系统 ---------- -->
+    <section class="page hide" id="viewSys">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><h3>后端与规则</h3><span class="pill-mode" id="sysBadge">—</span></div>
+          <div class="panel-body"><div id="sysInfo"></div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>配套工具</h3></div>
+          <div class="panel-body">
+            <div class="acts">
+              <a class="btn" href="../barcode-demo/index.html">📷 扫码台（建档 / 查条码库）</a>
+              <a class="btn" href="../sync-demo/sync.html">🔄 牵牛花月度对账</a>
+              <a class="btn" href="../sync-demo/牵牛花导出确认清单.html">📋 导出字段确认清单</a>
+              <button class="btn btn-danger" onclick="clearLocal()">清空本地演示数据</button>
+            </div>
+            <div class="muted mt" style="font-size:12px;line-height:1.9">
+              本页所有写操作都走后端接口；后端未连接时自动降级为「本地演示」，只改浏览器缓存、不入库。<br>
+              规则（配送费、价格防线、库存扣减、订单状态机）一律以服务端为准，前端不重复实现。
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="mall.js"></script>
+<script src="pricing.js"></script>
+<script src="mall-admin.js"></script>
+<script src="sdy-api.js"></script>
+<script>
+/* ================= 管理端 UI 层（数据/规则全走 Mall / Admin / Pricing / SdyApi） ================= */
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const yuan = n => '¥' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+const when = t => new Date(t).toLocaleString('zh-CN', { hour12: false });
+const BY = '老板';
+
+let curFilter = '', tab = 'dash';
+let toastTimer = null;
+function toast(msg, ms) {
+  const t = $('toast');
+  t.textContent = msg; t.className = 'toast show';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, ms || 2600);
+}
+function closeAll() { $('mask').className = 'mask'; $('sidebar').className = 'sidebar'; }
+function toggleSide() { const s = $('sidebar'); s.className = s.className.indexOf('open') >= 0 ? 'sidebar' : 'sidebar open'; }
+function online() { return SdyApi.on(); }
+
+/* ---------------- 视图切换 ---------------- */
+const TABS = { dash: ['经营总览', 'navDash', 'viewDash'], orders: ['订单处理', 'navOrders', 'viewOrders'], stock: ['库存与流水', 'navStock', 'viewStock'], pricing: ['价格防护', 'navPricing', 'viewPricing'], cust: ['顾客档案', 'navCust', 'viewCust'], sys: ['系统与工具', 'navSys', 'viewSys'] };
+function switchTab(t) {
+  tab = t;
+  Object.keys(TABS).forEach(k => {
+    const v = TABS[k];
+    $(v[1]).className = 'nv' + (k === t ? ' on' : '');
+    $(v[2]).className = 'page' + (k === t ? '' : ' hide');
+  });
+  $('crumb').textContent = TABS[t][0];
+  $('sidebar').className = 'sidebar';   // 手机点完自动收起
+  renderAll();
+}
+
+/* ---------------- 总览 ---------------- */
+function kpi() {
+  const orders = Mall.getOrders();
+  const today = new Date().toDateString();
+  const todays = orders.filter(o => new Date(o.createdAt).toDateString() === today);
+  const valid = todays.filter(o => o.status !== 'cancelled');
+  return {
+    today: todays.length,
+    pending: orders.filter(o => o.status === 'pending').length,
+    revenue: valid.reduce((s, o) => s + (Number(o.total) || 0), 0),
+    low: Mall.loadCatalog().filter(p => p.stock <= 5).length,
+    cust: Admin.getCustomers().length
+  };
+}
+function renderDash() {
+  const k = kpi();
+  $('kpiOrders').textContent = String(k.today);
+  $('kpiPending').textContent = String(k.pending);
+  $('kpiRevenue').textContent = yuan(k.revenue);
+  $('kpiLow').textContent = String(k.low);
+  $('kpiCust').textContent = String(k.cust);
+  $('navOrderBadge').textContent = k.pending > 0 ? String(k.pending) : '';
+
+  const recent = Mall.getOrders().slice(0, 6);
+  $('dashOrders').innerHTML = recent.length ? '<div class="table-wrap"><table class="table"><thead><tr><th>订单号</th><th>顾客</th><th>内容</th><th class="num">金额</th><th>状态</th></tr></thead><tbody>' +
+    recent.map(o => { const v = Mall.orderView(o); return '<tr><td class="mono">' + esc(o.id) + '</td><td>' + esc(o.customer.name) + '</td>' +
+      '<td>' + o.items.map(i => esc(i.name) + '×' + i.qty).join('、') + '</td>' +
+      '<td class="num">' + yuan(o.total) + '</td><td><span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></td></tr>'; }).join('') +
+    '</tbody></table></div>' : '<div class="empty"><span class="big">🧾</span>今天还没有订单</div>';
+
+  const lowList = Mall.loadCatalog().filter(p => p.stock <= 5);
+  $('dashLow').innerHTML = lowList.length ? lowList.map(p =>
+    '<div class="logline"><span class="lgt ' + (p.stock <= 0 ? 'take' : 'adj') + '">' + (p.stock <= 0 ? '缺货' : '偏低') + '</span>' +
+    '<b>' + esc(p.name) + '</b><span class="muted">' + esc(p.spec || '') + '</span>' +
+    '<span class="ts">剩 ' + p.stock + ' ' + esc(p.unit || '件') + '</span></div>').join('')
+    : '<div class="empty"><span class="big">✅</span>库存都很充足</div>';
+}
+
+/* ---------------- 订单 ---------------- */
+const FILTERS = [['全部', ''], ['待备货', 'pending'], ['配送中', 'delivering'], ['待自提', 'ready'], ['已完成', 'done'], ['已取消', 'cancelled']];
+function renderFilters() {
+  $('filters').innerHTML = FILTERS.map(f =>
+    '<div class="chip' + (curFilter === f[1] ? ' on' : '') + '" onclick="pickF(\'' + f[1] + '\')">' + f[0] + '</div>').join('');
+}
+function pickF(f) { curFilter = f; renderFilters(); renderOrders(); }
+function courierSel(id, cur) {
+  const list = Admin.getCouriers();
+  return '<select class="sel" id="cs_' + esc(id) + '"><option value="">（选择配送员）</option>' +
+    list.map(c => '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>';
+}
+function renderOrders() {
+  const list = Mall.getOrders().filter(o => !curFilter || o.status === curFilter);
+  $('orders').innerHTML = list.length ? list.map(o => {
+    const v = Mall.orderView(o);
+    const acts = [];
+    if (o.status === 'pending') {
+      acts.push('<button class="btn btn-xs btn-danger" onclick="cancelO(\'' + esc(o.id) + '\')">取消</button>');
+      if (o.deliveryType === 'pickup') acts.push('<button class="btn btn-xs btn-primary" onclick="adv(\'' + esc(o.id) + '\',\'ready\')">标记可自提</button>');
+      else acts.push(courierSel(o.id, o.courier) + '<button class="btn btn-xs btn-primary" onclick="assign(\'' + esc(o.id) + '\')">分配并配送</button>');
+    } else if (o.status === 'delivering') {
+      acts.push(courierSel(o.id, o.courier) + '<button class="btn btn-xs" onclick="assign(\'' + esc(o.id) + '\')">改派</button>');
+      acts.push('<button class="btn btn-xs btn-primary" onclick="adv(\'' + esc(o.id) + '\',\'done\')">确认完成</button>');
+    } else if (o.status === 'ready') {
+      acts.push('<button class="btn btn-xs btn-primary" onclick="adv(\'' + esc(o.id) + '\',\'done\')">确认完成</button>');
+    }
+    return '<div class="ocard">' +
+      '<div class="oh"><span class="oid">' + esc(o.id) + '</span><span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></div>' +
+      '<div class="items">' + o.items.map(i => '· ' + esc(i.name) + ' ×' + i.qty + '　' + yuan(i.price * i.qty)).join('<br>') + '</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:6px">' +
+        '『' + (o.deliveryType === 'pickup' ? '到店自提' : '配送到家') + '』' + esc(o.customer.name) + ' ' + esc(o.customer.phone) +
+        (o.customer.address ? ' · ' + esc(o.customer.address) : '') +
+        (o.courier ? ' ｜🚚 ' + esc(o.courier) : '') + ' · ' + when(o.createdAt) +
+      '</div>' +
+      '<div class="of"><span class="amt">小计 ' + yuan(o.subtotal) + (o.deliveryFee ? ' ＋ 配送 ' + yuan(o.deliveryFee) : '') + ' ＝ <b>' + yuan(o.total) + '</b></span>' +
+        '<span class="acts">' + acts.join('') + '</span>' +
+      '</div></div>';
+  }).join('') : '<div class="empty"><span class="big">' + (curFilter ? '🔍' : '🧾') + '</span>' + (curFilter ? '这个状态下没有订单' : '还没有订单') + '</div>';
+}
+function saveCouriers() {
+  const list = ($('couriers').value || '').split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+  Admin.setCouriers(list);
+  toast(list.length ? '配送员已保存：' + list.join('、') : '已清空配送员名单');
+  renderOrders();
+}
+async function assign(id) {
+  const sel = $('cs_' + id);
+  const c = sel ? sel.value : '';
+  if (!c) return toast('先选一个配送员');
+  try { await SdyApi.advanceOrder(id, 'delivering'); } catch (e) { toast(e.message); }
+  Admin.setCourier(id, c);
+  if (Mall.updateOrder) Mall.updateOrder(id, { courier: c });
+  toast('已分配 ' + c + '，订单进入配送中');
+  renderAll();
+}
+async function adv(id, to) {
+  try { await SdyApi.advanceOrder(id, to); toast(to === 'done' ? '订单已完成 ✅' : to === 'ready' ? '已通知顾客到店自提' : '状态已更新'); }
+  catch (e) { toast(e.message, 3600); }
+  renderAll();
+}
+async function cancelO(id) {
+  if (!confirm('确定取消该订单？库存将自动回补。')) return;
+  try { await SdyApi.cancelOrder(id); toast('订单已取消，库存已回补'); }
+  catch (e) { toast(e.message, 3600); }
+  renderAll();
+}
+
+/* ---------------- 库存 ---------------- */
+async function pushStock(code, stock) {
+  if (!online()) return;
+  try { await SdyApi.setStock(code, stock); } catch (e) { toast('后端未接受库存：' + e.message, 3600); }
+}
+function renderStock() {
+  const list = Mall.loadCatalog();
+  $('stockRows').innerHTML = list.map(p => {
+    const cls = p.stock <= 0 ? 'zero' : p.stock <= 5 ? 'low' : '';
+    return '<div class="stkrow">' +
+      '<div><div class="sname">' + esc(p.name) + '</div>' +
+        '<div class="smeta">' + esc(p.code) + ' · ' + esc(p.spec || '') + ' · 售 ' + yuan(p.salePrice) + ' / ' + esc(p.unit || '件') +
+        (p.refPrice ? ' · 参考价 ' + yuan(p.refPrice) : '') + '</div></div>' +
+      '<div class="scur" style="text-align:right">现库存 <b class="' + cls + '">' + p.stock + '</b> ' + esc(p.unit || '件') + '</div>' +
+      '<div class="opgrid">' +
+        '<div class="opline"><span class="lb">入库</span>' +
+          '<input class="inp" id="si_' + p.code + '" placeholder="数量">' +
+          '<input class="inp wide" id="sr_' + p.code + '" placeholder="入库单号 / 供应商">' +
+          '<button class="btn btn-xs btn-primary" onclick="doStockIn(\'' + p.code + '\')">记入库</button></div>' +
+        '<div class="opline"><span class="lb">改数</span>' +
+          '<input class="inp" id="ad_' + p.code + '" placeholder="±数量">' +
+          '<input class="inp wide" id="ar_' + p.code + '" placeholder="原因（如整箱到货）">' +
+          '<button class="btn btn-xs" onclick="doAdjust(\'' + p.code + '\')">应用</button></div>' +
+        '<div class="opline"><span class="lb">盘点</span>' +
+          '<input class="inp" id="st_' + p.code + '" placeholder="实盘数">' +
+          '<button class="btn btn-xs" onclick="doTake(\'' + p.code + '\')">校准</button></div>' +
+      '</div></div>';
+  }).join('') || '<div class="empty">商品库是空的，先去扫码台建档</div>';
+  renderStockLog();
+}
+function renderStockLog() {
+  const log = Admin.getStockLog().slice(0, 30);
+  const LT = { stock_in: ['入库', 'in'], adjust: ['改数', 'adj'], stock_take: ['盘点', 'take'] };
+  $('stockLogCount').textContent = log.length ? '最近 ' + log.length + ' 条' : '';
+  $('stockLog').innerHTML = log.length ? log.map(e => {
+    const t = LT[e.type] || ['操作', 'adj'];
+    return '<div class="logline"><span class="lgt ' + t[1] + '">' + t[0] + '</span>' +
+      '<span>' + esc(e.name || e.code) + ' ' + esc(e.unit || '件') + '：' + e.before + ' → <b>' + e.after + '</b>' +
+      (e.delta ? '（' + (e.delta > 0 ? '+' : '') + e.delta + '）' : '') + '</span>' +
+      '<span class="muted">' + esc(e.reason || '') + ' · ' + esc(e.by || BY) + '</span>' +
+      '<span class="ts">' + when(e.at) + '</span></div>';
+  }).join('') : '<div class="empty">还没有库存操作记录</div>';
+}
+function toastChange(verb, code, e) {
+  const p = Mall.getProduct(code) || { name: code, unit: '件' };
+  toast(verb + '：' + p.name + ' ' + e.before + ' → ' + e.after + ' ' + (p.unit || '件'));
+}
+async function doStockIn(code) {
+  const q = Number($('si_' + code).value);
+  if (!q || isNaN(q)) return toast('入库数量填一下');
+  const e = Admin.stockIn(code, q, $('sr_' + code).value.trim() || '现场入库', BY);
+  await pushStock(code, e.after);
+  toastChange('已入库', code, e);
+  renderStock(); renderDash();
+}
+async function doAdjust(code) {
+  const d = Number($('ad_' + code).value);
+  if (!d || isNaN(d)) return toast('改数填个数字，比如 -6 或 12');
+  const e = Admin.adjustStock(code, d, $('ar_' + code).value.trim() || '手动调整', BY);
+  await pushStock(code, e.after);
+  toastChange('已改数', code, e);
+  renderStock(); renderDash();
+}
+async function doTake(code) {
+  const v = $('st_' + code).value;
+  if (v === '' || isNaN(Number(v))) return toast('填一下实盘数量');
+  const e = Admin.stockTake(code, Number(v), BY);
+  if (e.delta !== 0) await pushStock(code, e.after);
+  toastChange('盘点校准', code, e);
+  renderStock(); renderDash();
+}
+
+/* ---------------- 价格防护 ---------------- */
+function renderPricing() {
+  const list = Mall.loadCatalog();
+  const rows = list.map(p => {
+    const chk = Pricing.checkRetailPrice(p);
+    const cap = p.refPrice ? Math.round(p.refPrice * Pricing.DEFAULT_CONFIG.maxRetailRatio * 100) / 100 : null;
+    return '<tr' + (chk.ok ? '' : ' style="background:#fef2f2"') + '>' +
+      '<td><b>' + esc(p.name) + '</b><div class="muted" style="font-size:11.5px">' + esc(p.code) + (p.wholesale ? ' · 批发' : '') + '</div></td>' +
+      '<td class="num">' + yuan(p.salePrice) + '</td>' +
+      '<td class="num">' + (p.refPrice ? yuan(p.refPrice) : '—') + '</td>' +
+      '<td class="num">' + (cap == null ? '—' : yuan(cap)) + '</td>' +
+      '<td>' + (chk.ok ? '<span class="badge st-done">合规</span>' : '<span class="badge st-cancelled">超价 ' + Math.abs(chk.diffPct != null ? chk.diffPct : 0) + '%</span>') + '</td>' +
+      '<td><input class="input input-sm" id="rf_' + p.code + '" style="width:92px" value="' + (p.refPrice != null ? p.refPrice : '') + '" placeholder="参考价"></td>' +
+    '</tr>';
+  }).join('');
+  $('pricingTable').innerHTML = list.length
+    ? '<table class="table"><thead><tr><th>商品</th><th class="num">现售价</th><th class="num">牵牛花参考价</th><th class="num">防线上限（−5%）</th><th>状态</th><th>填写参考价</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    : '<div class="empty">商品库是空的</div>';
+  const bad = list.filter(p => !Pricing.checkRetailPrice(p).ok);
+  $('pricingSummary').innerHTML = bad.length
+    ? '<span class="badge st-cancelled">' + bad.length + ' 个商品超出防线</span><span class="muted" style="font-size:12px">超价会被平台比下去，卖太便宜是自己贴钱</span>'
+    : '<span class="badge st-done">全部合规 ✔</span><span class="muted" style="font-size:12px">零售价均不高于参考价 −5%</span>';
+}
+async function saveRefs() {
+  const list = Mall.loadCatalog();
+  let n = 0, over = 0, fail = 0;
+  for (const p of list) {
+    const el = $('rf_' + p.code);
+    if (!el || el.value === '') continue;
+    const v = Number(el.value);
+    if (isNaN(v) || v < 0) continue;
+    try {
+      if (online()) await SdyApi.updateProduct(p.code, { refPrice: v });
+      else Mall.updateProduct(p.code, { refPrice: v });
+      n++;
+    } catch (e) { fail++; }
+  }
+  try {
+    const r = await SdyApi.pricingCheck();
+    if (r && r.violations) over = r.violations.length;
+  } catch (e) {
+    over = Mall.loadCatalog().filter(p => !Pricing.checkRetailPrice(p).ok).length;
+  }
+  renderPricing(); renderDash();
+  toast('已保存 ' + n + ' 个参考价' + (online() ? '（已写入后端，防线由服务端执行）' : '（本地演示）') +
+    '，超价 ' + over + ' 个商品' + (over ? '！' : ' ✔') + (fail ? '（' + fail + ' 个失败）' : ''), 4000);
+}
+
+/* ---------------- 顾客 ---------------- */
+function renderCust() {
+  const kw = (($('custQ') && $('custQ').value) || '').trim().toLowerCase();
+  const list = Admin.getCustomers().filter(c => !kw || ((c.name || '') + (c.phone || '') + (c.tag || '')).toLowerCase().includes(kw));
+  $('custList').innerHTML = list.length ? list.map(c => {
+    const tags = ['', '熟客', '新客', '普通', '批发'];
+    return '<div class="custcard">' +
+      '<div class="ch"><div><span class="cn">' + esc(c.name) + '</span> <span class="cp">' + esc(c.phone) + '</span>' +
+        '<div class="muted" style="font-size:12px;margin-top:4px">' + esc(c.address || '（未留地址）') + '</div></div>' +
+        '<select class="sel" id="tag_' + esc(c.phone) + '">' +
+          tags.map(t => '<option value="' + t + '"' + ((c.tag || '') === t ? ' selected' : '') + '>' + (t || '（无标签）') + '</option>').join('') +
+        '</select></div>' +
+      '<div class="cstats">下单 <b>' + (c.orderCount || 0) + '</b> 次 · 累计 <b>' + yuan(c.totalSpent) + '</b> · 最近 ' + (c.lastOrderAt ? when(c.lastOrderAt) : '—') + '</div>' +
+      '<div class="opline"><input class="inp grow" id="note_' + esc(c.phone) + '" value="' + esc(c.note || '') + '" placeholder="备注：3 号楼 502 / 常订整箱可乐">' +
+        '<button class="btn btn-xs" onclick="saveNote(\'' + esc(c.phone) + '\')">保存</button></div>' +
+    '</div>';
+  }).join('') : '<div class="empty"><span class="big">👥</span>还没有顾客记录（下单后自动沉淀）</div>';
+}
+function saveNote(phone) {
+  Admin.setCustomerNote(phone, $('note_' + phone).value.trim(), $('tag_' + phone).value);
+  toast('顾客档案已保存');
+  renderCust();
+}
+
+/* ---------------- 系统 ---------------- */
+function clearLocal() {
+  if (!confirm('清空本地缓存数据（商品/订单/顾客/库存流水）？后端数据不受影响。')) return;
+  try { Mall._resetForTest(); } catch (e) { }
+  toast('本地演示数据已清空');
+  renderAll();
+}
+function renderSys() {
+  const st = SdyApi.status ? SdyApi.status() : {};
+  $('sysBadge').textContent = st.label || (online() ? '🟢 已连接' : '🟡 本地演示');
+  $('sysBadge').className = 'pill-mode ' + (online() ? 'on' : 'off');
+  $('sysInfo').innerHTML =
+    '<div class="logline"><span class="lb muted" style="font-size:12px">后端地址</span><span class="mono">' + esc(st.base || '—') + '</span>' +
+      '<button class="btn btn-xs" onclick="setBase()">修改</button></div>' +
+    '<div class="logline"><span class="lb muted" style="font-size:12px">条码云端</span><span>' +
+      (st.cloudConfigured ? '已配置 APPCODE' : '未配置（只查本地条码库）') +
+      (st.circuitOpen ? ' · <b style="color:#b91c1c">已熔断</b>' : '') + '</span>' +
+      '<span class="ts">累计失败 ' + (st.cloudFails != null ? st.cloudFails : 0) + '</span></div>' +
+    '<div class="muted mt" style="font-size:12px">' + esc(st.detail || '') + '</div>';
+}
+async function setBase() {
+  const cur = (SdyApi.status && SdyApi.status().base) || '';
+  const v = (typeof prompt === 'function') ? prompt('后端地址（例如 http://127.0.0.1:8093）', cur) : null;
+  if (v == null) return;
+  const clean = String(v).trim().replace(/\/+$/, '');
+  if (SdyApi.setBase) SdyApi.setBase(clean);
+  else try { localStorage.setItem('sdy_api_base', clean); } catch (e) { }
+  toast('地址已保存，正在重连…');
+  await initApi();
+}
+
+/* ---------------- 刷新 / 启动 ---------------- */
+function renderAll() {
+  if (tab === 'dash') renderDash();
+  else if (tab === 'orders') renderOrders();
+  else if (tab === 'stock') renderStock();
+  else if (tab === 'pricing') renderPricing();
+  else if (tab === 'cust') renderCust();
+  else if (tab === 'sys') renderSys();
+}
+async function refreshAll() {
+  if (online()) { try { await SdyApi.sync(); } catch (e) { toast(e.message); } }
+  renderAll();
+}
+function renderAllAdmin() {
+  renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); renderDash(); renderSys();
+}
+async function initApi() {
+  const badge = $('modeBadge');
+  try {
+    const st = await SdyApi.boot();
+    badge.textContent = st.label;
+    badge.title = st.detail;
+    badge.className = 'pill-mode ' + (st.online ? 'on' : 'off');
+    if (st.online) {
+      try { await SdyApi.sync(); } catch (e) { }
+      try {
+        const h = await SdyApi.health();
+        if (h && h.circuitOpen) toast('⚠️ 条码云端查询已熔断（今日额度耗尽或连续失败），扫码台只查本地库', 4200);
+        else if (h && h.cloudConfigured === false) toast('条码云端未配置 APPCODE，扫码台只查本地条码库', 3600);
+      } catch (e) { }
+    }
+  } catch (e) { }
+  renderAllAdmin();
+}
+renderAllAdmin();
+initApi();
+</script>
+</body>
+</html>

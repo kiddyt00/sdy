@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小邻里超市 · 在线商城</title>
+<meta name="theme-color" content="#16a34a">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🛒</text></svg>">
+<link rel="stylesheet" href="assets/theme.css">
+<style>
+  /* 顾客端局部微调 */
+  .topnav { display: flex; gap: 4px; }
+  .topnav .tn {
+    padding: 7px 14px; border-radius: var(--r-pill); font-size: 13px; color: var(--muted);
+    cursor: pointer; border: 1px solid transparent; user-select: none;
+  }
+  .topnav .tn.on { background: #fff; color: var(--ink); border-color: var(--line); font-weight: 500; box-shadow: var(--sh-1); }
+  .detail-head { display: flex; gap: 16px; }
+  .detail-head .dph { width: 96px; height: 96px; border-radius: var(--r); background: linear-gradient(140deg,#f8fafc,#eef2f7); display: grid; place-items: center; font-size: 44px; flex: 0 0 96px; }
+</style>
+</head>
+<body>
+<div class="mask" id="mask" onclick="closeAll()"></div>
+
+<!-- ============ 顶部 ============ -->
+<header class="shop-head">
+  <div class="shop" style="padding-bottom:0">
+    <div class="row-between">
+      <div class="brand">
+        <div class="logo">🛒</div>
+        <div>
+          <div class="name">小邻里超市</div>
+          <div class="sub">满 30 元免配送费 · 每日 07:30–22:30</div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="pill-mode" id="modeBadge">⏳ 正在探测后端…</span>
+        <div class="topnav">
+          <div class="tn on" id="tabHome" onclick="switchView('home')">逛商品</div>
+          <div class="tn" id="tabOrders" onclick="switchView('orders')">我的订单</div>
+        </div>
+        <button class="cart-btn" onclick="openCart()">🛒 购物车<span class="cart-dot" id="cartDot">0</span></button>
+      </div>
+    </div>
+    <div class="shop-tools">
+      <div class="search grow">
+        <span>🔎</span>
+        <input id="q" placeholder="搜商品名 / 品牌 / 条码" oninput="doSearch()">
+      </div>
+      <button class="btn" onclick="openScan()">📷 扫码找货</button>
+    </div>
+  </div>
+</header>
+
+<main class="shop">
+  <!-- ============ 首页 ============ -->
+  <section id="viewHome">
+    <div class="hero">
+      <div>
+        <h2>邻里小店 · 送到家门口</h2>
+        <p>整箱饮料、日用百货都能下单；满 30 元免配送费，也可以到店自提。</p>
+      </div>
+      <div class="tag">🕘 下单后 30 分钟内处理</div>
+    </div>
+
+    <div class="cat-bar"><div class="chips" id="cats"></div></div>
+    <div class="products" id="grid"></div>
+  </section>
+
+  <!-- ============ 我的订单 ============ -->
+  <section id="viewOrders" class="hide">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>我的订单<span class="sub" id="orderCount"></span></h3>
+        <button class="btn btn-xs" onclick="refreshOrders()">↻ 刷新</button>
+      </div>
+      <div class="panel-body">
+        <div class="chips" id="filters" style="margin-bottom:14px"></div>
+        <div id="orders"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ 底部结算条 ============ -->
+<div class="cartbar hide" id="cartBar">
+  <div><span class="n" id="barCount">0</span><span id="barText">购物车是空的</span></div>
+  <button class="go" onclick="openCart()">查看购物车</button>
+</div>
+
+<!-- ============ 购物车抽屉 ============ -->
+<aside class="drawer" id="cartSheet">
+  <div class="drawer-head">
+    <h3 style="font-size:15px">购物车 <span class="muted" id="cartHeadCount"></span></h3>
+    <button class="icon-btn" onclick="closeAll()">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div id="cartLines"></div>
+    <div class="row mt" style="justify-content:flex-end">
+      <button class="btn btn-ghost btn-xs" onclick="clearCartNow()">清空购物车</button>
+    </div>
+  </div>
+  <div class="drawer-foot">
+    <div class="sum-line"><span>商品小计</span><span id="cartSubtotal">¥0.00</span></div>
+    <div class="sum-line"><span>配送费（满 30 免）</span><span id="cartFee">—</span></div>
+    <div class="sum-line total"><span>合计</span><b id="cartTotal">¥0.00</b></div>
+    <button class="btn btn-primary btn-block mt" onclick="goCheckout()">去结算</button>
+  </div>
+</aside>
+
+<!-- ============ 结算弹窗 ============ -->
+<div class="modal" id="dlgCheckout">
+  <div class="modal-head"><h3 style="font-size:16px">确认下单</h3><button class="icon-btn" onclick="closeAll()">✕</button></div>
+  <div class="modal-body">
+    <div class="field">
+      <label>配送方式</label>
+      <div class="deliv-opts">
+        <div class="dopt on" id="optPickup" onclick="pickDelivery('pickup')"><b>到店自提</b><span>免配送费 · 到店报手机号</span></div>
+        <div class="dopt" id="optDelivery" onclick="pickDelivery('delivery')"><b>送货上门</b><span>满 30 元免，否则 3 元</span></div>
+      </div>
+    </div>
+    <div class="row mt-lg" style="gap:12px">
+      <div class="field grow"><label>收货人</label><input class="input" id="cName" placeholder="怎么称呼"></div>
+      <div class="field grow"><label>手机号</label><input class="input" id="cPhone" placeholder="11 位手机号" maxlength="11"></div>
+    </div>
+    <div class="field mt hide" id="addrField">
+      <label>送货地址</label>
+      <input class="input" id="cAddr" placeholder="小区 / 楼栋 / 门牌">
+    </div>
+    <div class="card mt-lg" style="padding:14px 16px">
+      <div class="sum-line"><span>商品小计（<span id="coCount">0</span> 件）</span><span id="coSubtotal">¥0.00</span></div>
+      <div class="sum-line"><span>配送费</span><span id="coFee">¥0.00</span></div>
+      <div class="sum-line total"><span>应付</span><b id="coTotal">¥0.00</b></div>
+      <div class="muted" style="font-size:12px;margin-top:6px" id="feeHint"></div>
+    </div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn" onclick="closeAll()">再逛逛</button>
+    <button class="btn btn-primary" id="btnSubmit" onclick="submitOrder()">提交订单</button>
+  </div>
+</div>
+
+<!-- ============ 商品详情 ============ -->
+<div class="modal" id="dlgDetail">
+  <div class="modal-head"><h3 style="font-size:16px">商品详情</h3><button class="icon-btn" onclick="closeAll()">✕</button></div>
+  <div class="modal-body">
+    <div class="detail-head">
+      <div class="dph" id="dEmoji">📦</div>
+      <div class="grow">
+        <h3 id="dName" style="font-size:17px"></h3>
+        <div class="muted" style="font-size:12.5px;margin:4px 0 8px">
+          条码 <span class="mono" id="dCode"></span> · <span id="dBrand"></span> · <span id="dSpec"></span>
+        </div>
+        <div class="price" id="dPrice"></div>
+        <div class="stk" id="dStock"></div>
+      </div>
+    </div>
+    <div class="row mt-lg" style="justify-content:space-between">
+      <div class="stepper">
+        <button onclick="stepQty(-1)">−</button><span class="v" id="dQty">1</span><button onclick="stepQty(1)">＋</button>
+      </div>
+      <button class="btn btn-primary" id="dAdd" onclick="addFromDetail()">加入购物车</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 扫码 ============ -->
+<div class="modal" id="dlgScan" style="width:440px">
+  <div class="modal-head"><h3 style="font-size:16px">扫码找货</h3><button class="icon-btn" onclick="closeAll()">✕</button></div>
+  <div class="modal-body">
+    <div class="field">
+      <label>商品条码（8–14 位）</label>
+      <input class="input" id="scanCode" placeholder="扫码枪直接扫，或手动输入条码" onkeydown="if(event.key==='Enter')scanNow()">
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:10px" id="scanTip"></div>
+    <button class="btn btn-primary btn-block mt-lg" onclick="scanNow()">查这个条码</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="mall.js"></script>
+<script src="pricing.js"></script>
+<script src="sdy-api.js"></script>
+<script>
+/* ================= 顾客端 UI 层（数据与规则全走 Mall / SdyApi） ================= */
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const yuan = n => '¥' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+
+let curCat = '全部', curFilter = '', view = 'home', selCode = null, detailQty = 1, deliveryType = 'pickup';
+
+let toastTimer = null;
+function toast(msg, ms) {
+  const t = $('toast');
+  t.textContent = msg; t.className = 'toast show';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, ms || 2400);
+}
+function show(id) { const e = $(id); e.className = e.className.replace(' show', '') + ' show'; $('mask').className = 'mask show'; }
+function closeAll() {
+  ['cartSheet', 'dlgCheckout', 'dlgDetail', 'dlgScan'].forEach(id => { const e = $(id); e.className = e.className.replace(' show', ''); });
+  $('mask').className = 'mask';
+}
+
+/* ---------------- 小工具 ---------------- */
+function emojiOf(name) {
+  const s = String(name || '');
+  const map = [['可乐', '🥤'], ['汽水', '🥤'], ['水', '💧'], ['牛奶', '🥛'], ['奶', '🥛'], ['纸', '🧻'], ['饼', '🍪'], ['啤酒', '🍺'], ['酒', '🍺'], ['米', '🍚'], ['油', '🫒'], ['茶', '🍵'], ['面', '🍜']];
+  for (const kv of map) if (s.includes(kv[0])) return kv[1];
+  return '📦';
+}
+
+/* ---------------- 首页 ---------------- */
+function products() { return Mall.loadCatalog(); }
+function renderCats() {
+  const cats = ['全部'].concat([...new Set(products().map(p => p.category).filter(Boolean))]);
+  $('cats').innerHTML = cats.map(c =>
+    '<div class="chip' + (c === curCat ? ' on' : '') + '" onclick="pickCat(\'' + esc(c) + '\')">' + esc(c) + '</div>').join('');
+}
+function pickCat(c) { curCat = c; renderCats(); renderGrid(); }
+function doSearch() { renderGrid(); }
+function renderGrid() {
+  const kw = (($('q') && $('q').value) || '').trim().toLowerCase();
+  const list = products().filter(p => {
+    if (curCat !== '全部' && p.category !== curCat) return false;
+    if (!kw) return true;
+    return (p.name + ' ' + (p.brand || '') + ' ' + p.code).toLowerCase().includes(kw);
+  });
+  $('grid').innerHTML = list.length
+    ? list.map(cardHTML).join('')
+    : '<div class="empty" style="grid-column:1/-1"><span class="big">🔍</span>没有找到相关商品，换个关键词试试</div>';
+}
+function cardHTML(p) {
+  const out = p.stock <= 0;
+  return '<div class="pcard" onclick="openDetail(\'' + p.code + '\')">' +
+    '<div class="ph">' + esc(p.emoji || emojiOf(p.name)) + (out ? '<div class="oos">已售罄</div>' : '') + '</div>' +
+    '<div class="pb">' +
+      '<div class="pname">' + esc(p.name) + '</div>' +
+      '<div class="pmeta">' + esc(p.brand || '') + (p.brand ? ' · ' : '') + esc(p.spec || '') + '</div>' +
+      '<div class="pfoot">' +
+        '<div><span class="price">' + yuan(p.salePrice) + '</span><small> /' + esc(p.unit || '件') + '</small>' +
+        '<div class="stk' + (out ? ' out' : '') + '">' + (out ? '暂时缺货' : '库存 ' + p.stock) + '</div></div>' +
+        (out ? '' : '<button class="add" onclick="event.stopPropagation();quickAdd(\'' + p.code + '\')">＋</button>') +
+      '</div>' +
+    '</div></div>';
+}
+
+/* ---------------- 商品详情 ---------------- */
+function openDetail(code) {
+  const p = Mall.getProduct(code);
+  if (!p) return toast('商品库里没有这个条码：' + code);
+  selCode = code; detailQty = 1;
+  $('dEmoji').textContent = p.emoji || emojiOf(p.name);
+  $('dName').textContent = p.name;
+  $('dCode').textContent = p.code;
+  $('dBrand').textContent = p.brand || '—';
+  $('dSpec').textContent = p.spec || '—';
+  $('dPrice').innerHTML = yuan(p.salePrice) + '<small> /' + esc(p.unit || '件') + '</small>';
+  $('dStock').textContent = p.stock <= 0 ? '已售罄，到店问老板' : '库存 ' + p.stock + ' ' + (p.unit || '件');
+  $('dQty').textContent = detailQty;
+  $('dAdd').className = 'btn btn-primary' + (p.stock <= 0 ? ' dis' : '');
+  show('dlgDetail');
+}
+function stepQty(d) {
+  const p = Mall.getProduct(selCode);
+  if (!p) return;
+  detailQty = Math.max(1, Math.min(detailQty + d, Math.max(p.stock, 1)));
+  $('dQty').textContent = detailQty;
+}
+function addFromDetail() {
+  try { Mall.addToCart(selCode, detailQty); toast('已加入购物车'); refreshAll(); closeAll(); }
+  catch (e) { toast(e.message); }
+}
+function quickAdd(code) {
+  try { Mall.addToCart(code, 1); toast('已加入购物车'); refreshAll(); }
+  catch (e) { toast(e.message); }
+}
+
+/* ---------------- 购物车 ---------------- */
+function openCart() { renderCart(); show('cartSheet'); }
+function renderCart() {
+  const s = Mall.cartSummary();
+  $('cartHeadCount').textContent = s.count ? '（' + s.count + ' 件）' : '';
+  $('cartLines').innerHTML = s.lines.length ? s.lines.map(l =>
+    '<div class="citem">' +
+      '<div class="cph">' + esc(emojiOf(l.name)) + '</div>' +
+      '<div><div class="cn">' + esc(l.name) + '</div><div class="cs">' + yuan(l.price) + ' / ' + esc(l.unit || '件') +
+        (l.qty >= l.stock ? ' · <span style="color:#b91c1c">已达库存上限</span>' : '') + '</div></div>' +
+      '<div class="row">' +
+        '<div class="stepper"><button onclick="stepCart(\'' + l.code + '\',-1)">−</button>' +
+        '<span class="v">' + l.qty + '</span>' +
+        '<button onclick="stepCart(\'' + l.code + '\',1)">＋</button></div>' +
+        '<button class="btn btn-ghost btn-xs" onclick="dropCart(\'' + l.code + '\')">删除</button>' +
+      '</div>' +
+    '</div>').join('') : '<div class="empty"><span class="big">🛒</span>购物车还是空的</div>';
+  const fee = s.count ? Mall.calcDeliveryFee(deliveryType, s.subtotal) : 0;
+  $('cartSubtotal').textContent = yuan(s.subtotal);
+  $('cartFee').textContent = s.count ? (deliveryType === 'pickup' ? '自提免配送费' : yuan(fee)) : '—';
+  $('cartTotal').textContent = yuan(s.subtotal + fee);
+}
+function stepCart(code, d) {
+  const it = Mall.getCart().find(i => i.code === code);
+  if (!it) return;
+  try { Mall.setQty(code, it.qty + d); renderCart(); renderCartBadge(); }
+  catch (e) { toast(e.message); }
+}
+function dropCart(code) { Mall.removeItem(code); renderCart(); renderCartBadge(); renderGrid(); }
+function clearCartNow() { Mall.clearCart(); renderCart(); renderCartBadge(); renderGrid(); toast('购物车已清空'); }
+function renderCartBadge() {
+  const s = Mall.cartSummary();
+  $('cartDot').innerHTML = String(s.count);
+  const bar = $('cartBar');
+  if (s.count > 0) {
+    bar.className = 'cartbar';
+    $('barCount').textContent = String(s.count);
+    $('barText').textContent = '合计 ' + yuan(s.subtotal) +
+      (s.subtotal >= Mall.DELIVERY_RULES.minFree ? ' · 已满 ' + Mall.DELIVERY_RULES.minFree + ' 元免配送' : '');
+  } else {
+    bar.className = 'cartbar hide';
+  }
+}
+
+/* ---------------- 结算 ---------------- */
+function goCheckout() {
+  if (!Mall.cartSummary().count) return toast('购物车是空的');
+  const last = Mall._load('mall_customer', null);
+  if (last) { $('cName').value = last.name || ''; $('cPhone').value = last.phone || ''; $('cAddr').value = last.address || ''; }
+  renderCheckout();
+  closeAll(); show('dlgCheckout');
+}
+function pickDelivery(t) {
+  deliveryType = t;
+  $('optPickup').className = 'dopt' + (t === 'pickup' ? ' on' : '');
+  $('optDelivery').className = 'dopt' + (t === 'delivery' ? ' on' : '');
+  $('addrField').className = 'field mt' + (t === 'delivery' ? '' : ' hide');
+  renderCheckout(); renderCart();
+}
+function renderCheckout() {
+  const s = Mall.cartSummary();
+  const fee = Mall.calcDeliveryFee(deliveryType, s.subtotal);
+  const R = Mall.DELIVERY_RULES;
+  $('coCount').textContent = String(s.count);
+  $('coSubtotal').textContent = yuan(s.subtotal);
+  $('coFee').textContent = deliveryType === 'pickup' ? '免' : yuan(fee);
+  $('coTotal').textContent = yuan(s.subtotal + fee);
+  $('feeHint').textContent = deliveryType === 'pickup'
+    ? '到店自提不收配送费，到店报手机号取货。'
+    : (s.subtotal >= R.minFree ? '已满 ' + R.minFree + ' 元，免配送费 🎉' : '再买 ' + yuan(R.minFree - s.subtotal) + ' 就免 ' + R.fee + ' 元配送费');
+}
+async function submitOrder() {
+  const name = ($('cName').value || '').trim();
+  const phone = ($('cPhone').value || '').trim();
+  const address = ($('cAddr').value || '').trim();
+  if (!name) return toast('请填写收货人');
+  if (!/^1\d{10}$/.test(phone)) return toast('手机号看起来不对（要 11 位数字）');
+  if (deliveryType === 'delivery' && !address) return toast('送货上门需要填地址');
+  const btn = $('btnSubmit');
+  btn.textContent = '提交中…'; btn.className = 'btn btn-primary dis';
+  try {
+    const order = await SdyApi.createOrder({ deliveryType: deliveryType, customer: { name: name, phone: phone, address: address } });
+    Mall._save('mall_customer', { name: name, phone: phone, address: address });
+    toast((SdyApi.on() ? '下单成功：' : '本地演示（未入库）：') + order.id, 3000);
+    closeAll(); refreshAll();
+    if (SdyApi.on()) switchView('orders');
+  } catch (e) {
+    toast(e.message, 3600);   // 后端原文照播（如「库存不足」），购物车不清空
+  } finally {
+    btn.textContent = '提交订单'; btn.className = 'btn btn-primary';
+  }
+}
+
+/* ---------------- 我的订单 ---------------- */
+const FILTERS = [['全部', ''], ['待备货', 'pending'], ['配送中', 'delivering'], ['待自提', 'ready'], ['已完成', 'done'], ['已取消', 'cancelled']];
+function renderFilters() {
+  $('filters').innerHTML = FILTERS.map(f =>
+    '<div class="chip' + (curFilter === f[1] ? ' on' : '') + '" onclick="pickF(\'' + f[1] + '\')">' + f[0] + '</div>').join('');
+}
+function pickF(f) { curFilter = f; renderFilters(); renderOrders(); }
+function renderOrders() {
+  const all = Mall.getOrders();
+  const list = all.filter(o => !curFilter || o.status === curFilter);
+  $('orderCount').textContent = all.length ? '共 ' + all.length + ' 单' : '';
+  $('orders').innerHTML = list.length ? list.map(o => {
+    const v = Mall.orderView(o);
+    return '<div class="ocard">' +
+      '<div class="oh"><span class="oid">' + esc(o.id) + '</span><span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></div>' +
+      '<div class="items">' + o.items.map(i => '· ' + esc(i.name) + ' ×' + i.qty + '　' + yuan(i.price * i.qty)).join('<br>') + '</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:6px">' +
+        (o.deliveryType === 'pickup' ? '到店自提' : '送货上门') + ' · ' + esc(o.customer.name) + ' ' + esc(o.customer.phone) +
+        (o.customer.address ? ' · ' + esc(o.customer.address) : '') + ' · ' + new Date(o.createdAt).toLocaleString('zh-CN', { hour12: false }) +
+      '</div>' +
+      '<div class="of"><span class="amt">小计 ' + yuan(o.subtotal) + (o.deliveryFee ? ' ＋ 配送 ' + yuan(o.deliveryFee) : '') + ' ＝ <b>' + yuan(o.total) + '</b></span>' +
+        '<span class="row">' +
+          '<button class="btn btn-xs" onclick="reorder(\'' + esc(o.id) + '\')">再来一单</button>' +
+          (o.status === 'pending' ? '<button class="btn btn-xs btn-danger" onclick="cancelMine(\'' + esc(o.id) + '\')">取消订单</button>' : '') +
+        '</span>' +
+      '</div></div>';
+  }).join('') : '<div class="empty"><span class="big">🧾</span>还没有订单，去逛逛吧</div>';
+}
+async function refreshOrders() {
+  if (SdyApi.on()) { try { await SdyApi.sync(); } catch (e) { toast(e.message); } }
+  renderOrders();
+}
+function reorder(id) {
+  const o = Mall.getOrders().find(x => x.id === id);
+  if (!o) return;
+  let n = 0;
+  o.items.forEach(i => { try { Mall.addToCart(i.code, i.qty); n++; } catch (e) {} });
+  refreshAll();
+  toast(n ? '已把 ' + n + ' 种商品加回购物车' : '加不回去了，商品可能已下架');
+  switchView('home');
+}
+async function cancelMine(id) {
+  if (typeof confirm === 'function' && !confirm('确定取消这一单？库存会自动回补。')) return;
+  try { await SdyApi.cancelOrder(id); toast('订单已取消'); }
+  catch (e) { toast(e.message, 3600); }
+  renderOrders();
+}
+
+/* ---------------- 视图 ---------------- */
+function switchView(v) {
+  view = v;
+  $('viewHome').className = v === 'home' ? '' : 'hide';
+  $('viewOrders').className = v === 'orders' ? '' : 'hide';
+  $('tabHome').className = 'tn' + (v === 'home' ? ' on' : '');
+  $('tabOrders').className = 'tn' + (v === 'orders' ? ' on' : '');
+  if (v === 'orders') renderOrders();
+}
+
+/* ---------------- 扫码 ---------------- */
+function openScan() {
+  $('scanCode').value = '';
+  $('scanTip').textContent = '扫码枪可直接扫；手动输入示例：6901234567892。店里没有的商品会提示未建档。';
+  show('dlgScan');
+  setTimeout(() => { try { $('scanCode').focus(); } catch (e) {} }, 50);
+}
+async function scanNow() {
+  const code = ($('scanCode').value || '').trim();
+  if (!/^\d{8,14}$/.test(code)) return toast('条码应该是 8–14 位数字');
+  const p = Mall.getProduct(code);
+  if (p) { closeAll(); openDetail(code); return toast('找到了：' + p.name); }
+  if (!SdyApi.on()) return toast('本地没有这个条码，且后端未连接');
+  try {
+    const r = await SdyApi.resolveBarcode(code);
+    toast(r && (r.found || r.name) ? '查到：' + (r.name || code) + '（还没上架，联系老板建档）' : '这个条码没查到商品', 3600);
+  } catch (e) { toast(e.message, 3600); }
+}
+
+/* ---------------- 刷新 / 启动 ---------------- */
+function refreshAll() {
+  renderCats(); renderGrid(); renderCartBadge(); renderFilters(); renderOrders();
+  const cs = $('cartSheet');
+  if (cs.className.indexOf('show') >= 0) renderCart();
+}
+Mall.loadCatalog();
+refreshAll();
+renderCart();
+
+(async function initApi() {
+  const badge = $('modeBadge');
+  const st = await SdyApi.boot();
+  badge.textContent = st.label;
+  badge.title = st.detail;
+  badge.className = 'pill-mode ' + (st.online ? 'on' : 'off');
+  if (st.online) refreshAll();
+})();
+</script>
+</body>
+</html>

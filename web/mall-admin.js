@@ -10,7 +10,9 @@
 'use strict';
 
 // 浏览器：mall.js 已定义全局 Mall；Node：require
-const Mall = (typeof module !== 'undefined' && module.exports) ? require('./mall.js') : window.Mall;
+const MallCore = (typeof module !== 'undefined' && module.exports)
+  ? require('./mall.js')
+  : (typeof Mall !== 'undefined' ? Mall : window.Mall);   // 浏览器里 mall.js 已声明全局 const Mall，这里不能重名
 
 const Admin = (() => {
 
@@ -23,40 +25,40 @@ const Admin = (() => {
 
   // ---------------- 配送员 ----------------
   function getCouriers() {
-    const c = Mall._load(KEYS.couriers, null);
-    if (!Array.isArray(c) || !c.length) { Mall._save(KEYS.couriers, DEFAULT_COURIERS); return DEFAULT_COURIERS.slice(); }
+    const c = MallCore._load(KEYS.couriers, null);
+    if (!Array.isArray(c) || !c.length) { MallCore._save(KEYS.couriers, DEFAULT_COURIERS); return DEFAULT_COURIERS.slice(); }
     return c.slice();
   }
   function setCouriers(list) {
     if (!Array.isArray(list) || !list.length) throw new Error('配送员名单不能为空');
-    Mall._save(KEYS.couriers, list);
+    MallCore._save(KEYS.couriers, list);
     return list;
   }
 
   // ---------------- 库存流水 ----------------
   function getStockLog() {
-    const l = Mall._load(KEYS.stockLog, []);
+    const l = MallCore._load(KEYS.stockLog, []);
     return Array.isArray(l) ? l : [];
   }
   function logStock(entry) {
     const l = getStockLog();
     l.unshift(Object.assign({ ts: Date.now() }, entry));
     if (l.length > 500) l.length = 500;
-    Mall._save(KEYS.stockLog, l);
+    MallCore._save(KEYS.stockLog, l);
     return l[0];
   }
 
   // 改库存的公共步骤：校验 → 写 bd_products → 记流水
   function applyStockChange(code, delta, type, reason, by) {
     if (!delta || isNaN(delta)) throw new Error('变更数量无效');
-    const products = Mall.loadCatalog();
+    const products = MallCore.loadCatalog();
     const p = products.find(x => x.code === code);
     if (!p) throw new Error('商品不存在：' + code);
     const before = p.stock;
     const after = before + delta;
     if (after < 0) throw new Error('库存不能为负（当前 ' + before + ' ' + p.unit + '）');
     p.stock = after;
-    Mall.saveCatalog(products);
+    MallCore.saveCatalog(products);
     return logStock({ type: type, code: code, name: p.name, unit: p.unit, delta: delta, before: before, after: after, reason: reason || '', by: by || '店主' });
   }
 
@@ -72,13 +74,13 @@ const Admin = (() => {
   // 盘点（以实盘数为准，差异自动入流水）
   function stockTake(code, counted, by) {
     if (isNaN(counted) || counted < 0) throw new Error('实盘数量无效');
-    const products = Mall.loadCatalog();
+    const products = MallCore.loadCatalog();
     const p = products.find(x => x.code === code);
     if (!p) throw new Error('商品不存在：' + code);
     const delta = counted - p.stock;
     if (delta === 0) return logStock({ type: 'stock_take', code: code, name: p.name, unit: p.unit, delta: 0, before: p.stock, after: p.stock, reason: '盘点一致', by: by || '店主' });
     p.stock = counted;
-    Mall.saveCatalog(products);
+    MallCore.saveCatalog(products);
     return logStock({ type: 'stock_take', code: code, name: p.name, unit: p.unit, delta: delta, before: p.stock - delta, after: p.stock, reason: '盘点调整', by: by || '店主' });
   }
 
@@ -87,22 +89,22 @@ const Admin = (() => {
   function setCourier(orderId, courier) {
     const roster = getCouriers();
     if (!roster.includes(courier)) throw new Error('配送员不在名单中：' + courier);
-    let o = Mall.getOrders().find(x => x.id === orderId);
+    let o = MallCore.getOrders().find(x => x.id === orderId);
     if (!o) throw new Error('订单不存在');
     if (o.deliveryType !== 'delivery') throw new Error('自提订单无需配送员');
-    if (o.status === 'pending') Mall.advanceOrder(orderId, 'delivering');
-    const list = Mall.getOrders();
+    if (o.status === 'pending') MallCore.advanceOrder(orderId, 'delivering');
+    const list = MallCore.getOrders();
     const o2 = list.find(x => x.id === orderId);
     o2.courier = courier;
     o2.deliveredAt = o2.deliveredAt || 0;
-    Mall._save(Mall.KEYS.orders, list);
+    MallCore._save(MallCore.KEYS.orders, list);
     return o2;
   }
 
   // ---------------- 顾客管理（私域雏形） ----------------
   // 由订单聚合：同手机号合并；叠加备注/标签
   function getCustomers() {
-    const orders = Mall.getOrders();
+    const orders = MallCore.getOrders();
     const map = {};
     orders.forEach(o => {
       const key = (o.customer && o.customer.phone) || ('n:' + (o.customer && o.customer.name || ''));
@@ -119,7 +121,7 @@ const Admin = (() => {
       c.firstOrderAt = Math.min(c.firstOrderAt, o.createdAt);
       c.lastOrderAt = Math.max(c.lastOrderAt, o.createdAt);
     });
-    const notes = Mall._load(KEYS.customerNotes, {}) || {};
+    const notes = MallCore._load(KEYS.customerNotes, {}) || {};
     const list = Object.keys(map).map(k => {
       const c = map[k];
       const n = notes[c.phone] || {};
@@ -129,11 +131,11 @@ const Admin = (() => {
     return list;
   }
   function setCustomerNote(phone, note, tag) {
-    const notes = Mall._load(KEYS.customerNotes, {}) || {};
+    const notes = MallCore._load(KEYS.customerNotes, {}) || {};
     if (!notes[phone]) notes[phone] = {};
     if (note !== undefined) notes[phone].note = note;
     if (tag !== undefined) notes[phone].tag = tag;
-    Mall._save(KEYS.customerNotes, notes);
+    MallCore._save(KEYS.customerNotes, notes);
     return notes[phone];
   }
 

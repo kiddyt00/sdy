@@ -1,0 +1,44 @@
+.line {
+  display: flex;
+  align-items: center;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #f3f4f6;
+}
+.line .thumb {
+  width: 72rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  font-size: 36rpx;
+  border-radius: 12rpx;
+  background: #eff6ff;
+  text-align: center;
+  flex: none;
+}
+.line-info { flex: 1; padding: 0 16rpx; min-width: 0; }
+.line-info .name { font-size: 28rpx; }
+.stepper { display: flex; align-items: center; flex: none; }
+.step {
+  width: 56rpx;
+  height: 56rpx;
+  line-height: 52rpx;
+  text-align: center;
+  border: 1rpx solid #e5e7eb;
+  border-radius: 12rpx;
+  font-size: 32rpx;
+  color: #374151;
+}
+.qty { width: 64rpx; text-align: center; font-size: 28rpx; }
+.amount { width: 130rpx; text-align: right; color: #dc2626; font-weight: 600; }
+
+.kinds { display: flex; gap: 16rpx; }
+.kind {
+  flex: 1;
+  text-align: center;
+  padding: 20rpx 0;
+  border: 2rpx solid #e5e7eb;
+  border-radius: 16rpx;
+  color: #4b5563;
+}
+.kind.on { border-color: #2563eb; color: #2563eb; background: #eff6ff; }
+
+.row.total { font-size: 32rpx; font-weight: 700; color: #dc2626; }

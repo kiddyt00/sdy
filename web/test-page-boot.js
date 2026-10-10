@@ -1,6 +1,6 @@
 /* =====================================================================
  * 页面启动冒烟测试（假 DOM，不起浏览器）
- *   把 mall.html / admin.html 里的内联脚本真的跑一遍，捕获启动期报错，
+ *   把 index.html / admin.html 里的内联脚本真的跑一遍，捕获启动期报错，
  *   覆盖两条路径：① 后端不可用 → 本地演示渲染 ② 后端可用 → 拉镜像后渲染
  * 运行：node test-page-boot.js
  * ===================================================================== */
@@ -98,12 +98,12 @@ const online = {
 };
 
 (async function main() {
-  console.log('页面启动冒烟：mall.html / admin.html（假 DOM，真跑内联脚本）');
+  console.log('页面启动冒烟：index.html / admin.html（假 DOM，真跑内联脚本）');
 
   /* ---------- 顾客端：离线 ---------- */
-  section('① mall.html · 后端不可用（本地演示）');
+  section('① index.html · 后端不可用（本地演示）');
   {
-    const env = await bootPage('mall.html', offline);
+    const env = await bootPage('index.html', offline);
     ok(env.els.modeBadge.textContent.indexOf('本地演示') >= 0, '顶部状态：' + env.els.modeBadge.textContent);
     ok(env.els.grid.innerHTML.indexOf('可口可乐') >= 0, '商品网格已渲染（含种子商品）');
     ok(env.els.cats.innerHTML.indexOf('全部') >= 0, '分类栏已渲染');
@@ -112,9 +112,9 @@ const online = {
   }
 
   /* ---------- 顾客端：在线 ---------- */
-  section('② mall.html · 后端可用（拉镜像）');
+  section('② index.html · 后端可用（拉镜像）');
   {
-    const env = await bootPage('mall.html', online);
+    const env = await bootPage('index.html', online);
     ok(env.els.modeBadge.textContent.indexOf('已连接') >= 0, '顶部状态：' + env.els.modeBadge.textContent);
     ok(SdyApi.on() === true, 'SdyApi 处于 server 模式');
     ok(Mall.loadCatalog().length === 2, '页面已被后端镜像覆盖（2 条，非 6 条种子）');

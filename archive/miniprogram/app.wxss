@@ -1,0 +1,134 @@
+/* 小邻里超市 · 小程序共用样式（M5） */
+page {
+  background: #f3f4f6;
+  font-size: 28rpx;
+  color: #111827;
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+}
+
+.page {
+  padding: 20rpx 24rpx 160rpx;
+}
+
+/* 顶部：状态胶囊 + 搜索 */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 16rpx;
+}
+.badge {
+  flex: none;
+  font-size: 22rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  white-space: nowrap;
+}
+.badge.ok { background: #dcfce7; color: #166534; }
+.badge.off { background: #fef3c7; color: #92400e; }
+.search {
+  flex: 1;
+  background: #fff;
+  border-radius: 999rpx;
+  padding: 14rpx 24rpx;
+  font-size: 26rpx;
+}
+
+/* 分类 chips */
+.chips { white-space: nowrap; margin-bottom: 16rpx; }
+.chip {
+  display: inline-block;
+  padding: 10rpx 26rpx;
+  margin-right: 12rpx;
+  background: #fff;
+  border-radius: 999rpx;
+  font-size: 25rpx;
+  color: #4b5563;
+}
+.chip.on { background: #2563eb; color: #fff; }
+
+/* 商品卡 */
+.card {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 20rpx;
+  margin-bottom: 16rpx;
+}
+.thumb {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 16rpx;
+  background: #eff6ff;
+  text-align: center;
+  line-height: 96rpx;
+  font-size: 48rpx;
+  flex: none;
+}
+.info { flex: 1; padding: 0 20rpx; min-width: 0; }
+.name { font-size: 30rpx; font-weight: 600; }
+.spec { font-size: 23rpx; color: #6b7280; margin-top: 6rpx; }
+.price { font-size: 30rpx; color: #dc2626; font-weight: 700; margin-top: 10rpx; }
+.price .unit { font-size: 22rpx; color: #6b7280; font-weight: 400; }
+.stock { font-size: 22rpx; color: #6b7280; font-weight: 400; margin-left: 12rpx; }
+.stock.zero { color: #dc2626; }
+
+/* 按钮 */
+.btn {
+  display: inline-block;
+  text-align: center;
+  border-radius: 999rpx;
+  font-size: 26rpx;
+  padding: 12rpx 28rpx;
+}
+.btn-primary { background: #2563eb; color: #fff; }
+.btn-ghost { background: #f3f4f6; color: #374151; }
+.btn-block { display: block; padding: 22rpx; font-size: 30rpx; border-radius: 16rpx; }
+.btn.dis { background: #e5e7eb; color: #9ca3af; }
+.btn-mini { flex: none; }
+
+/* 底部结算条 */
+.cartbar {
+  position: fixed;
+  left: 24rpx;
+  right: 24rpx;
+  bottom: 24rpx;
+  display: flex;
+  align-items: center;
+  background: #111827;
+  color: #fff;
+  border-radius: 999rpx;
+  padding: 16rpx 16rpx 16rpx 32rpx;
+  box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, .18);
+}
+.cartbar .cb-left { flex: 1; font-size: 26rpx; }
+.cartbar .cb-num { color: #fbbf24; font-weight: 700; }
+.cartbar .cb-go {
+  background: #2563eb;
+  border-radius: 999rpx;
+  padding: 14rpx 32rpx;
+  font-size: 27rpx;
+}
+
+/* 通用 */
+.section {
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+}
+.section-title { font-size: 28rpx; font-weight: 600; margin-bottom: 16rpx; }
+.row { display: flex; align-items: center; justify-content: space-between; padding: 14rpx 0; }
+.muted { color: #6b7280; font-size: 24rpx; }
+.hint { color: #92400e; background: #fffbeb; border-radius: 12rpx; padding: 14rpx 18rpx; font-size: 23rpx; margin-top: 12rpx; }
+.empty { text-align: center; color: #9ca3af; font-size: 26rpx; padding: 80rpx 0; }
+.input {
+  background: #f9fafb;
+  border: 1rpx solid #e5e7eb;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  font-size: 27rpx;
+}
+.field { margin-bottom: 16rpx; }
+.field-label { font-size: 24rpx; color: #6b7280; margin-bottom: 8rpx; }

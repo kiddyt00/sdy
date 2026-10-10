@@ -1,0 +1,28 @@
+{
+  "description": "小邻里超市 · 顾客端小程序（M5）。appid 用游客/测试号即可打开本项目；拿到正式 AppID 后替换 appid 字段。",
+  "appid": "touristappid",
+  "projectname": "sdy-mall",
+  "compileType": "miniprogram",
+  "libVersion": "3.5.5",
+  "miniprogramRoot": "./",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": false,
+    "coverView": true,
+    "nodeModules": false,
+    "checkSiteMap": true
+  },
+  "condition": {
+    "miniprogram": {
+      "list": [
+        { "name": "首页", "pathName": "pages/index/index", "query": "", "scene": null },
+        { "name": "购物车", "pathName": "pages/cart/cart", "query": "", "scene": null },
+        { "name": "订单", "pathName": "pages/orders/orders", "query": "", "scene": null },
+        { "name": "我的", "pathName": "pages/mine/mine", "query": "", "scene": null }
+      ]
+    }
+  }
+}
