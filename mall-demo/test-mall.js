@@ -150,6 +150,22 @@ throws(() => Mall.addToCart('6925303725941', 1), '售罄商品加购 → 拦截'
   throws(() => Mall.createOrder({ deliveryType: 'pickup', customer: { name: '郑一', phone: '13100000000' } }), '下单时某品售罄 → 整单拦截');
 }
 
+// ============ ⑦ updateProduct（M2 价格防线保存参考价） ============
+section('⑦ updateProduct 商品字段更新');
+fresh();
+{
+  const p = Mall.updateProduct('6901234567892', { refPrice: 5.2 });
+  ok(p.refPrice === 5.2, '写入 refPrice 并返回更新后商品');
+  ok(Mall.getProduct('6901234567892').refPrice === 5.2, 'refPrice 持久化');
+}
+throws(() => Mall.updateProduct('6900000000000', { refPrice: 1 }), '更新不存在的商品 → 拦截');
+{
+  Mall.updateProduct('6902083881234', { salePrice: 1.9 });
+  Mall.addToCart('6902083881234', 1);
+  ok(Math.abs(Mall.cartSummary().subtotal - 1.9) < 1e-6, '改价后购物车按新价合计');
+  Mall.clearCart();
+}
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

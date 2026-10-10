@@ -65,6 +65,15 @@ const Mall = (() => {
   function getProduct(code) {
     return loadCatalog().find(p => p.code === String(code).trim());
   }
+  // 局部更新商品字段（如 refPrice 牵牛花参考价），返回更新后的商品
+  function updateProduct(code, patch) {
+    const list = loadCatalog();
+    const p = list.find(x => x.code === code);
+    if (!p) throw new Error('商品不存在：' + code);
+    Object.assign(p, patch || {});
+    saveCatalog(list);
+    return Object.assign({}, p);
+  }
 
   // ---------------- 购物车 ----------------
   function getCart() {
@@ -224,6 +233,7 @@ const Mall = (() => {
     loadCatalog: loadCatalog,
     saveCatalog: saveCatalog,
     getProduct: getProduct,
+    updateProduct: updateProduct,
     getCart: getCart,
     addToCart: addToCart,
     setQty: setQty,

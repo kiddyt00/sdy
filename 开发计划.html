@@ -101,9 +101,10 @@
 <li>双库命中徽标（本地商品/本地字典/云端/查无）与建档入口（D6）</li>
 </ul>
 
-<div class="callout green">M1 页面展示层 整体验收 ✔：顾客端（mall.html）、管理端（admin.html）、扫码体验（barcode-demo 摄像头/扫码枪）全流程可本地跑通；核心逻辑均有 node 自动化测试（40+32+双库 7 组）；任一页面可直接演示给合伙人。下一步 M2 规则与数据层。</div>
+<div class="callout green">M1 页面展示层 整体验收 ✔：顾客端（mall.html）、管理端（admin.html）、扫码体验（barcode-demo 摄像头/扫码枪）全流程可本地跑通；核心逻辑均有 node 自动化测试（40+32+双库 7 组）；任一页面可直接演示给合伙人。M2 规则与数据层随后完成（见下）。</div>
 
-<h2>五、M2 规则与数据层</h2>
+<h2>五、M2 规则与数据层（✔ 已完成 2026-10-10）</h2>
+<div class="callout green">M2 已完成：<code>mall-demo/pricing.js</code> 价格规则服务（配送费可配：自提 0 / 满 30 免否则 3 元；比价防线：零售 ≤ 牵牛花参考价 −5%，批发不计）+ 28 项测试；订单状态机（mall.js 状态机 + 40 项购物车/下单/取消测试）与库存联动（下单扣减/取消回补/盘点修正）为 M1 已有逻辑，本轮一并归入 M2 验收；双库 resolve 三级链路（product→lib→云端：去重锁/串行队列/配额/熔断）已在 barcode-demo/app.js 服务化并有 7 组测试。管理端新增「💰 价格规则」页：录入牵牛花参考价 → 自动标红超价商品。</div>
 <table>
 <tr><th>模块</th><th>内容</th><th>关键规则</th></tr>
 <tr><td>订单状态机</td><td>待备货 → 配送中 / 待自提 → 已完成；取消；边界：已备货不可直接删单</td><td>状态只允许合法迁移，非法操作拦截并提示</td></tr>
@@ -164,10 +165,11 @@
 <tr><td>M1.1 顾客端商城 demo</td><td class="ok">✔ 完成</td><td>mall-demo/（首页/详情/购物车/结算/我的订单 + 40 项测试）</td></tr>
 <tr><td>M1.2 管理端扩展</td><td class="ok">✔ 完成</td><td>admin.html 订单/库存/顾客三页 + mall-admin.js + 32 项测试</td></tr>
 <tr><td>M1.3 扫码体验</td><td class="ok">✔ 完成</td><td>barcode-demo 摄像头扫一扫 + 扫码枪 HID + 双库徽标（wx.scanCode 待 M5）</td></tr>
-<tr><td>M2 规则与数据层</td><td class="doing">● 下一步</td><td>价格规则服务化 · 双库 resolve 服务化 · 库存联动（核心逻辑已散落在 demo 中，待抽层）</td></tr>
+<tr><td>M2 规则与数据层</td><td class="ok">✔ 完成</td><td>价格规则服务 pricing.js + 28 项测试；订单状态机/库存联动归入；双库 resolve 服务化（app.js）已有 7 组测试</td></tr>
+<tr><td>M3 牵牛花同步</td><td class="doing">● 下一步</td><td>行动项 0：验证牵牛花导出字段（条码/名称/库存/价格 CSV）→ 月度双向对账工具</td></tr>
 </table>
 
-<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。M1 页面展示层（顾客端/管理端/扫码体验）已全部落地并测试。下一轮：M2 规则与数据层（价格规则服务化 + 双库 resolve 服务化）→ M3 牵牛花 CSV 同步（行动项 0 需先验证牵牛花导出字段）。</div>
+<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。M1 页面展示层与 M2 规则数据层已全部落地并测试（M1: 顾客端/管理端/扫码体验；M2: 价格规则服务 + 状态机/库存联动/双库服务化）。下一轮：M3 牵牛花 CSV 同步——行动项 0 需先向牵牛花确认导出字段能力（条码/名称/库存/价格能否导出 CSV）。</div>
 
 </body>
 </html>
