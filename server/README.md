@@ -1,8 +1,8 @@
 # 商城后端（Go 1.24）
 
-独立小程序商城的服务端：纯标准库 `net/http` + `database/sql`(`modernc.org/sqlite`，纯 Go 无 CGO，静态单文件）。
+家庭超市自营商城的服务端（Web 端优先，小程序暂缓）：纯标准库 `net/http` + `database/sql`(`modernc.org/sqlite`，纯 Go 无 CGO，静态单文件）。
 
-前端页面（`mall-demo/mall.html` 顾客端、`mall-demo/admin.html` 管理端）通过 `mall-demo/sdy-api.js` 调用本服务；**服务端是唯一真源**，运费/价格防线/库存/状态机只在这里执行，页面在探不到本服务时自动降级为本地演示模式。
+前端页面（`web/index.html` 顾客端、`web/admin.html` 管理端）通过 `web/sdy-api.js` 调用本服务；**服务端是唯一真源**，运费/价格防线/库存/状态机只在这里执行，页面在探不到本服务时自动降级为本地演示模式。
 
 ## 运行
 
@@ -12,7 +12,7 @@ cd server
 go run ./cmd/server
 
 # 想同时用浏览器打开仓库里的演示页：静态目录指向仓库根
-STATIC_DIR=.. go run ./cmd/server     # 然后访问 http://127.0.0.1:8093/mall-demo/mall.html
+STATIC_DIR=../web go run ./cmd/server  # 顾客端 http://127.0.0.1:8093/ ；管理端 http://127.0.0.1:8093/admin.html
 
 # 启用云端条码（阿里云市场 APPCODE，永远只从环境变量读，不写配置文件/不入库）
 BARCODE_APPCODE=你的AppCode go run ./cmd/server
@@ -47,7 +47,7 @@ BARCODE_APPCODE=你的AppCode go run ./cmd/server
 错误码：`400` 参数不合法 / `404` 不存在 / `409` 库存不足或状态不允许流转。
 `/healthz` 额外返回 `cloudConfigured`（是否配了 APPCODE）、`cloudFails`、`circuitOpen`，供前端显示后端状态。
 
-前端接入：`mall-demo/sdy-api.js`（顾客端/管理端）与 `barcode-demo/bd-api.js`（扫码台）是两个页面的数据通道，
+前端接入：`web/sdy-api.js`（顾客端/管理端）与 `barcode-demo/bd-api.js`（扫码台）是两个页面的数据通道，
 后端是唯一真源；服务端未启动时页面自动降级为本地演示，不报错、不白屏。
 
 ## 测试
