@@ -28,3 +28,14 @@ __pycache__/
 
 # 生产服务器凭证（本地专用）
 .server_cred.md
+
+# 本地工具链（Go SDK / 模块缓存，不入库）
+.tools/
+
+# ===== 后端运行产物 / 本地环境 =====
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+server/bin/

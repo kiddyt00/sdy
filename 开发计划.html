@@ -47,7 +47,7 @@
 <tr><td>总目标</td><td>自营微信小程序商城，完全独立于牵牛花中台：商品、价格、库存、订单、配送、顾客全部自管理；与牵牛花仅保留<b>月度 CSV 库存同步</b></td></tr>
 <tr><td>MVP 范围</td><td>常温商品 + 酒水饮料；生鲜后置（P1+）；固定客群私域沉淀；自提免配送费 + 4 人配送</td></tr>
 <tr><td>红线</td><td>敏感信息绝不上库；扫码只读不改库存（D8）；建档必须人工确认；价格/库存永不自动填云端值；云端调用仅双库未命中（D6）；先不买枪、手机摄像头验证（D7）</td></tr>
-<tr><td>技术形态</td><td>web demo（纯 HTML/JS + localStorage，无构建）先行；后端 Python 标准库服务；最终小程序端复用 demo 页面设计</td></tr>
+<tr><td>技术形态</td><td>web demo（纯 HTML/JS + localStorage，无构建）先行；<b>后端 Go（1.24，标准库 net/http + SQLite）</b>；最终小程序端复用 demo 页面设计</td></tr>
 </table>
 
 <h2>二、里程碑总览</h2>
@@ -57,7 +57,7 @@
 <tr><td><b>M1 页面展示层</b></td><td>全流程页面可见、可走通（web demo）</td><td>顾客端商城 demo、管理端扩展、扫码建档链路</td><td>M0</td><td class="doing">● 当前</td></tr>
 <tr><td><b>M2 规则与数据层</b></td><td>订单状态机、价格规则、库存联动、双库逻辑服务化</td><td>核心逻辑模块 + 自动化测试</td><td>M1</td><td>1–2 轮</td></tr>
 <tr><td><b>M3 牵牛花同步</b></td><td>月度库存双向 CSV 同步</td><td>同步工具、对账规则、导出字段确认</td><td>牵牛花导出能力验证（行动项）</td><td>1–2 轮</td></tr>
-<tr><td><b>M4 后端服务</b></td><td>数据模型 + API + 条码代理</td><td>Python 后端（标准库）、接口清单、配额/熔断</td><td>M2</td><td>2–3 轮</td></tr>
+<tr><td><b>M4 后端服务</b></td><td>数据模型 + API + 条码代理</td><td><b>Go 后端</b>（标准库 + SQLite）、接口清单、配额/熔断</td><td>M2</td><td>2–3 轮</td></tr>
 <tr><td><b>M5 小程序化</b></td><td>顾客端 + 管理端小程序</td><td>小程序代码、商户号/支付、配送 API 接入</td><td>用户申请账号/商户号（1–2 周）</td><td>3–4 轮</td></tr>
 <tr><td><b>M6 上线验证</b></td><td>试运营、生鲜/储值/发票 P1+</td><td>灰度上线、规则调优</td><td>M5</td><td>按运营反馈</td></tr>
 </table>
@@ -121,13 +121,13 @@
 </ul>
 <div class="callout green"><b>已交付（本轮）：</b>对账引擎 <code>sync-demo/sync-csv.js</code>（CSV 解析：BOM/CRLF/引号转义/自动识别逗号与 Tab；字段映射可配中英文别名；对账产出库存差/价差/双差 + 云端独有 + 本地独有 + 无效行统计；导出「库存回填（以本地实盘为准）」与「新增建档」两份 CSV）+ <b>62 项测试</b>；对账工作台页面 <code>sync-demo/sync.html</code>（载入 CSV → 差异表勾选确认 → 导出，纯前端不上传）；行动项 0 确认清单页。<br>差异默认<b>未确认</b>，必须人工勾选才进导出——防止误回填。本地商品侧复用同源 <code>bd_products</code>（与商城/扫码 demo 同库）。<br><b>唯一待办</b>：拿到牵牛花真实导出文件后核对列名（若不在映射表内，改 <code>DEFAULT_FIELD_MAP</code> 即可）。</div>
 
-<h2>七、M4 后端服务</h2>
+<h2>七、M4 后端服务 <span class="ok">◐ 主体已落地</span></h2>
 <table>
 <tr><th>项</th><th>内容</th></tr>
 <tr><td>数据模型</td><td>product / barcode_lib / order / order_item / customer / sync_batch</td></tr>
 <tr><td>API 清单</td><td>商品（CRUD/上下架）、库存（入库/盘点/调整）、订单（创建/流转/查询）、顾客、条码 resolve</td></tr>
 <tr><td>条码代理</td><td>APPCODE 只存服务端；配额按 HTTP 200 计（查无也计）、非 200 不计；熔断当日</td></tr>
-<tr><td>形态</td><td>Python 标准库 + SQLite（个人成本敏感，先不引框架）；后续按需迁移</td></tr>
+<tr><td>形态</td><td><b>Go 1.24 + SQLite（<code>modernc.org/sqlite</code>，纯 Go 无需 CGO）</b>，HTTP 用标准库 <code>net/http</code>（不引重框架）；<code>CGO_ENABLED=0</code> 静态编译成单文件，镜像小、内存占用低（与同机其他服务共存友好）。<br><span style="color:#6b7a6f">2026-10 用户决定：后端语言由 Python 改为 Golang——与生产服务器上同机的 yiguan 项目（Go）同栈，Docker 蓝绿部署范式可直接复用；静态单文件部署无需运行时依赖；并发处理条码代理/订单请求更省心。</span></td></tr>
 <tr><td>部署</td><td><b>生产服务器</b>（IP 见本地 <code>.server_cred.md</code>，公开文档不披露）（Ubuntu / 4 核 / 3.7G 内存 / 40G 盘 / Docker 29 + Compose v5），参照同机 <code>yiguan</code> 项目范式：<br>
 • Docker Compose 部署，镜像拉取走国内代理 <code>docker.1ms.run/library</code>；<br>
 • <b>蓝绿 A/B 双实例</b>（frontend-a / frontend-b）滚动更新，主机级 Nginx upstream 池做反代与失败重试；<br>
@@ -136,6 +136,14 @@
 • 服务器上还有其他在跑的服务，改动前先 <code>ss -tlnp</code> + <code>docker ps</code> 复核，不动他人配置。</td></tr>
 <tr><td>依赖</td><td>生产域名（小程序要求 <b>HTTPS + 已备案域名</b>）——加入依赖用户事项表</td></tr>
 </table>
+<div class="callout green"><b>已交付（本轮，Go 后端）：</b><code>server/</code> 模块（Go 1.24 + <code>modernc.org/sqlite</code> 纯 Go 驱动，<code>CGO_ENABLED=0</code> 静态单文件）——<br>
+• <b>数据层</b>：六表 product / barcode_lib / customer / orders / order_item / sync_batch；事务下单（统一校验库存 → 扣减 → 落单，库存不足整单回滚）、取消回补、订单状态机（非法流转返回 409）；<br>
+• <b>规则服务端化</b>：配送费（自提 0 / 满 30 免否则 3 元）与比价防线（零售 ≤ 参考价 ×0.95，批发跳过、无参考价跳过）；<br>
+• <b>条码解析链服务端化</b>：商品档案 → 本地字典 → 云端（查到永久回填、查无标记 90 天、连续失败 5 次熔断当日），<code>APPCODE</code> <b>只从环境变量读</b>，绝不下发到前端；<br>
+• <b>HTTP API</b>：<code>/healthz</code>、商品列表/建档/手动改库存（D8）、订单下单/列表/详情/状态流转、<code>/api/barcode/resolve</code>、<code>/api/pricing/check</code>；静态目录可托管演示页；<br>
+• <b>验证</b>：<b>20 个 Go 单测全绿</b>（解析链三级命中/回填/TTL/熔断、价格规则边界、状态机全部合法与非法路径、事务扣库存与回滚）＋ <code>server/smoke.sh</code> 端到端冒烟通过（下单 120→118、取消回补 120、非法流转 409）；<br>
+• <b>部署件</b>：<code>server/Dockerfile</code>（alpine 两段式、非 root、内置健康检查）＋ <code>docker-compose.yml</code>（<b>api-a 8093 / api-b 8094 蓝绿</b>，仅绑 <code>127.0.0.1</code>）＋ <code>deploy/</code>（deploy.sh 走国内代理拉镜像、rolling-update.sh 逐台重启不停服、主机 Nginx 模板）。<br>
+<b>剩余</b>：前端页面接后端 API（当前 demo 仍走 localStorage）＋ 上线到生产服务器（<b>待用户提供已备案域名</b>）。</div>
 
 <h2>八、M5 小程序化</h2>
 <table>
@@ -176,10 +184,10 @@
 <tr><td>M1.3 扫码体验</td><td class="ok">✔ 完成</td><td>barcode-demo 摄像头扫一扫 + 扫码枪 HID + 双库徽标（wx.scanCode 待 M5）</td></tr>
 <tr><td>M2 规则与数据层</td><td class="ok">✔ 完成</td><td>价格规则服务 pricing.js + 28 项测试；订单状态机/库存联动归入；双库 resolve 服务化（app.js）已有 7 组测试</td></tr>
 <tr><td>M3 牵牛花同步</td><td class="ok">✔ 工具就绪</td><td>sync-demo/sync-csv.js（对账引擎 + 62 项测试）· sync.html 对账工作台 · 牵牛花导出确认清单.html；<b>待真实导出文件核对列名</b></td></tr>
-<tr><td>M4 后端服务</td><td class="doing">● 下一步</td><td>Python 标准库 + SQLite · 条码 resolve 服务端化（APPCODE 只存服务端）· 部署到生产服务器（IP 见本地 <code>.server_cred.md</code>）（Docker 蓝绿 A/B，参照 yiguan 范式）</td></tr>
+<tr><td>M4 后端服务</td><td class="doing">● 进行中（主体已落地）</td><td><b>Go 1.24 + SQLite</b>（modernc 纯 Go 驱动）· 条码 resolve 服务端化（APPCODE 只存服务端）· 部署到生产服务器（IP 见本地 <code>.server_cred.md</code>）（Docker 蓝绿 A/B，参照 yiguan 范式）<br>已落地：数据层六表 + 事务下单 + 状态机 + 价格/配送规则 + 条码解析链（配额/熔断）+ HTTP API + 20 单测 + 冒烟 + 部署件（8093/8094）；剩余：前端接后端、生产域名上线</td></tr>
 </table>
 
-<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。<b>M1 页面展示层、M2 规则数据层、M3 同步工具（对账引擎 + 工作台）均已落地并测试</b>（全套回归：对账 62 + 商城 44 + 价格规则 28 + 管理端 32 + 条码核心 7 组，全绿）。<b>下一轮 M4 后端服务</b>：Python 标准库 + SQLite 数据模型与 API、条码 resolve 服务端化（APPCODE 只存服务端）、按 yiguan 范式部署到生产服务器（IP 见本地 <code>.server_cred.md</code>）（Docker 蓝绿 A/B + 主机 Nginx 反代，端口 8091/8092/8093 避开既有服务）。<b>并行需要用户推进</b>：① 行动项 0 牵牛花导出字段确认（用清单页谈）；② 生产域名 + 备案（小程序要求 HTTPS + 已备案）。</div>
+<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。<b>M1 页面展示层、M2 规则数据层、M3 同步工具均已落地并测试</b>（全套回归：对账 62 + 商城 44 + 价格规则 28 + 管理端 32 + 条码核心 7 组，全绿）；<b>M4 后端主体本轮落地</b>（Go 1.24 + SQLite：数据层/规则/条码解析链/HTTP API + <b>20 个 Go 单测</b> + 端到端冒烟 + Docker 蓝绿部署件，端口 8093/8094 避开既有服务）。<b>下一轮</b>：把前端页面接到后端 API（订单/库存/条码走后端，不再用 localStorage），并准备生产上线。<b>并行需要用户推进</b>：① 行动项 0 牵牛花导出字段确认（用清单页谈）；② <b>生产域名 + 备案</b>（小程序要求 HTTPS + 已备案域名，是上线的硬前提）。</div>
 
 </body>
 </html>

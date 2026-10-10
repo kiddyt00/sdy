@@ -1,0 +1,64 @@
+# 独立小程序商城 · 生产编排（参照同机 yiguan 的蓝绿 A/B 范式）
+#
+# 端口约定（生产服务器已占用 22/53/80/443/8081/8082，本项目只用 8093/8094）：
+#   api-a → 宿主 127.0.0.1:8093（仅本机，外部经主机 Nginx 反代）
+#   api-b → 宿主 127.0.0.1:8094
+# 部署：cp .env.example .env && 填值；./deploy/deploy.sh
+# 滚动更新：./deploy/rolling-update.sh（先起 B 再停 A，逐台替换，不停服）
+
+services:
+  api-a:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: sdy-api-a
+    restart: unless-stopped
+    environment:
+      ADDR: 0.0.0.0:8080
+      DB_PATH: /data/sdy.db
+      STATIC_DIR: /app/web
+      TZ: Asia/Shanghai
+      BARCODE_APPCODE: ${BARCODE_APPCODE:-}
+      BARCODE_GATEWAY: ${BARCODE_GATEWAY:-https://gscode.market.alicloudapi.com/getBarcode}
+    volumes:
+      - ./data:/data
+      - ./web:/app/web:ro
+    ports:
+      - 127.0.0.1:8093:8080
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  api-b:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: sdy-api-b
+    restart: unless-stopped
+    environment:
+      ADDR: 0.0.0.0:8080
+      DB_PATH: /data/sdy.db
+      STATIC_DIR: /app/web
+      TZ: Asia/Shanghai
+      BARCODE_APPCODE: ${BARCODE_APPCODE:-}
+      BARCODE_GATEWAY: ${BARCODE_GATEWAY:-https://gscode.market.alicloudapi.com/getBarcode}
+    volumes:
+      - ./data:/data
+      - ./web:/app/web:ro
+    ports:
+      - 127.0.0.1:8094:8080
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
