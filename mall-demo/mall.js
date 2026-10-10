@@ -236,7 +236,9 @@ const Mall = (() => {
     cancelOrder: cancelOrder,
     advanceOrder: advanceOrder,
     orderView: orderView,
-    _resetForTest: _resetForTest
+    _resetForTest: _resetForTest,
+    _load: loadLS,   // 供管理端模块共用同一存储（含 Node 测试内存）
+    _save: saveLS
   };
 })();
 

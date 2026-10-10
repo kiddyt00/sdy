@@ -483,5 +483,11 @@ function closeAll() {
 Mall.loadCatalog();
 renderCats(); renderGrid(); renderCartBadge(); renderFilters();
 </script>
+
+<footer class="foot-note">
+  <a class="pill" href="admin.html" style="display:inline-block;margin-bottom:8px;padding:8px 18px">🔧 管理端（订单 / 库存 / 顾客）</a><br>
+  demo 数据存于本机 localStorage（商品库 bd_products 与条码扫码 demo 共用）｜配送费为占位规则（自提免 / 满 30 免，否则 3 元）<br>
+  <b>D8：扫码只读</b>——库存一律在管理端手动调整（入库单 / 盘点 / 直接改数）
+</footer>
 </body>
 </html>

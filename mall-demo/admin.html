@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小邻里超市 · 管理端 Demo（M1.2）</title>
+<style>
+:root{
+  --green:#14532d; --green2:#1e6b3c; --green3:#e8f2e9;
+  --orange:#f97316; --orange2:#ea580c;
+  --bg:#f4efe4; --ink:#26241f; --muted:#8a8374;
+  --card:#fffdf8; --line:#e7e0cf;
+  --serif:"Songti SC","STSong","Noto Serif SC",Georgia,"Times New Roman",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --shadow:0 10px 24px rgba(38,36,31,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--ink);background:var(--bg);
+  background-image:radial-gradient(rgba(20,83,45,.045) 1px,transparent 1.6px),radial-gradient(rgba(249,115,22,.035) 1px,transparent 1.6px);
+  background-size:26px 26px,39px 39px;background-position:0 0,13px 13px}
+.wrap{max-width:760px;margin:0 auto;padding-bottom:60px}
+header{position:sticky;top:0;z-index:30;background:var(--bg);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);padding:14px 18px 12px}
+.brand-row{display:flex;align-items:baseline;gap:10px}
+.brand{font-family:var(--serif);font-size:22px;font-weight:700;color:var(--green);letter-spacing:2px}
+.brand small{font-size:12px;color:var(--muted);letter-spacing:1px}
+.back{font-size:12.5px;color:var(--green);text-decoration:none;border:1px solid var(--green);
+  border-radius:999px;padding:4px 12px;background:var(--card);font-weight:600}
+.tabs{display:flex;gap:6px;padding:12px 18px 4px}
+.tab{flex:1;text-align:center;padding:9px 0;border-radius:12px;font-size:14px;font-weight:600;
+  color:var(--muted);cursor:pointer;border:1px solid transparent;transition:.15s}
+.tab.on{background:var(--green);color:#fff;box-shadow:var(--shadow)}
+.pad{padding:12px 18px}
+.hint{border:1px solid #fde68a;background:#fffbeb;border-radius:10px;padding:9px 13px;font-size:12px;
+  color:#92400e;line-height:1.7;margin:4px 18px 10px}
+.hint b{color:#b45309}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.fil{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 12px;font-size:12px;
+  color:var(--muted);cursor:pointer;font-weight:600}
+.fil.on{background:var(--green3);border-color:var(--green);color:var(--green)}
+.order{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:10px;box-shadow:var(--shadow)}
+.order .hd{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+.order .id{font-size:11.5px;color:var(--muted)}
+.badge{font-size:11.5px;font-weight:700;border-radius:999px;padding:3px 10px}
+.st-pending{background:#fff3cd;color:#92600a}.st-delivering{background:#dbeafe;color:#1e40af}
+.st-ready{background:#e8f2e9;color:#14532d}.st-done{background:#e9e6dd;color:#6b6a63}
+.st-cancelled{background:#f3f4f6;color:#9ca3af}
+.order .items{font-size:12.5px;color:var(--muted);line-height:1.7;margin-top:6px}
+.order .ft{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-top:10px;
+  border-top:1px dashed var(--line);padding-top:10px}
+.order .sum{font-size:13px;color:var(--muted)}
+.order .sum b{color:var(--orange2);font-size:15px}
+.acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sel{border:1.5px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12.5px;background:#fff;color:var(--ink);outline:none}
+.btn-sm{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:5px 11px;font-size:12.5px;
+  cursor:pointer;color:var(--green);font-weight:700}
+.btn-sm:hover{background:var(--green3)}
+.btn-sm.danger{color:#dc2626;border-color:#f3c6c6}
+.btn-sm.done{background:var(--green);color:#fff;border-color:var(--green)}
+.stock{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 14px;margin-top:10px;box-shadow:var(--shadow)}
+.stock .hd{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.stock .nm{font-size:14px;font-weight:700}
+.stock .meta{font-size:11.5px;color:var(--muted)}
+.stock .cur{font-size:13px;color:var(--muted)}
+.stock .cur b{color:var(--orange2);font-size:16px}
+.ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.inp{border:1.5px solid var(--line);border-radius:9px;padding:6px 9px;font-size:12.5px;width:78px;background:#fff;outline:none;color:var(--ink)}
+.inp:focus{border-color:var(--green)}
+.inp.wide{width:130px}
+.op-label{font-size:11.5px;color:var(--muted)}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+.tbl th,.tbl td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:middle}
+.tbl th{background:#faf6ec}
+.tbl tr:hover td{background:#fdf9ef}
+.log{font-size:12px;color:var(--muted);line-height:1.9}
+.log b{color:var(--ink)}
+.lg-t{background:#e8f2e9;color:#14532d;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700}
+.lg-a{background:#fff3cd;color:#92600a;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700}
+.lg-k{background:#dbeafe;color:#1e40af;border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700}
+.cust{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:10px;box-shadow:var(--shadow)}
+.cust .hd{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px}
+.cust .nm{font-size:14.5px;font-weight:700}
+.cust .ph{font-size:12px;color:var(--muted)}
+.cust .stats{font-size:12px;color:var(--muted);margin:6px 0;line-height:1.7}
+.cust .stats b{color:var(--orange2)}
+.cust .ops{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tag-opt{border:1.5px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12px;background:#fff;color:var(--ink)}
+.srch{display:flex;border:1.5px solid var(--line);border-radius:999px;background:var(--card);overflow:hidden;margin:0 18px 4px;max-width:320px}
+.srch input{flex:1;border:0;outline:none;padding:8px 13px;font-size:13px;background:transparent}
+.srch button{border:0;background:transparent;color:var(--green);padding:0 12px;cursor:pointer}
+#toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:rgba(38,36,31,.92);color:#fff;
+  padding:10px 20px;border-radius:999px;font-size:13.5px;z-index:99;display:none;animation:pop .2s;max-width:86vw;text-align:center}
+@keyframes pop{from{opacity:0;transform:scale(.94)}}
+.empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand-row">
+      <div class="brand">小邻里超市<small> · 管理端 Demo · M1.2</small></div>
+      <span style="flex:1"></span>
+      <a class="back" href="mall.html">← 返回顾客端</a>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <div class="tab on" id="tabOrders" onclick="switchTab('orders')">📦 订单管理</div>
+    <div class="tab" id="tabStock" onclick="switchTab('stock')">📊 库存管理</div>
+    <div class="tab" id="tabCust" onclick="switchTab('cust')">👥 顾客管理</div>
+  </nav>
+
+  <!-- 订单管理 -->
+  <div id="viewOrders">
+    <div class="pad filters" id="filters"></div>
+    <div class="pad" id="orders" style="padding-top:0"></div>
+  </div>
+
+  <!-- 库存管理 -->
+  <div id="viewStock" style="display:none">
+    <div class="hint"><b>占位实现</b>：库存页形态待 D1（入库场景范围）/ D2（无条码策略）/ D4（入库单完整度）确认后再细化；<b>D8 扫码只读</b>——这里才是唯一改库存的入口（入库单 / 盘点 / 直接改数），每次变更自动记流水。</div>
+    <div class="pad" id="stockRows" style="padding-top:0"></div>
+    <div class="pad"><b style="font-size:13px;color:var(--green)">📜 库存流水</b><div class="log" id="stockLog"></div></div>
+  </div>
+
+  <!-- 顾客管理 -->
+  <div id="viewCust" style="display:none">
+    <div class="srch"><input id="custQ" placeholder="搜姓名 / 电话 / 标签…"><button onclick="renderCust()">⌕</button></div>
+    <div class="pad" id="custList" style="padding-top:0"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="mall.js"></script>
+<script src="mall-admin.js"></script>
+<script>
+/* ================= 管理端 UI 层 ================= */
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const yuan = n => '¥' + (Math.round(n * 100) / 100).toFixed(2);
+let curFilter = '';
+
+let toastTimer = null;
+function toast(msg, ms) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', ms || 2200);
+}
+const tryRun = fn => { try { const r = fn(); if (r) toast(r); } catch (e) { toast(e.message); } };
+
+/* ---------- 订单管理 ---------- */
+const F = [['全部',''],['待备货','pending'],['配送中','delivering'],['待自提','ready'],['已完成','done'],['已取消','cancelled']];
+function renderFilters() {
+  $('filters').innerHTML = F.map(f => '<span class="fil' + (curFilter === f[1] ? ' on' : '') + '" onclick="pickF(\'' + f[1] + '\')">' + f[0] + '</span>').join('');
+}
+function pickF(f) { curFilter = f; renderFilters(); renderOrders(); }
+function renderOrders() {
+  const list = Mall.getOrders().filter(o => !curFilter || o.status === curFilter);
+  $('orders').innerHTML = list.length ? list.map(o => orderHTML(Mall.orderView(o))).join('')
+    : '<div class="empty">暂无订单</div>';
+}
+function courierSel(id, cur) {
+  const opts = Admin.getCouriers().map(c => '<option value="' + esc(c) + '"' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
+  return '<select class="sel" id="cs_' + id + '">' + opts + '</select>';
+}
+function orderHTML(o) {
+  const acts = [];
+  if (o.status === 'pending') {
+    acts.push('<button class="btn-sm danger" onclick="cancelO(\'' + o.id + '\')">取消</button>');
+    if (o.deliveryType === 'pickup') acts.push('<button class="btn-sm" onclick="adv(\'' + o.id + '\',\'ready\')">标记自提</button>');
+    else { acts.push(courierSel(o.id)); acts.push('<button class="btn-sm" onclick="assign(\'' + o.id + '\')">分配并配送</button>'); }
+  } else if (o.status === 'delivering') {
+    acts.push(courierSel(o.id, o.courier)); acts.push('<button class="btn-sm" onclick="assign(\'' + o.id + '\')">改派</button>');
+    acts.push('<button class="btn-sm done" onclick="adv(\'' + o.id + '\',\'done\')">确认完成</button>');
+  } else if (o.status === 'ready') {
+    acts.push('<button class="btn-sm done" onclick="adv(\'' + o.id + '\',\'done\')">确认完成</button>');
+  }
+  const courierLine = o.courier ? '｜配送员：' + esc(o.courier) : '';
+  return '<div class="order">' +
+    '<div class="hd"><span class="id">' + o.id + ' · ' + new Date(o.createdAt).toLocaleString('zh-CN', { hour12: false }) + '</span>' +
+    '<span class="badge ' + o.statusCls + '">' + o.statusLabel + '</span></div>' +
+    '<div class="items">' + o.items.map(i => '· <b>' + esc(i.name) + '</b> ×' + i.qty + ' ' + esc(i.unit) + '（' + yuan(i.price * i.qty) + '）').join('<br>') +
+    '<br>『' + (o.deliveryType === 'pickup' ? '到店自提' : '配送到家') + '』 ' + esc(o.customer.name) + ' ' + esc(o.customer.phone) +
+    (o.deliveryType === 'delivery' ? ' ' + esc(o.customer.address) : '') + courierLine + '</div>' +
+    '<div class="ft"><span class="sum">小计 ' + yuan(o.subtotal) + ' ＋ 配送费 ' + yuan(o.deliveryFee) + ' ＝ <b>' + yuan(o.total) + '</b></span>' +
+    '<span class="acts">' + acts.join('') + '</span></div>' + '</div>';
+}
+function assign(id) {
+  const v = $('cs_' + id).value;
+  tryRun(() => { Admin.setCourier(id, v); renderOrders(); return '已分配 ' + v + '，订单配送中'; });
+}
+function adv(id, to) { tryRun(() => { Mall.advanceOrder(id, to); renderOrders(); return '订单已更新'; }); }
+function cancelO(id) {
+  if (!confirm('确定取消该订单？库存将自动回补。')) return;
+  tryRun(() => { Mall.cancelOrder(id); renderOrders(); return '订单已取消，库存已回补'; });
+}
+
+/* ---------- 库存管理 ---------- */
+function renderStock() {
+  const list = Mall.loadCatalog();
+  $('stockRows').innerHTML = list.map(p => {
+    const out = p.stock <= 0;
+    return '<div class="stock"><div class="hd">' +
+      '<div><span class="nm">' + esc(p.name) + '</span> <span class="meta">' + esc(p.brand) + ' · ' + esc(p.spec) + ' · 条码 ' + esc(p.code) + '</span></div>' +
+      '<span class="cur">现库存 <b>' + p.stock + '</b> ' + esc(p.unit) + (out ? '（缺货）' : '') + '</span></div>' +
+      '<div class="ops">' +
+        '<span class="op-label">改数</span><input class="inp" id="ad_' + p.code + '" placeholder="±数量">' +
+        '<span class="op-label">原因</span><input class="inp wide" id="ar_' + p.code + '" placeholder="盘亏/损耗…">' +
+        '<button class="btn-sm" onclick="doAdjust(\'' + p.code + '\')">确认改数</button>' +
+      '</div><div class="ops">' +
+        '<span class="op-label">入库</span><input class="inp" id="si_' + p.code + '" placeholder="数量" type="number">' +
+        '<span class="op-label">单号</span><input class="inp wide" id="sr_' + p.code + '" placeholder="入库单号/供应商">' +
+        '<button class="btn-sm" onclick="doStockIn(\'' + p.code + '\')">登记入库</button>' +
+      '</div><div class="ops">' +
+        '<span class="op-label">盘点实盘</span><input class="inp" id="st_' + p.code + '" placeholder="实盘数" type="number">' +
+        '<button class="btn-sm" onclick="doTake(\'' + p.code + '\')">按实盘校准</button>' +
+      '</div></div>';
+  }).join('') || '<div class="empty">商品库为空</div>';
+  renderStockLog();
+}
+function doAdjust(code) {
+  tryRun(() => {
+    const d = parseFloat($('ad_' + code).value);
+    if (isNaN(d)) throw new Error('请输入±数量');
+    const e = Admin.adjustStock(code, d, $('ar_' + code).value.trim());
+    renderStock();
+    return '已改数：' + e.name + ' ' + e.before + ' → ' + e.after + ' ' + e.unit;
+  });
+}
+function doStockIn(code) {
+  tryRun(() => {
+    const q = parseInt($('si_' + code).value, 10);
+    if (!(q > 0)) throw new Error('请输入正数数量');
+    const e = Admin.stockIn(code, q, $('sr_' + code).value.trim() || '现场入库');
+    renderStock();
+    return '已入库：' + e.name + ' +' + q + '（' + e.after + ' ' + e.unit + '）';
+  });
+}
+function doTake(code) {
+  tryRun(() => {
+    const c = parseInt($('st_' + code).value, 10);
+    if (isNaN(c) || c < 0) throw new Error('请输入 ≥0 的实盘数');
+    const e = Admin.stockTake(code, c);
+    renderStock();
+    return e.delta === 0 ? '盘点一致（' + e.name + '）' : '盘点校准：' + e.name + ' ' + e.before + ' → ' + e.after + ' ' + e.unit;
+  });
+}
+function renderStockLog() {
+  const lg = Admin.getStockLog();
+  const tag = { stock_in: '<span class="lg-t">入库</span>', adjust: '<span class="lg-a">改数</span>', stock_take: '<span class="lg-k">盘点</span>' };
+  $('stockLog').innerHTML = lg.length ? lg.map(e =>
+    tag[e.type] + ' <b>' + esc(e.name) + '</b> ' + esc(e.unit) + '：' + e.before + ' → ' + e.after +
+    '（' + (e.delta > 0 ? '+' : '') + e.delta + '）· ' + esc(e.reason || '—') + ' · ' + esc(e.by) +
+    ' · ' + new Date(e.ts).toLocaleString('zh-CN', { hour12: false })).join('<br>')
+    : '暂无流水';
+}
+
+/* ---------- 顾客管理 ---------- */
+function renderCust() {
+  const kw = ($('custQ').value || '').trim().toLowerCase();
+  const list = Admin.getCustomers().filter(c => !kw || (c.name + c.phone + c.tag).toLowerCase().includes(kw));
+  $('custList').innerHTML = list.length ? list.map(c =>
+    '<div class="cust"><div class="hd"><div><span class="nm">' + esc(c.name || '（未留名）') + '</span> <span class="ph">' + esc(c.phone) + (c.address ? ' · ' + esc(c.address) : '') + '</span></div>' +
+    '<span class="badge st-done" style="background:#f3f4f6;color:#6b6a63">' + esc(c.tag || '未标记') + '</span></div>' +
+    '<div class="stats">订单 <b>' + c.orderCount + '</b> 单 ｜ 累计消费 <b>' + yuan(c.totalSpent) + '</b> ｜ 最近 ' +
+    new Date(c.lastOrderAt).toLocaleString('zh-CN', { hour12: false }) + '</div>' +
+    '<div class="ops"><select class="tag-opt" id="tag_' + esc(c.phone) + '">' +
+    ['', '熟客', '新客', '普通', '批发'].map(t => '<option value="' + t + '"' + (t === c.tag ? ' selected' : '') + '>' + (t || '— 标签 —') + '</option>').join('') + '</select>' +
+    '<input class="inp wide" id="note_' + esc(c.phone) + '" placeholder="备注…" value="' + esc(c.note) + '">' +
+    '<button class="btn-sm" onclick="saveNote(\'' + esc(c.phone) + '\')">保存档案</button></div></div>').join('')
+    : '<div class="empty">还没有顾客记录（下单后自动沉淀）</div>';
+}
+function saveNote(phone) {
+  tryRun(() => {
+    Admin.setCustomerNote(phone, $('note_' + phone).value.trim(), $('tag_' + phone).value);
+    renderCust();
+    return '顾客档案已保存';
+  });
+}
+
+/* ---------- Tab ---------- */
+function switchTab(t) {
+  [['orders','viewOrders'],['stock','viewStock'],['cust','viewCust']].forEach(([tab, view]) => {
+    $('tab' + tab[0].toUpperCase() + tab.slice(1)).className = 'tab' + (tab === t ? ' on' : '');
+    $('view' + view.slice(4)).style.display = tab === t ? 'block' : 'none';
+  });
+}
+</script>
+</body>
+</html>
