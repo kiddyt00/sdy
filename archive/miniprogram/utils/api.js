@@ -1,5 +1,5 @@
 // 小邻里超市 · 小程序端后端通道（M5）
-// 与 mall-demo/sdy-api.js、barcode-demo/bd-api.js 同构：后端是唯一真源，
+// 与 web/sdy-api.js、barcode-demo/bd-api.js 同构：后端是唯一真源，
 // 探测不到后端就自动降级为「本地演示」，页面照常可点（只是数据不落库）。
 //
 // 后端地址优先级：setBase(显式) > wx.storage[sdy_api_base] > DEFAULT_BASE

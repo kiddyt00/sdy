@@ -5,7 +5,7 @@
  *
  * 用法：
  *   1) 先启动后端：cd server && STATIC_DIR=.. go run ./cmd/server
- *   2) 再跑本测试：node mall-demo/test-integration.js
+ *   2) 再跑本测试：node web/test-integration.js
  *   （可用 SDY_API_BASE 指定地址；未探测到后端时自动跳过，退出码 0）
  * ===================================================================== */
 'use strict';

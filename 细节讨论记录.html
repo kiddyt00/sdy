@@ -254,6 +254,19 @@
   </ul>
 </div>
 
+<div class="callout green">
+  <strong>第 10 轮（2026-10-10）文档按清理后的现实整篇重写 + 文档角色分工</strong>
+  <p>用户指令（逐字）：「清理之后把文档也重新写一下」。</p>
+  <ul>
+    <li><strong>先立规矩再改字</strong>：确立「一事实一 owner」的文档分工（见 D15）——指令面只有 <code>.agent_rules.md</code>；地图＝根 <code>README.md</code> + <code>开发计划.html</code> + 各模块 README；<b>状态只在根 README</b>；历史留在本文档与架构方案。</li>
+    <li><strong>整篇重写（不再打补丁）</strong>：根 <code>README.md</code>（定位 / 形态 / 状态表 / 目录 / 快速开始 / 测试矩阵 / 架构约定 / 部署 / 协作文约）、<code>web/README.md</code>（页面 + 设计系统 + 前后端契约）、<code>server/README.md</code>（接口 / 环境变量 / 部署）、<code>barcode-demo/README.md</code>（条码双库链路）、<code>sync-demo/README.md</code>（牵牛花月度 CSV 对账）全部改为「当前状态在前、历史归本文档」。</li>
+    <li><strong><code>开发计划.html</code> 重构</strong>：由「按轮次追加」改为稳态结构——目标与边界 → 里程碑总览 → 已完成 M0–M4 → <b>当前重心 M5′ Web 端</b>（待做任务池 + 页面验收标准）→ 暂缓 M5 小程序化 → M6 上线验证 → 依赖用户推进的事项 → 风险与红线 → 进度跟踪。</li>
+    <li><strong>架构方案加「现状校正」</strong>：保留立项时的判断，另加文首现状校正与第 0 章「实施现状与本次更新」；技术选型表改写为「实际采用」（原生 HTML/JS、Go 标准库 + SQLite、蓝绿部署），并说明与原建议的三处差异及原因。</li>
+    <li><strong>修掉 sed 事故</strong>：上一轮全局替换 <code>mall-demo/</code> → <code>web/</code> 时，把「描述替换自身」的句子改成了「<code>web/</code> 整体改名为 <code>web/</code>」「<code>index.html</code> 改名 <code>index.html</code>」这类无意义文字（<code>开发计划</code> 中 3 处，另污染了本地生成的 <code>.md</code>）。本轮逐条核对上下文重写，并把教训落成规则 14。</li>
+    <li><strong>顺带清扫陈旧引用</strong>：<code>server/cmd/server/main.go</code>、<code>server/internal/pricing/pricing.go</code>、<code>web/test-integration.js</code>、<code>archive/miniprogram/utils/api.js</code> 里残留的 <code>mall-demo</code> 注释改为 <code>web/</code>；<code>barcode-demo/index.html</code> 补 <code>theme-color</code> 与内联 SVG favicon。</li>
+  </ul>
+</div>
+
 <h2>三、已定决策汇总</h2>
 <table>
   <tr><th>决策</th><th>来源</th><th>对主方案的影响</th></tr>
@@ -266,6 +279,7 @@
   <tr><td><b>前端接入后端（D12）</b>：页面与 Go 后端之间只留一条通道 <code>web/sdy-api.js</code>（SdyApi）；<b>后端是唯一真源</b>，页面 localStorage 只作镜像与离线降级；<b>运费 / 价格防线 / 库存扣减 / 订单状态机全部只在服务端执行</b>，页面不再自己算；探测不到后端时自动退回纯本地演示（同一套页面代码，无需切换）；服务端 409/400 的原文直接弹给顾客（如「库存不足：「可口可乐」仅剩 1 罐」）</td><td>第 6 轮（M4 收尾：前端接后端）</td><td>顾客端与管理端共用同一通道；离线演示能力保留（方便无后端时给店里演示）；规则一致性由 <code>server/internal/pricing|store</code> 单测与联调测试共同保证</td></tr>
   <tr><td><b>扫码台也接后端（D13）</b>：条码 demo 与 Go 后端之间只留一条通道 <code>barcode-demo/bd-api.js</code>（BdApi）；<b>解析链（档案 → 字典 → 云端）、查无 TTL、熔断、建档全部在服务端执行</b>，页面只做展示与降级；<b>APPCODE 从前端（localStorage/设置页）彻底移除，只存在于服务端环境变量 <code>BARCODE_APPCODE</code></b>；新增只读接口 <code>GET /api/barcode/lib</code> 把字典层开放给扫码台（解决「本地条码库里看不到数据」）；服务端查无时返回 <code>expiresAt</code>，页面据此显示剩余天数；在线时<b>禁用演示用「删除商品」</b>（删档会破坏与牵牛花对账口径），提示到商品库改数/下架；后端不在时自动退回纯本地演示（Mock 云端），配额/熔断统一由服务端负责（<code>/healthz</code> 暴露 <code>cloudFails</code>/<code>circuitOpen</code>）</td><td>第 7 轮（M4 收尾第二步：扫码台接后端，APPCODE 收进服务端）</td><td>生产环境前端不再持有任何密钥；<code>proxy.py</code> 与 appcode.txt 仅保留为「无后端时的本地调试手段」；通道测试 55 项 + 页面冒烟 28 项 + 真后端联调 34 项，Go 单测 21 个</td></tr>
   <tr><td><b>Web 端优先 + 页面现代化（D14）</b>：按用户 2026-10-10 指令，<b>先把商城做成 Web 端、先实现功能，小程序化暂缓</b>（骨架归档 <code>archive/miniprogram/</code> 可续）；顾客端与管理端共用设计系统 <code>web/assets/theme.css</code>；<b>新增/改页面必须在真实浏览器里验收</b>——classic script 共享全局词法环境，顶层 <code>const/let</code> 重名会让整个脚本静默失效（<code>mall-admin.js</code> 与 <code>mall.js</code> 抢 <code>Mall</code> → 浏览器里 <code>Admin</code> 永久 undefined）；UI 验收以 CDP 数值证据为准（布局盒模型/真实列数/横向溢出/加载期异常）</td><td>第 9 轮（用户三条指令：清理仓库 / 页面现代化 / 商城先做 Web 端）</td><td>目录 <code>mall-demo/</code> → <code>web/</code>、<code>mall.html</code> → <code>index.html</code>；Rule 13 写入 <code>.agent_rules.md</code>（浏览器验收 + 禁止重名声明）；fake-DOM 测试之外必须补真实浏览器一层</td></tr>
+  <tr><td><b>文档角色分工（D15）：一事实一 owner</b>——① <b>指令面</b>：只有 <code>.agent_rules.md</code> 对 agent 有约束力；② <b>地图</b>：根 <code>README.md</code>（总览 / 快速上手）+ <code>开发计划.html</code>（路线图与当前重心）+ 模块 README（<code>web/</code>、<code>server/</code>、<code>barcode-demo/</code>、<code>sync-demo/</code> 各管一域）；③ <b>状态</b>：里程碑与阻塞只在根 README 维护，其它文档只引用不复述；④ <b>历史</b>：<code>细节讨论记录.html</code>（决策台账，只追加校正）+ <code>独立小程序商城可行性分析与架构方案.html</code>（立项论证，变更以「现状校正（日期）」追加）</td><td>第 10 轮（用户指令：清理之后把文档也重新写一下）</td><td>文档从「按轮次堆补丁」转为「一个事实一个 owner」；规则 14（禁全局 sed、方向变化整篇重写）与规则 15（文档分工）写入 <code>.agent_rules.md</code>；三份 HTML 仍走 pull → 改 → convert → push → 设权限 流水线</td></tr>
   <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
 </table>
 

@@ -1,4 +1,4 @@
-// Package pricing 价格与配送规则（M2 规则的 Go 实现，与 mall-demo/pricing.js 语义一致）。
+// Package pricing 价格与配送规则（M2 规则的 Go 实现，与 web/pricing.js 语义一致）。
 package pricing
 
 import (

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>独立小程序商城 · 开发计划 v1</title>
+<title>家庭超市自营商城 · 开发计划 v2</title>
 <style>
   body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;max-width:960px;margin:24px auto;padding:0 16px;color:#1f2937;line-height:1.65;font-size:14px}
   h1{font-size:22px;border-bottom:3px solid #2563eb;padding-bottom:8px}
@@ -30,192 +30,168 @@
 </head>
 <body>
 
-<h1>独立小程序商城 · 开发计划 v1</h1>
+<h1>家庭超市自营商城 · 开发计划 v2</h1>
 <div class="badges">
-  <span class="bg-blue">版本 v1</span><span class="bg-green">2026-10-10</span>
-  <span class="bg-purple">依据：架构方案 + 细节讨论记录（D1–D14）</span>
+  <span class="bg-blue">版本 v2（2026-10-10 重写）</span><span class="bg-green">M0–M4 已完成</span>
+  <span class="bg-orange">当前重心：M5′ Web 端商城</span>
+  <span class="bg-purple">依据：架构方案 + 细节讨论记录（D1–D15）</span>
 </div>
 
 <div class="callout blue">
-<b>一句话路线：页面展示优先 → 规则与数据层 → 牵牛花同步 → 后端服务 → <u>Web 端商城现代化（当前重心）</u> → 小程序化（暂缓） → 上线验证。</b>
-先让「看得见」的页面把全流程跑通（web demo 先行），再逐层填充真实逻辑与后端，降低返工、随时可演示给合伙人看。<br>
-<b>2026-10-10 路线调整（用户决定）</b>：小程序先缓缓，<b>先把商城做成 Web 端、先把功能实现</b>——M5 小程序化由「下一里程碑」下调为「暂缓（骨架已归档可续）」，当前重心＝Web 端商城的功能与体验。
+<b>一句话路线：</b>页面展示优先 → 规则与数据层 → 牵牛花对账 → 后端服务 → <u>Web 端商城现代化与功能实现（当前）</u> → 小程序化（暂缓） → 上线验证。
+先让「看得见」的页面把全流程跑通，再逐层填真实逻辑与后端，降低返工、随时可演示给合伙人看。<br>
+<b>2026-10-10 路线调整（用户决定）：</b>小程序先缓缓，<b>先把商城做成 Web 端、先把功能实现</b>。M5 小程序化由「下一里程碑」下调为「<b>暂缓</b>（骨架已归档、可随时续）」，当前重心＝Web 端商城的功能与体验。
 </div>
 
 <h2>一、目标与边界</h2>
 <table>
 <tr><th style="width:130px">维度</th><th>内容</th></tr>
-<tr><td>总目标</td><td>自营微信小程序商城，完全独立于牵牛花中台：商品、价格、库存、订单、配送、顾客全部自管理；与牵牛花仅保留<b>月度 CSV 库存同步</b></td></tr>
+<tr><td>总目标</td><td>自营商城，完全独立于牵牛花中台：商品、价格、库存、订单、配送、顾客全部自管理；与牵牛花仅保留<b>月度 CSV 库存对账</b></td></tr>
 <tr><td>MVP 范围</td><td>常温商品 + 酒水饮料；生鲜后置（P1+）；固定客群私域沉淀；自提免配送费 + 4 人配送</td></tr>
-<tr><td>红线</td><td>敏感信息绝不上库；扫码只读不改库存（D8）；建档必须人工确认；价格/库存永不自动填云端值；云端调用仅双库未命中（D6）；先不买枪、手机摄像头验证（D7）</td></tr>
-<tr><td>技术形态</td><td>web demo（纯 HTML/JS + localStorage，无构建）先行；<b>后端 Go（1.24，标准库 net/http + SQLite）</b>；最终小程序端复用 demo 页面设计</td></tr>
+<tr><td>形态与技术栈</td><td>前端：纯 HTML/JS + 一个共享设计系统（<code>web/assets/theme.css</code>），<b>无构建步骤、无 npm 依赖</b>；后端：<b>Go 1.24 + 标准库 net/http + SQLite</b>（<code>modernc.org/sqlite</code> 纯 Go，<code>CGO_ENABLED=0</code> 静态单文件）；小程序端（暂缓）复用同一套视觉令牌</td></tr>
+<tr><td>红线</td><td>敏感信息绝不上库；扫码只读不改库存（D8）；建档必须人工确认；价格/库存永不自动填云端值；云端调用仅双库未命中（D6）；先不买扫码枪、手机摄像头验证（D7）</td></tr>
 </table>
 
 <h2>二、里程碑总览</h2>
 <table>
-<tr><th>里程碑</th><th>目标</th><th>主要产出</th><th>依赖</th><th>估时</th></tr>
-<tr><td><b>M0 基建</b></td><td>仓库、文档、同步链路、安全基线</td><td>README、本计划、腾讯文档同步、敏感信息管理</td><td>—</td><td class="ok">✔ 已完成</td></tr>
-<tr><td><b>M1 页面展示层</b></td><td>全流程页面可见、可走通（web demo）</td><td>顾客端商城 demo、管理端扩展、扫码建档链路</td><td>M0</td><td class="doing">● 当前</td></tr>
-<tr><td><b>M2 规则与数据层</b></td><td>订单状态机、价格规则、库存联动、双库逻辑服务化</td><td>核心逻辑模块 + 自动化测试</td><td>M1</td><td>1–2 轮</td></tr>
-<tr><td><b>M3 牵牛花同步</b></td><td>月度库存双向 CSV 同步</td><td>同步工具、对账规则、导出字段确认</td><td>牵牛花导出能力验证（行动项）</td><td>1–2 轮</td></tr>
-<tr><td><b>M4 后端服务</b></td><td>数据模型 + API + 条码代理</td><td><b>Go 后端</b>（标准库 + SQLite）、接口清单、配额/熔断</td><td>M2</td><td>2–3 轮</td></tr>
-<tr><td><b>M5 小程序化</b> <span class="paused">⏸ 暂缓</span></td><td>顾客端 + 管理端小程序</td><td>小程序代码（<b>骨架已归档</b> archive/miniprogram/）、商户号/支付、配送 API 接入</td><td>用户申请账号/商户号（1–2 周）</td><td>3–4 轮</td></tr>
-<tr><td><b>M6 上线验证</b></td><td>试运营、生鲜/储值/发票 P1+</td><td>灰度上线、规则调优</td><td>M5</td><td>按运营反馈</td></tr>
+<tr><th>里程碑</th><th>目标</th><th>主要产出</th><th>状态 / 依赖</th></tr>
+<tr><td><b>M0 基建</b></td><td>仓库、文档、双端同步、安全基线</td><td>README、开发计划、细节讨论记录、腾讯文档同步链路、敏感信息管理</td><td class="ok">✔ 完成</td></tr>
+<tr><td><b>M1 页面展示层</b></td><td>全流程页面可见可走通</td><td>顾客端商城、管理端、扫码建档体验</td><td class="ok">✔ 完成</td></tr>
+<tr><td><b>M2 规则与数据层</b></td><td>订单状态机、价格规则、库存联动、双库逻辑服务化</td><td>核心逻辑模块 + 自动化测试</td><td class="ok">✔ 完成</td></tr>
+<tr><td><b>M3 牵牛花对账</b></td><td>月度 CSV 对账</td><td>对账引擎、对账工作台、导出字段确认清单</td><td class="ok">✔ 工具就绪（待真实导出文件核对列名）</td></tr>
+<tr><td><b>M4 后端服务</b></td><td>数据模型 + API + 条码代理 + 部署件</td><td>Go 后端、六表、规则服务端化、Docker 蓝绿部署件</td><td class="ok">✔ 完成，本地联调通过</td></tr>
+<tr><td><b>M5′ Web 端商城</b></td><td>现代化界面 + 功能补齐（顾客端 / 管理端）</td><td>设计系统 + 两页重做 + 后续功能任务池</td><td class="doing">● 当前重心</td></tr>
+<tr><td><b>M5 小程序化</b></td><td>顾客端 + 管理端小程序</td><td>小程序骨架（<b>已归档</b> <code>archive/miniprogram/</code>）、商户号/支付、配送 API</td><td class="paused">⏸ 暂缓（待小程序账号 + 商户号）</td></tr>
+<tr><td><b>M6 上线验证</b></td><td>灰度试运营、规则调优</td><td>生产部署、蓝绿上线、生鲜/储值/发票等 P1+</td><td class="todo">⬜ 未开始（待已备案域名）</td></tr>
 </table>
 
-<h2>三、M0 基建（已完成 ✔）</h2>
+<h2>三、已完成里程碑（M0–M4）</h2>
+<h3>M0 基建 ✔</h3>
 <ul>
-<li>仓库：<code>github.com/kiddyt00/sdy</code>，main 分支，首提交 15 文件</li>
-<li>敏感信息管理：<code>.gitignore</code> 五类拦截 + 每次推送前三层扫描（工作区/暂存区/远端树）</li>
-<li>文档链路：方案 + 细节讨论记录（含 D1–D13）双文档，pull→合并→转换→推送→设权限 全自动化</li>
-<li>条码双库 demo（barcode-demo）：三级链路 resolve、真实阿里云 API 接入、配额/熔断/去重锁、7 组核心测试通过</li>
+<li>仓库：<code>github.com/kiddyt00/sdy</code>（main，<b>public</b>）；敏感信息本地化 + 推送前三层扫描（工作区/暂存区/已提交历史）。</li>
+<li>文档链路：架构方案 + 开发计划 + 细节讨论记录三份，pull → 合并 → 转换 → 推送 → 设权限全自动。</li>
+<li>两地开发约定：开工 <code>git pull --rebase</code>，收工 commit + push。</li>
 </ul>
 
-<h2>四、M1 页面展示层（当前执行）</h2>
-
-<h3>M1.1 顾客端商城 demo（✔ 已完成 2026-10-10）</h3>
-<p><b>目的：</b>把顾客「看得到」的购物全流程先立起来：逛 → 详情 → 加购 → 结算 → 订单。</p>
-<div class="callout green">M1.1 已完成：<code>web/</code>（index.html + mall.js + 40 项核心逻辑测试全通过）——首页/详情/购物车/结算/我的订单全流程可走通；下单扣库存、取消回补、状态机、售罄拦截均已测试覆盖。</div>
+<h3>M1 页面展示层 ✔</h3>
 <table>
-<tr><th>任务</th><th>内容</th><th>验收</th></tr>
-<tr><td>1.1-a 首页</td><td>店名/搜索框/分类筛选/商品卡片网格（名称/规格/售价/库存）+ 扫码入口</td><td>分类可切、搜索/扫码可命中本地商品</td></tr>
-<tr><td>1.1-b 商品详情</td><td>点击卡片弹详情：品牌/规格/售价/库存/条码 + 数量选择 + 加购</td><td>库存为 0 禁购；同条码防重</td></tr>
-<tr><td>1.1-c 购物车</td><td>抽屉式：数量增减、小计、合计、清空</td><td>合计正确（node 测试覆盖）</td></tr>
-<tr><td>1.1-d 结算</td><td>自提（免配送费）/ 配送（满 30 免、否则 3 元，占位规则）二选一；配送需姓名/电话/地址</td><td>配送费规则正确（node 测试覆盖）</td></tr>
-<tr><td>1.1-e 下单</td><td>校验库存 → 扣减 → 生成订单（待备货）</td><td>库存联动正确；取消回补（node 测试覆盖）</td></tr>
-<tr><td>1.1-f 我的订单</td><td>状态筛选 + 状态流转：待备货→配送中/待自提→已完成；取消</td><td>状态机边界完整（node 测试覆盖）</td></tr>
+<tr><th>子项</th><th>产出</th><th>关键行为</th></tr>
+<tr><td>M1.1 顾客端</td><td><code>web/index.html</code> + <code>web/mall.js</code></td><td>逛 → 详情 → 加购 → 结算 → 我的订单全流程；下单扣库存、取消回补、状态机、售罄拦截</td></tr>
+<tr><td>M1.2 管理端</td><td><code>web/admin.html</code> + <code>web/mall-admin.js</code></td><td>订单管理与 4 人配送员分配/改派、库存三操作（入库/改数/盘点，D8 手动 + 自动流水）、顾客档案</td></tr>
+<tr><td>M1.3 扫码体验</td><td><code>barcode-demo/</code></td><td>摄像头扫码（getUserMedia + BarcodeDetector）+ 扫码枪 HID 回车，走同一双库解析链；双库命中徽标 + 建档入口</td></tr>
 </table>
-<p><b>产出：</b><code>web/</code>（index.html + mall.js + 测试）。<b>数据约定：</b>与 barcode-demo 共用 <code>bd_products</code>（商品库档案），扫码建档后商城立即可售。</p>
 
-<h3>M1.2 管理端 demo 扩展（✔ 已完成 2026-10-10）</h3>
-<div class="callout green">M1.2 已完成：<code>web/admin.html</code> + <code>mall-admin.js</code>——订单管理（状态操作 + 4 人配送员分配/改派）、库存管理（改数/入库单/盘点，D8 手动 + 自动流水）、顾客管理（手机号聚合 + 标签/备注档案）；32 项管理端测试通过。库存页形态仍待 D1/D2/D4 确认后细化。</div>
-<ul>
-<li><b>库存管理页</b>：入库单（手动录数量，D8）、盘点差异调整、直接改数；整车到货按箱调整</li>
-<li><b>订单管理页</b>：订单列表、状态操作（备货/发配送/标记自提）、4 人配送任务分配雏形</li>
-<li><b>顾客管理页</b>：私域顾客名单、消费次数/金额统计雏形</li>
-</ul>
-
-<h3>M1.3 扫码体验完善（✔ 已完成 2026-10-10，浏览器版）</h3>
-<div class="callout green">M1.3 已完成（浏览器版）：<code>barcode-demo</code> 扫码台新增「📷 摄像头扫一扫」（getUserMedia + BarcodeDetector，自动识别后走同一双库解析链）与扫码枪 HID 键盘模式（聚焦即扫、回车即查）；双库命中徽标 + 建档入口沿用。手机摄像头回调（wx.scanCode）留到 M5 小程序化实现。</div>
-<ul>
-<li>手机摄像头扫码（wx.scanCode 回调 → resolve）；扫码枪 HID 回车（零驱动）</li>
-<li>双库命中徽标（本地商品/本地字典/云端/查无）与建档入口（D6）</li>
-</ul>
-
-<div class="callout green">M1 页面展示层 整体验收 ✔：顾客端（index.html）、管理端（admin.html）、扫码体验（barcode-demo 摄像头/扫码枪）全流程可本地跑通；核心逻辑均有 node 自动化测试（40+32+双库 7 组）；任一页面可直接演示给合伙人。M2 规则与数据层随后完成（见下）。</div>
-
-<h2>五、M2 规则与数据层（✔ 已完成 2026-10-10）</h2>
-<div class="callout green">M2 已完成：<code>web/pricing.js</code> 价格规则服务（配送费可配：自提 0 / 满 30 免否则 3 元；比价防线：零售 ≤ 牵牛花参考价 −5%，批发不计）+ 28 项测试；订单状态机（mall.js 状态机 + 40 项购物车/下单/取消测试）与库存联动（下单扣减/取消回补/盘点修正）为 M1 已有逻辑，本轮一并归入 M2 验收；双库 resolve 三级链路（product→lib→云端：去重锁/串行队列/配额/熔断）已在 barcode-demo/app.js 服务化并有 7 组测试。管理端新增「💰 价格规则」页：录入牵牛花参考价 → 自动标红超价商品。</div>
+<h3>M2 规则与数据层 ✔</h3>
 <table>
 <tr><th>模块</th><th>内容</th><th>关键规则</th></tr>
-<tr><td>订单状态机</td><td>待备货 → 配送中 / 待自提 → 已完成；取消；边界：已备货不可直接删单</td><td>状态只允许合法迁移，非法操作拦截并提示</td></tr>
-<tr><td>价格规则</td><td>自提免配送费；配送满 30 免 / 否则 3 元（占位，可配）；批发价不计入会员比价</td><td>零售定价 ≤ 牵牛花 -5%（防平台比价处罚）</td></tr>
-<tr><td>库存联动</td><td>下单扣减、取消回补、盘点修正、期初建档</td><td>扫码只读不改库存（D8）；库存以人工为准</td></tr>
-<tr><td>双库服务化</td><td>resolve 三级链路从 demo 提为可复用模块（同码去重锁、串行队列、配额、熔断）</td><td>云端仅双库未命中调用（D6）</td></tr>
+<tr><td>订单状态机</td><td>待备货 → 配送中 / 待自提 → 已完成；可取消</td><td>只允许合法迁移，非法操作拦截（后端 409，前端原样提示）</td></tr>
+<tr><td>价格规则</td><td><code>web/pricing.js</code>：配送费自提 0 / 满 30 免否则 3 元；比价防线</td><td>零售价 ≤ 牵牛花参考价 ×0.95（<code>round2(ref*0.95)</code>）；批发/白名单豁免</td></tr>
+<tr><td>库存联动</td><td>下单扣减、取消回补、盘点修正、期初建档</td><td>扫码只读不改库存（D8）；库存以人工调整为准</td></tr>
+<tr><td>双库 resolve</td><td>product 档案 → barcode_lib 字典 → 云端；同码去重锁、串行队列、配额、熔断</td><td>云端仅双库未命中时调用（D6）</td></tr>
 </table>
 
-<h2>六、M3 牵牛花同步 <span class="ok">✔ 工具就绪</span></h2>
+<h3>M3 牵牛花对账 ✔ 工具就绪</h3>
 <ul>
-<li><b>行动项 0（依赖用户）</b>：向牵牛花确认导出/导入的字段能力（条码、名称、库存、价格能否导出 CSV）——已备好可打印清单页 <code>sync-demo/牵牛花导出确认清单.html</code></li>
-<li>月度双向 CSV：牵牛花库存 → 本地盘点基准；本地实盘 → 回填牵牛花；对账差异清单人工确认</li>
-<li>冲突处理：以本地实盘为准的字段（库存），以牵牛花为准的字段（已生成单据）分开对待</li>
+<li>对账引擎 <code>sync-demo/sync-csv.js</code>：CSV 解析（BOM/CRLF/引号转义/逗号与 Tab 自动识别）、中英文字段别名映射、产出库存差/价差/双差 + 云端独有 + 本地独有 + 无效行，导出「库存回填（以本地实盘为准）」与「新增建档」两份 CSV。</li>
+<li>对账工作台 <code>sync-demo/sync.html</code>：载入 CSV → 差异表逐条勾选确认 → 导出，纯前端不上传；差异<b>默认未确认</b>，必须人工勾选才进导出。</li>
+<li>行动项 0：向牵牛花确认导出/导入字段能力，清单页 <code>sync-demo/牵牛花导出确认清单.html</code> 可直接打印带去谈。</li>
+<li><b>唯一待办</b>：拿到真实导出文件后核对列名（不在映射表内只需改 <code>DEFAULT_FIELD_MAP</code>）。</li>
 </ul>
-<div class="callout green"><b>已交付（本轮）：</b>对账引擎 <code>sync-demo/sync-csv.js</code>（CSV 解析：BOM/CRLF/引号转义/自动识别逗号与 Tab；字段映射可配中英文别名；对账产出库存差/价差/双差 + 云端独有 + 本地独有 + 无效行统计；导出「库存回填（以本地实盘为准）」与「新增建档」两份 CSV）+ <b>62 项测试</b>；对账工作台页面 <code>sync-demo/sync.html</code>（载入 CSV → 差异表勾选确认 → 导出，纯前端不上传）；行动项 0 确认清单页。<br>差异默认<b>未确认</b>，必须人工勾选才进导出——防止误回填。本地商品侧复用同源 <code>bd_products</code>（与商城/扫码 demo 同库）。<br><b>唯一待办</b>：拿到牵牛花真实导出文件后核对列名（若不在映射表内，改 <code>DEFAULT_FIELD_MAP</code> 即可）。</div>
 
-<h2>七、M4 后端服务 <span class="ok">✔ 已完成（本地联调通过）</span></h2>
+<h3>M4 后端服务 ✔ 本地联调通过</h3>
 <table>
 <tr><th>项</th><th>内容</th></tr>
-<tr><td>数据模型</td><td>product / barcode_lib / order / order_item / customer / sync_batch</td></tr>
-<tr><td>API 清单</td><td>商品（CRUD/上下架）、库存（入库/盘点/调整）、订单（创建/流转/查询）、顾客、条码 resolve</td></tr>
-<tr><td>条码代理</td><td>APPCODE 只存服务端；配额按 HTTP 200 计（查无也计）、非 200 不计；熔断当日</td></tr>
-<tr><td>形态</td><td><b>Go 1.24 + SQLite（<code>modernc.org/sqlite</code>，纯 Go 无需 CGO）</b>，HTTP 用标准库 <code>net/http</code>（不引重框架）；<code>CGO_ENABLED=0</code> 静态编译成单文件，镜像小、内存占用低（与同机其他服务共存友好）。<br><span style="color:#6b7a6f">2026-10 用户决定：后端语言由 Python 改为 Golang——与生产服务器上同机的 yiguan 项目（Go）同栈，Docker 蓝绿部署范式可直接复用；静态单文件部署无需运行时依赖；并发处理条码代理/订单请求更省心。</span></td></tr>
-<tr><td>部署</td><td><b>生产服务器</b>（IP 见本地 <code>.server_cred.md</code>，公开文档不披露）（Ubuntu / 4 核 / 3.7G 内存 / 40G 盘 / Docker 29 + Compose v5），参照同机 <code>yiguan</code> 项目范式：<br>
-• Docker Compose 部署，镜像拉取走国内代理 <code>docker.1ms.run/library</code>；<br>
-• <b>蓝绿 A/B 双实例</b>（frontend-a / frontend-b）滚动更新，主机级 Nginx upstream 池做反代与失败重试；<br>
-• 主机 Nginx 继续监听 80/443（现有服务在用），本项目只新增一个域名 conf，证书用现成 acme.sh；<br>
-• <b>端口约定</b>：前端 8091 / 8092（蓝绿），后端 8093，均绑 <code>127.0.0.1</code>；<b>已占用端口一律避开</b>：22 / 53 / 80 / 443 / 8081 / 8082（yiguan 前端）；<br>
-• 服务器上还有其他在跑的服务，改动前先 <code>ss -tlnp</code> + <code>docker ps</code> 复核，不动他人配置。</td></tr>
-<tr><td>依赖</td><td>生产域名（小程序要求 <b>HTTPS + 已备案域名</b>）——加入依赖用户事项表</td></tr>
+<tr><td>数据模型</td><td>六表：<code>product</code> / <code>barcode_lib</code> / <code>customer</code> / <code>orders</code> / <code>order_item</code> / <code>sync_batch</code></td></tr>
+<tr><td>API</td><td><code>/healthz</code>、<code>/api/products</code>、<code>/api/products/stock</code>（手动改库存）、<code>/api/orders</code>、<code>/api/orders/{id}</code>、<code>/api/orders/{id}/advance</code>、<code>/api/barcode/resolve</code>、<code>/api/barcode/lib</code>、<code>/api/pricing/check</code>；静态目录可托管页面</td></tr>
+<tr><td>事务与规则服务端化</td><td>事务下单（统一校验库存 → 扣减 → 落单，不足则整单回滚）、取消回补、状态机非法流转 409；配送费与比价防线只在服务端执行</td></tr>
+<tr><td>条码代理</td><td>APPCODE 只从环境变量读、绝不下发前端；配额按 HTTP 200 计（查无也计）、非 200 不计；连续失败熔断当日；查到永久回填字典、查无标记 90 天</td></tr>
+<tr><td>前端接入（D12/D13）</td><td>商城页面走 <code>web/sdy-api.js</code>、扫码台走 <code>barcode-demo/bd-api.js</code>；后端在线为唯一真源，离线自动降级为本地演示，同一套页面代码</td></tr>
+<tr><td>部署件</td><td><code>server/Dockerfile</code>（alpine 两段式、非 root、健康检查）、<code>docker-compose.yml</code>（<b>api-a 8093 / api-b 8094 蓝绿</b>，仅绑 <code>127.0.0.1</code>）、<code>deploy/</code>（deploy.sh 走国内代理拉镜像、rolling-update.sh 逐台重启不停服、主机 Nginx 模板）</td></tr>
+<tr><td>生产服务器范式</td><td>Ubuntu / 4 核 / 3.7G 内存 / 40G 盘 / Docker 29 + Compose v5，参照同机 <code>yiguan</code> 项目：Compose + 蓝绿 A/B + 主机 Nginx(80/443) 反代；镜像走 <code>docker.1ms.run/library</code>；<b>端口避开</b> 22/53/80/443/8081/8082（同机有其他服务）；改动前先 <code>ss -tlnp</code> + <code>docker ps</code> 复核。凭证只存本地 <code>.server_cred.md</code></td></tr>
 </table>
-<div class="callout green"><b>已交付（本轮，Go 后端）：</b><code>server/</code> 模块（Go 1.24 + <code>modernc.org/sqlite</code> 纯 Go 驱动，<code>CGO_ENABLED=0</code> 静态单文件）——<br>
-• <b>数据层</b>：六表 product / barcode_lib / customer / orders / order_item / sync_batch；事务下单（统一校验库存 → 扣减 → 落单，库存不足整单回滚）、取消回补、订单状态机（非法流转返回 409）；<br>
-• <b>规则服务端化</b>：配送费（自提 0 / 满 30 免否则 3 元）与比价防线（零售 ≤ 参考价 ×0.95，批发跳过、无参考价跳过）；<br>
-• <b>条码解析链服务端化</b>：商品档案 → 本地字典 → 云端（查到永久回填、查无标记 90 天、连续失败 5 次熔断当日），<code>APPCODE</code> <b>只从环境变量读</b>，绝不下发到前端；<br>
-• <b>HTTP API</b>：<code>/healthz</code>、商品列表/建档/手动改库存（D8）、订单下单/列表/详情/状态流转、<code>/api/barcode/resolve</code>、<code>/api/pricing/check</code>；静态目录可托管演示页；<br>
-• <b>验证</b>：<b>20 个 Go 单测全绿</b>（解析链三级命中/回填/TTL/熔断、价格规则边界、状态机全部合法与非法路径、事务扣库存与回滚）＋ <code>server/smoke.sh</code> 端到端冒烟通过（下单 120→118、取消回补 120、非法流转 409）；<br>
-• <b>部署件</b>：<code>server/Dockerfile</code>（alpine 两段式、非 root、内置健康检查）＋ <code>docker-compose.yml</code>（<b>api-a 8093 / api-b 8094 蓝绿</b>，仅绑 <code>127.0.0.1</code>）＋ <code>deploy/</code>（deploy.sh 走国内代理拉镜像、rolling-update.sh 逐台重启不停服、主机 Nginx 模板）。</div>
-<div class="callout green"><b>已交付（M4 收尾，前端接后端）：</b>新增数据通道 <code>web/sdy-api.js</code>（D12），顾客端与管理端全部改走 HTTP API，<b>后端是唯一真源</b>——<br>
-• 启动探测一次 <code>/healthz</code>：在线 → 顶部显示 <b>🟢 后端已连接</b> 并拉取商品/订单镜像；离线 → <b>🟡 本地演示（离线可用）</b>，同一套页面代码自动降级，方便无后端时演示；<br>
-• 下单、改库存、改参考价、状态流转、条码解析、比价巡检全部走后端；<b>运费/价格防线/库存/状态机只在服务端执行</b>，页面的本地计算只剩展示用；<br>
-• 后端拒绝（409/400）时把服务端原话弹给用户（如「库存不足：「可口可乐」仅剩 1 罐」），购物车保留、不产生幽灵订单；<br>
-• <b>验证</b>：数据通道 <b>35 项</b>（假 fetch 两条路径）、<b>真 fetch 联调 17 项</b>（真起 Go 服务：下单扣库存 120→117、配送 2.5+3=5.5、非法流转被拒、取消回补）、<b>页面启动冒烟 21 项</b>（假 DOM 真跑两个页面的内联脚本，离线/在线各一遍）；<br>
-• 顺带修掉两个真 bug：<code>index.html</code> 订单列表「全部」筛选默认值写错（'全部' ≠ 空串）导致订单页恒显示「暂无订单」；<code>admin.html</code> <b>原本没有任何启动渲染</b>，打开是空白页。<br>
-<b>剩余</b>：上线到生产服务器（属 M6，<b>待用户提供已备案域名</b>）。</div>
-<div class="callout green"><b>已交付（M4 收尾 · 第二步，扫码台接后端）：</b>新增扫码台数据通道 <code>barcode-demo/bd-api.js</code>（D13），<b>APPCODE 从前端彻底收进服务端</b>——<br>
-• 后端在线：解析链（档案 → 字典 → 云端）、查无 TTL、熔断、建档全部由 Go 服务执行，页面只做展示；商品库与条码库表格改为服务端镜像（新增只读接口 <code>GET /api/barcode/lib</code>，解决「本地条码库里看不到数据」）；<br>
-• 后端离线：胶囊变 <b>🟡 本地演示（后端未连接）</b>，扫码台照常可用（Mock 云端），同一套页面代码；<br>
-• 在线时禁用演示用「删除商品」（删档会破坏与牵牛花对账口径），并提示到商品库改数/下架；查无标记由全店共享（服务端返回 <code>expiresAt</code>，页面显示剩余天数）；<br>
-• <b>验证</b>：通道 <b>55 项</b>（离线降级/在线探测/七种解析映射/建档查重/镜像/base 优先级）、<b>页面启动冒烟 28 项</b>（假 DOM 真跑 bd-api.js + app.js，离线/在线各一遍）、<b>真后端联调 34 项</b>（建档 <code>6999888777666</code> → 立刻档案层命中 + 字典层沉淀 + 重复建档被拦）；<br>
-• 服务端配套：<code>barcode_lib</code> 新增列表查询（<code>store.ListLib</code>）与 <code>Result.expiresAt</code>，Go 单测 <b>21 个</b>全绿。</div>
 
-<h2>七之二、Web 端商城现代化改造 <span class="ok">✔ 已完成（第 9 轮）</span></h2>
-<div class="callout green"><b>已交付（本轮 · 仓库清理）：</b><code>web/</code> 整体改名为 <code>web/</code>，顾客端首屏 <code>index.html</code> 改名 <code>index.html</code>（后端静态托管时 <code>http://127.0.0.1:8093/</code> 直接就是商城）；小程序骨架（M5 半成品）归档到 <code>archive/miniprogram/</code>（代码与 62 + 47 项测试原样保留，可随时续做）；清掉本地无用产物（<code>__pycache__</code>、过期 docx、过期 <code>.tencent_docs_last_push.txt</code>）。</div>
-<div class="callout green"><b>已交付（本轮 · 现代化 UI）：</b>新增共用设计系统 <code>web/assets/theme.css</code>（约 430 行）——绿色品牌令牌 + 三级文字色 + 六组状态色 + 圆角卡片 + 三级阴影 + 组件类（按钮/表单/徽标/抽屉/弹窗/Toast/表格/KPI/chips）+ 三档响应式（1080/900/640）。<br>
-• <b>顾客端</b> <code>web/index.html</code>：品牌头 + 搜索 + 📷 扫码找货 + 分类 chips + 商品网格卡片 + 商品详情弹窗 + 购物车抽屉（步进器）+ 结算弹窗（自提/配送二选一、运费实时提示）+ 底部结算条 + 我的订单（筛选/再来一单/取消）；<br>
-• <b>管理端</b> <code>web/admin.html</code>：深色侧边栏 + sticky topbar + 6 视图——总览（5 张 KPI + 最近订单 + 低库存）、订单（筛选/配送员分配/改派/完成/取消）、库存（入库·改数·盘点三操作 + 流水）、价格防护（参考价 vs 防线上限 −5%）、顾客档案（标签 + 备注）、系统（后端地址/条码云端状态/清库）。</div>
-<div class="callout green"><b>已交付（本轮 · 验收方式升级）：</b>① 新增「真实浏览器验收」环节——无头 Chrome + CDP 抓加载期异常与 <code>console.error</code>、回读全局对象，并做三档宽度布局体检（真实列数/盒模型/横向溢出）；本模型读不了截图，UI 验收一律取<b>数值证据</b>；<br>
-② 因此抓到并修掉一个<b>长期潜伏的真 bug</b>：<code>web/mall-admin.js</code> 顶层 <code>const Mall</code> 与 <code>mall.js</code> 重名 → 浏览器里 <code>SyntaxError: Identifier 'Mall' has already been declared</code>，整份脚本不执行、<code>Admin</code> 永久 undefined（旧 <code>web/admin.html</code> 同样坏；Node 走 <code>require</code> 分支所以测试全绿，被掩盖多轮）→ 改名 <code>MallCore</code> 后浏览器实测 <code>Admin/Mall/Pricing/SdyApi</code> 全为 object、零异常；<br>
-③ 联调测试改为<b>与库状态无关</b>（可反复跑同一个库）：库存只比对基线、商品条数「至少 6 条」、建档用时间戳条码；<br>
-④ 真实链路端到端验证：Go 后端托管页面 + 真实下单 → 顾客端与管理端同时读到 <code>M1791622537918819099</code>（¥6.80 ＋ 配送 ¥3.00 ＝ ¥9.80），管理端 KPI/库存/顾客档案同步正确。</div>
-<div class="callout yellow"><b>回归（本轮全绿）：</b>Go <b>21 单测</b>（gofmt/vet 干净）＋ 端到端冒烟；web <b>44 + 28 + 32 + 35 + 21</b>；条码 <b>7 组 + 55 + 28 + 34</b>；对账 <b>62</b>；小程序归档套件 <b>62 + 47</b>。</div>
+<h2>四、当前重心 · M5′ Web 端商城</h2>
+<div class="callout green"><b>已达成（第 9 轮）：</b>
+① <b>仓库清理</b>：目录 <code>mall-demo/</code> 改名为 <code>web/</code>、顾客端首屏由 <code>mall.html</code> 改名为 <code>index.html</code>（后端静态托管时 <code>http://127.0.0.1:8093/</code> 直接就是商城）、小程序骨架归档到 <code>archive/miniprogram/</code>（代码与测试原样保留，未删除）、清理本地无用产物；
+② <b>设计系统</b> <code>web/assets/theme.css</code>（约 430 行）：绿色品牌令牌 + 三级文字色 + 六组状态色 + 圆角卡片 + 三级阴影 + 组件类（按钮/表单/徽标/抽屉/弹窗/Toast/表格/KPI/chips）+ 三档响应式（1080/900/640）；
+③ <b>顾客端</b> <code>web/index.html</code>：品牌头 + 搜索 + 📷 扫码找货 + 分类 chips + 商品网格 + 商品详情弹窗 + 购物车抽屉（步进器）+ 结算弹窗（自提/配送二选一、运费实时提示）+ 底部结算条 + 我的订单（筛选/再来一单/取消）；
+④ <b>管理端</b> <code>web/admin.html</code>：深色侧边栏 + sticky topbar + 6 视图——总览（5 张 KPI + 最近订单 + 低库存）、订单（筛选/配送员分配/改派/完成/取消）、库存（入库·改数·盘点 + 流水）、价格防护（参考价 vs 防线上限）、顾客档案（标签 + 备注）、系统（后端地址/云端状态/清库）；
+⑤ <b>真链路验证</b>：真浏览器 + 真 Go 后端跑通「下单 → 顾客端与管理端同时可见」，并因此抓到并修掉一个长期潜伏的致命 bug（<code>web/mall-admin.js</code> 顶层 <code>const Mall</code> 与 <code>mall.js</code> 重名 → 浏览器 <code>SyntaxError</code> → <code>Admin</code> 永久 undefined）。
+</div>
 
-<h2>八、M5 小程序化 <span class="paused">⏸ 暂缓</span></h2>
-<div class="callout yellow"><b>状态：暂缓（用户 2026-10-10 决定「先把商城做成 Web 端，先实现功能」）。</b>骨架已写完并归档到 <code>archive/miniprogram/</code>：<code>app.json</code>（4 页 + tabBar）、<code>utils/rules.js</code>（运费规则）、<code>utils/store.js</code>（购物车/顾客）、<code>utils/api.js</code>（后端通道 + 离线降级 + 可改后端地址）、index/cart/orders/mine 四页、<code>project.config.json</code>（游客 appid，可直接在微信开发者工具打开）；两套 Node 测试 <b>62 + 47 项</b>全绿。续做条件：小程序账号 + 商户号到手、Web 端功能定型后按同一套视觉令牌复用。</div>
-
+<h3>待做任务池（按用户指定优先级排序）</h3>
 <table>
-<tr><th>任务</th><th>说明</th><th>依赖用户</th></tr>
-<tr><td>小程序账号</td><td>注册微信小程序（个人/企业主体），AppID</td><td>1–2 周</td></tr>
-<tr><td>商户号/支付</td><td>微信支付商户号（对公/小微）</td><td>1–2 周</td></tr>
-<tr><td>顾客端小程序</td><td>复用 M1 页面设计；wx.scanCode 扫码；配送 API 接入（4 家各 1–2 周权限）</td><td>配送 API 权限</td></tr>
-<tr><td>管理端</td><td>小程序内管理页 或 响应式网页（二选一，M1.2 后再定）</td><td>—</td></tr>
+<tr><th style="width:34px">序</th><th>任务</th><th>内容要点</th><th>验收</th></tr>
+<tr><td>1</td><td>商品建档 / 编辑表单</td><td>管理端新增商品（条码、名称、规格、分类、进价/售价、单位、图片）、编辑与上下架；建档人工确认（红线）</td><td>建档后顾客端立即可见；重复条码被拦；服务端校验价格防线</td></tr>
+<tr><td>2</td><td>订单打印 / 小票</td><td>配送单小票（店名、单号、商品明细、金额、地址电话、备注）浏览器打印样式</td><td>一单一票、金额与订单一致、明细齐全</td></tr>
+<tr><td>3</td><td>顾客端收货地址簿</td><td>常用地址增删改、默认地址、下单自动带出；手机号聚合顾客</td><td>地址只在本机/服务端（视 D12），下单带出正确</td></tr>
+<tr><td>4</td><td>销售报表 / 日报</td><td>按日/周统计订单数、营业额、客单价、热销商品、配送费合计；可导出 CSV</td><td>数字与订单明细一致；导出可直接对账</td></tr>
+<tr><td>5</td><td>批量改价 / 批量操作</td><td>按分类或筛选结果批量改价、批量上下架；参考价导入后可一键巡检</td><td>批量结果可预览、越线价格被拦截</td></tr>
+<tr><td>6</td><td>商品图片与分类管理</td><td>分类增删改、排序；商品图片（本地占位图/URL）</td><td>顾客端分类与排序同步</td></tr>
+<tr><td>7</td><td>批发价与顾客等级</td><td>顾客分级（零售/批发/白名单）、价格随之切换；批发价不计入比价</td><td>同一商品按等级显示不同价；比价豁免正确</td></tr>
+<tr><td>8</td><td>上线部署验证（转 M6）</td><td>生产服务器 Docker 蓝绿 + 主机 Nginx + 域名</td><td>需用户先提供<b>已备案域名</b></td></tr>
 </table>
 
-<h2>九、M6 上线验证</h2>
+<h3>页面验收标准（第 9 轮起强制）</h3>
+<ol>
+<li>逻辑改动用 Node 单测覆盖（<code>node web/test-*.js</code>）；</li>
+<li>页面结构改动跑假 DOM 启动冒烟（<code>test-page-boot.js</code>）；</li>
+<li><b>必须</b>再跑一次真实浏览器加载期检查（无头 Chrome + CDP），确认无异常、无 <code>console.error</code>，并回读关键数值（盒模型/真实列数/是否横向溢出）——classic script 之间共享全局词法环境，顶层 <code>const</code> 重名会让整份脚本静默失效，而假 DOM 测试发现不了（见 <code>.agent_rules.md</code> 第 13 条）；</li>
+<li>能用真后端就用真后端跑一遍端到端（下单 → 两端可见）。</li>
+</ol>
+
+<h2>五、暂缓 · M5 小程序化 <span class="paused">⏸</span></h2>
+<div class="callout yellow"><b>状态：暂缓</b>（用户 2026-10-10 决定「先把商城做成 Web 端，先实现功能」）。骨架已写完并归档到 <code>archive/miniprogram/</code>：<code>app.json</code>（4 页 + tabBar）、<code>utils/rules.js</code>（运费规则）、<code>utils/store.js</code>（购物车/顾客）、<code>utils/api.js</code>（后端通道 + 离线降级 + 可改后端地址）、index/cart/orders/mine 四页、<code>project.config.json</code>（游客 appid，可直接在微信开发者工具打开）；三套 Node 测试（通道 62 项 + 页面 47 项 + 真后端联调 21 项）全绿。<br>
+<b>续做条件</b>：小程序账号 + 商户号到手、Web 端功能定型，然后复用同一套视觉令牌与后端 API。</div>
+<table>
+<tr><th>任务</th><th>说明</th><th>依赖</th></tr>
+<tr><td>小程序账号</td><td>注册微信小程序（个人/企业主体），拿到 AppID</td><td>1–2 周审批</td></tr>
+<tr><td>商户号 / 微信支付</td><td>微信支付商户号（对公/小微）</td><td>1–2 周审批</td></tr>
+<tr><td>顾客端小程序</td><td>复用 Web 端视觉与逻辑；<code>wx.scanCode</code> 扫码；接配送 API</td><td>配送 API 权限（4 家各 1–2 周）</td></tr>
+<tr><td>管理端</td><td>小程序内管理页 或 直接用响应式 Web 管理端（二选一）</td><td>—</td></tr>
+</table>
+
+<h2>六、M6 上线验证</h2>
 <ul>
-<li>灰度试运营：熟人客群 → 固定客群；自提免运费规则验证；4 人配送排班验证</li>
-<li>P1+ 候选：批发电子发票、储值/余额、生鲜（效期/批次，关联 D3 待定）</li>
+<li>灰度试运营：熟人客群 → 固定客群；自提免运费与满 30 免运费规则验证；4 人配送排班验证。</li>
+<li>上线形态：Docker 蓝绿（api-a 8093 / api-b 8094）+ 主机 Nginx 反代 + HTTPS 域名。</li>
+<li>P1+ 候选：批发电子发票、储值/余额、生鲜（效期/批次，关联 D3 待定）、多单位换算（D5 待定）。</li>
 </ul>
 
-<h2>十、依赖用户的事项</h2>
+<h2>七、依赖用户推进的事项</h2>
 <table>
 <tr><th>事项</th><th>影响</th><th>建议时间</th></tr>
-<tr><td>牵牛花 CSV 导出字段能力确认</td><td>阻塞 M3 真实对接</td><td>本周（行动项 0；清单页 <code>sync-demo/牵牛花导出确认清单.html</code> 可直接打印带去谈）</td></tr>
-<tr><td><b>生产域名 + ICP 备案</b>（HTTPS）</td><td>阻塞 M4 上线 / M5 小程序（小程序服务器域名必须 HTTPS 且已备案）</td><td>M4 期间并行办理</td></tr>
-<tr><td>微信小程序账号 + 商户号</td><td>阻塞 M5</td><td>1–2 周内启动</td></tr>
+<tr><td>牵牛花 CSV 导出字段能力确认（行动项 0）</td><td>阻塞 M3 真实对接</td><td>本周；清单页 <code>sync-demo/牵牛花导出确认清单.html</code> 可直接打印带去谈</td></tr>
+<tr><td><b>生产域名 + ICP 备案</b>（HTTPS）</td><td>阻塞 M6 上线（小程序域名也要求 HTTPS + 已备案）</td><td>越早越好，备案周期长</td></tr>
+<tr><td>微信小程序账号 + 商户号</td><td>阻塞 M5 续做</td><td>若打算做小程序，1–2 周内启动申请</td></tr>
 <tr><td>配送 API（美团/达达/闪送/顺丰同城）权限</td><td>阻塞配送接入</td><td>M5 前各 1–2 周</td></tr>
-<tr><td>D1–D5 待确认（入库场景/无条码策略/批次效期/入库单完整度/多单位换算）</td><td>影响 M1.2 库存页设计</td><td>M1.2 前定 D1/D2/D4</td></tr>
-<tr><td>生鲜是否进 MVP、批发发票/储值优先级</td><td>影响 M6 范围</td><td>M5 前后</td></tr>
+<tr><td>D1–D5 待确认（入库场景 / 无条码策略 / 批次效期 / 入库单完整度 / 多单位换算）</td><td>影响库存页与管理端细化</td><td>商品建档表单开发前定 D1/D2/D4</td></tr>
+<tr><td>生鲜是否进 MVP、批发发票/储值优先级</td><td>影响 M6 范围</td><td>试运营前</td></tr>
 </table>
 
-<h2>十一、风险与红线</h2>
-<div class="risk"><b>风险：</b>① 牵牛花导出能力未知 → 行动项 0 尽快验证；② 小程序/商户号申请周期 → 提前并行申请；③ 配送 API 成本与权限 → 自提优先、配送后置；④ 一码多品 → 建档人工确认。</div>
-<div class="risk"><b>红线：</b>敏感信息（AppCode/凭证/Token）绝不入库，每次推送前三层扫描；扫码只读（D8）；价格与库存永不自动填云端值；建档必须人工确认；腾讯文档推送前必须 pull 比对、保留外部修改。</div>
+<h2>八、风险与红线</h2>
+<div class="risk"><b>风险：</b>① 牵牛花导出能力未知 → 行动项 0 尽快验证；② 域名备案周期长 → 现在就可启动；③ 小程序账号/商户号审批周期 → 若要做就并行申请；④ 配送 API 成本与权限 → 自提优先、配送后置；⑤ 一码多品/无条码商品 → 建档必须人工确认；⑥ 家庭店人力有限 → 管理端操作要尽量少点击（库存三操作、批量改价、小票打印优先）。</div>
+<div class="risk"><b>红线：</b>敏感信息（IP、口令、AppCode、腾讯文档凭据）绝不入库，推送前三层扫描；扫码只读、不改库存（D8）；价格与库存永不自动填云端值；建档必须人工确认；腾讯文档推送前必须先 pull 比对、保留外部修改。</div>
 
-<h2>十二、进度跟踪</h2>
+<h2>九、进度跟踪</h2>
 <table>
-<tr><th>里程碑</th><th>状态</th><th>产出/链接</th></tr>
-<tr><td>M0 基建</td><td class="ok">✔ 完成</td><td>GitHub 仓库 · README · 本计划 · 文档同步链路</td></tr>
-<tr><td>M1.1 顾客端商城 demo</td><td class="ok">✔ 完成</td><td>web/（首页/详情/购物车/结算/我的订单 + 40 项测试）</td></tr>
-<tr><td>M1.2 管理端扩展</td><td class="ok">✔ 完成</td><td>admin.html 订单/库存/顾客三页 + mall-admin.js + 32 项测试</td></tr>
-<tr><td>M1.3 扫码体验</td><td class="ok">✔ 完成</td><td>barcode-demo 摄像头扫一扫 + 扫码枪 HID + 双库徽标（wx.scanCode 待 M5）</td></tr>
-<tr><td>M2 规则与数据层</td><td class="ok">✔ 完成</td><td>价格规则服务 pricing.js + 28 项测试；订单状态机/库存联动归入；双库 resolve 服务化（app.js）已有 7 组测试</td></tr>
-<tr><td>M3 牵牛花同步</td><td class="ok">✔ 工具就绪</td><td>sync-demo/sync-csv.js（对账引擎 + 62 项测试）· sync.html 对账工作台 · 牵牛花导出确认清单.html；<b>待真实导出文件核对列名</b></td></tr>
-<tr><td>M4 后端服务</td><td class="ok">✔ 完成（本地联调通过）</td><td><b>Go 1.24 + SQLite</b>（modernc 纯 Go 驱动）· 条码 resolve 服务端化（APPCODE 只存服务端）· 部署件就绪（Docker 蓝绿 api-a 8093 / api-b 8094，参照 yiguan 范式）<br>已落地：数据层六表 + 事务下单 + 状态机 + 价格/配送规则 + 条码解析链（配额/熔断）+ HTTP API + <b>21 个 Go 单测</b> + 端到端冒烟 + 部署件；<b>三个页面全部接上后端</b>（顾客端/管理端 sdy-api.js：35 项通道 + 17 项真后端联调 + 21 项页面冒烟；扫码台 bd-api.js：55 项通道 + 28 项页面冒烟 + 34 项真后端联调 ⇒ <b>APPCODE 只在服务端</b>）<br>剩余：部署到生产服务器（属 M6，<b>待已备案域名</b>）</td></tr>
-<tr><td><b>Web 端商城现代化（第 9 轮）</b></td><td class="ok">✔ 完成</td><td>仓库清理（<code>web/</code> → <code>web/</code>、<code>index.html</code> → <code>index.html</code>、小程序归档 <code>archive/miniprogram/</code>）· 设计系统 <code>web/assets/theme.css</code> · 顾客端与管理端全面重做（商城网格/抽屉/弹窗 · 管理台 6 视图）· 新增真实浏览器 CDP 验收并<b>修掉 mall-admin.js 顶层 const 重名导致 Admin 永久 undefined 的致命 bug</b> · 联调测试改为与库状态无关 · 全套回归全绿</td></tr>
-<tr><td>M5 小程序化</td><td class="paused">⏸ 暂缓</td><td>骨架已归档 <code>archive/miniprogram/</code>（4 页 + utils + 62/47 项测试全绿）；待小程序账号/商户号到手、Web 端定型后续做</td></tr>
+<tr><th>里程碑</th><th>状态</th><th>产出与验证</th></tr>
+<tr><td>M0 基建</td><td class="ok">✔ 完成</td><td>仓库 · README · 开发计划 · 细节讨论记录 · 文档同步链路</td></tr>
+<tr><td>M1 页面展示层</td><td class="ok">✔ 完成</td><td>顾客端（mall.js 44 项测试）· 管理端（mall-admin.js 32 项）· 扫码体验（双库 7 组）</td></tr>
+<tr><td>M2 规则与数据层</td><td class="ok">✔ 完成</td><td>价格规则 28 项 · 状态机/库存联动 · 双库 resolve 服务化</td></tr>
+<tr><td>M3 牵牛花对账</td><td class="ok">✔ 工具就绪</td><td><code>sync-demo/sync-csv.js</code> 62 项 · 对账工作台 · 导出确认清单；待真实文件核对列名</td></tr>
+<tr><td>M4 后端服务</td><td class="ok">✔ 完成</td><td>Go + SQLite 六表 · 事务下单 · 规则服务端化 · 条码链（配额/熔断）· API · 部署件 · <b>21 个 Go 单测</b> + 冒烟；三端接后端（商城通道 35 + 联调 17 + 页面冒烟 21；扫码台通道 55 + 页面 28 + 联调 34）</td></tr>
+<tr><td><b>M5′ Web 端商城（第 9 轮）</b></td><td class="ok">✔ 完成</td><td>仓库清理（<code>mall-demo/</code>→<code>web/</code>、<code>mall.html</code>→<code>index.html</code>、小程序归档）· 设计系统 <code>web/assets/theme.css</code> · 顾客端与管理端重做 · 真实浏览器 CDP 验收（修掉 <code>mall-admin.js</code> 顶层 const 重名致命 bug）· 联调测试与库状态解耦</td></tr>
+<tr><td>M5′ 功能补齐</td><td class="doing">● 进行中</td><td>见「待做任务池」1–7 项</td></tr>
+<tr><td>M5 小程序化</td><td class="paused">⏸ 暂缓</td><td>骨架归档 <code>archive/miniprogram/</code>（测试 62 + 47 全绿）</td></tr>
+<tr><td>M6 上线验证</td><td class="todo">⬜ 未开始</td><td>待已备案域名</td></tr>
 </table>
 
-<div class="callout yellow">本计划随开发推进更新（每完成一个里程碑回来勾选一次）。<b>M1/M2/M3/M4 与第 9 轮 Web 端现代化均已落地并测试</b>（全套回归：Go <b>21 单测</b> + 端到端冒烟；前端对账 62 + 商城 44 + 价格规则 28 + 管理端 32 + 数据通道 35 + 页面启动 21 + 扫码台通道 55 + 扫码台页面冒烟 28 + 条码核心 7 组；小程序归档套件 62 + 47，全绿；另有 17 + 34 项真后端联调）。<b>本轮（第 9 轮，按用户三条指令：清理仓库 / 页面现代化 / 商城先做 Web 端）</b>：① 仓库清理——<code>web/</code> → <code>web/</code>、<code>index.html</code> → <code>index.html</code>、小程序骨架归档 <code>archive/miniprogram/</code>、删本地无用产物；② 新增设计系统 <code>web/assets/theme.css</code> 并重做顾客端与管理端（顾客端：搜索/扫码/分类/网格/详情/购物车抽屉/结算/订单；管理端：总览 KPI/订单/库存三操作/价格防护/顾客档案/系统，深色侧栏 + 三档响应式）；③ 新增真实浏览器 CDP 验收——由此<b>抓到并修掉 <code>mall-admin.js</code> 顶层 <code>const Mall</code> 与 <code>mall.js</code> 重名的致命 bug</b>（浏览器 SyntaxError → <code>Admin</code> 永久 undefined，旧管理端一直坏着，fake-DOM 测试掩盖多轮），并在真后端 + 真浏览器里跑通「下单 → 顾客端/管理端同时可见」；④ 联调测试改为与库状态无关，可反复跑。<b>下一轮</b>：Web 端继续补功能（按用户指定优先级）——候选：商品建档/编辑表单、批量改价、订单打印/小票、顾客端收货地址簿、销售报表/日报；或做行动项 0（牵牛花导出字段确认），或部署到生产服务器验证蓝绿上线（需域名）。<b>并行需要用户推进</b>：① 行动项 0 牵牛花导出字段确认（用清单页谈）；② <b>生产域名 + 备案</b>（HTTPS + 已备案域名是上线硬前提）；③ 小程序账号 + 商户号（M5 续做前置，申请周期 1–2 周）。</div>
+<div class="callout yellow">本计划随开发推进更新（每完成一项回来勾选一次；逐轮细节见 <code>细节讨论记录.html</code>）。<br>
+<b>文档状态（第 10 轮）：</b>根 README、本计划、架构方案与四个模块 README 已按清理后的仓库现实<b>整体重写</b>（不再逐轮打补丁）；文档分工见 <code>细节讨论记录.html</code> 的 D15（一事实一 owner：状态只在根 README）。<br>
+<b>当前回归基线（全绿）：</b>Go <b>21 单测</b> + 端到端冒烟；Web <b>44 + 28 + 32 + 35 + 21</b>；扫码台 <b>7 组 + 55 + 28 + 34</b>；对账 <b>62</b>；小程序归档套件 <b>62 + 47 + 21</b>；另有 <b>17 + 34</b> 项真后端联调。<br>
+<b>下一轮建议：</b>从任务池第 1 项「商品建档 / 编辑表单」开始（它是其余功能的前置：没有建档就没有批量改价、报表与图片管理），同时把管理端剩余交互补齐。<br>
+<b>并行需要用户推进：</b>① 行动项 0 牵牛花导出字段确认（带清单页去谈）；② 生产域名 + 备案；③ 是否申请小程序账号 + 商户号（决定 M5 何时解冻）。</div>
 
 </body>
 </html>

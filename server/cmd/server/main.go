@@ -247,7 +247,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		writeJSON(w, 200, map[string]any{"total": total, "violations": violations, "over": len(violations)})
 	})
 
-	// 前端：本地开发时用 STATIC_DIR 指向仓库根目录，可直接打开 mall-demo 等页面
+	// 前端：本地开发时用 STATIC_DIR 指向仓库根目录，可直接打开 web 等页面
 	mux.Handle("/", http.FileServer(http.Dir(staticDir)))
 	return mux
 }
@@ -365,7 +365,7 @@ func getenv(k, def string) string {
 	return def
 }
 
-// seedIfEmpty 首次启动写入示例商品（与 mall-demo 保持一致，便于联调）。
+// seedIfEmpty 首次启动写入示例商品（与 web/ 保持一致，便于联调）。
 func seedIfEmpty(st *store.Store) error {
 	list, err := st.ListProducts("", "")
 	if err != nil {
