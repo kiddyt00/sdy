@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>独立微信小程序商城 · 可行性分析与架构方案</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --card:#ffffff; --ink:#1f2937; --muted:#6b7280;
+    --brand:#2563eb; --brand-2:#1d4ed8; --accent:#10b981; --warn:#d97706; --danger:#dc2626;
+    --line:#e5e7eb; --code:#f3f4f6;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--ink); line-height:1.75; font-size:15px;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:0 20px 80px;}
+
+  /* ---------- 顶部横幅 ---------- */
+  header.hero{
+    background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 60%,#3b82f6 100%);
+    color:#fff; padding:48px 20px 40px; margin-bottom:32px;
+  }
+  header.hero .inner{max-width:1080px; margin:0 auto;}
+  header.hero h1{font-size:28px; line-height:1.4; font-weight:700; margin-bottom:10px;}
+  header.hero p.sub{font-size:16px; opacity:.92; max-width:860px;}
+  .badges{margin-top:16px; display:flex; flex-wrap:wrap; gap:8px;}
+  .badges span{
+    background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.35);
+    border-radius:999px; padding:4px 14px; font-size:13px;
+  }
+  .verdict{
+    margin-top:18px; background:rgba(255,255,255,.12); border-left:4px solid #34d399;
+    padding:12px 16px; border-radius:6px; font-size:15px;
+  }
+
+  /* ---------- 目录 ---------- */
+  nav.toc{
+    background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:18px 22px; margin-bottom:32px;
+  }
+  nav.toc h2{font-size:16px; margin-bottom:10px; color:var(--brand-2);}
+  nav.toc ol{padding-left:22px; columns:2; column-gap:36px; font-size:14px;}
+  nav.toc li{margin:3px 0; break-inside:avoid;}
+  nav.toc a{color:var(--ink); text-decoration:none;}
+  nav.toc a:hover{color:var(--brand);}
+
+  /* ---------- 章节 ---------- */
+  section{
+    background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:26px 28px; margin-bottom:24px;
+  }
+  section h2{
+    font-size:21px; color:var(--brand-2); padding-bottom:10px; margin-bottom:18px;
+    border-bottom:2px solid var(--line); display:flex; align-items:center; gap:10px;
+  }
+  section h2 .no{
+    background:var(--brand); color:#fff; border-radius:6px; width:30px; height:30px;
+    display:inline-flex; align-items:center; justify-content:center; font-size:15px; flex:0 0 auto;
+  }
+  section h3{font-size:16.5px; color:var(--ink); margin:20px 0 8px;}
+  section h4{font-size:15px; color:var(--brand-2); margin:14px 0 6px;}
+  p{margin-bottom:10px;}
+  ul,ol{margin:0 0 12px 22px;}
+  li{margin:4px 0;}
+  strong{color:var(--ink);}
+  .hl{background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; padding:0 4px; border-radius:4px; font-weight:600;}
+  code{background:var(--code); border-radius:4px; padding:1px 6px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:13px;}
+
+  /* ---------- 表格 ---------- */
+  table{width:100%; border-collapse:collapse; margin:12px 0 16px; font-size:14px;}
+  th,td{border:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top;}
+  th{background:#eef2ff; color:var(--brand-2); font-weight:600; white-space:nowrap;}
+  tr:nth-child(even) td{background:#fafbfe;}
+  table.cmp th:first-child{width:150px;}
+  td.center,th.center{text-align:center;}
+
+  /* ---------- 评级徽章 ---------- */
+  .score{font-weight:700; font-size:13px; border-radius:6px; padding:2px 10px; white-space:nowrap;}
+  .s-good{background:#ecfdf5; color:#047857; border:1px solid #a7f3d0;}
+  .s-mid{background:#fffbeb; color:#b45309; border:1px solid #fde68a;}
+  .s-low{background:#fef2f2; color:#b91c1c; border:1px solid #fecaca;}
+
+  /* ---------- 架构图 ---------- */
+  .arch{font-size:13px; margin:16px 0;}
+  .arch .layer{
+    border:2px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:12px; background:#fff;
+  }
+  .arch .layer>.lname{
+    font-weight:700; font-size:14px; margin-bottom:8px; display:flex; align-items:center; gap:8px;
+  }
+  .arch .row{display:flex; flex-wrap:wrap; gap:8px;}
+  .arch .box{
+    flex:1 1 130px; min-width:120px; border:1px solid var(--line); border-radius:8px;
+    padding:8px 10px; background:#f8fafc; text-align:center;
+  }
+  .arch .box .t{font-weight:600; font-size:13px;}
+  .arch .box .d{color:var(--muted); font-size:12px; margin-top:2px;}
+  .arch .box.blue{background:#eff6ff; border-color:#bfdbfe;}
+  .arch .box.green{background:#ecfdf5; border-color:#a7f3d0;}
+  .arch .box.orange{background:#fffbeb; border-color:#fde68a;}
+  .arch .box.purple{background:#f5f3ff; border-color:#ddd6fe;}
+  .arch .arrow{text-align:center; color:var(--brand); font-weight:700; font-size:18px; line-height:1.1; margin:2px 0;}
+  .arch .note{color:var(--muted); font-size:12.5px; margin-top:6px;}
+  .flow{
+    font-family:ui-monospace,Consolas,monospace; font-size:12.5px; background:#0f172a; color:#e2e8f0;
+    border-radius:8px; padding:16px 18px; overflow-x:auto; white-space:pre; line-height:1.9; margin:10px 0 16px;
+  }
+  .flow .g{color:#34d399;} .flow .y{color:#fbbf24;} .flow .b{color:#60a5fa;} .flow .r{color:#f87171;}
+
+  /* ---------- 时间轴 ---------- */
+  .timeline{margin:16px 0 8px;}
+  .tl-item{display:flex; gap:14px; margin-bottom:16px;}
+  .tl-flag{
+    flex:0 0 92px; background:var(--brand); color:#fff; text-align:center; border-radius:8px;
+    padding:8px 4px; font-weight:700; font-size:13px; align-self:flex-start;
+  }
+  .tl-item:nth-child(odd) .tl-flag{background:var(--brand-2);}
+  .tl-body{flex:1; border-left:2px solid var(--line); padding-left:16px;}
+  .tl-body h4{margin:0 0 4px;}
+  .tl-body ul{margin-bottom:6px;}
+
+  /* ---------- 风险 ---------- */
+  .risk{border:1px solid var(--line); border-left:4px solid; border-radius:8px; padding:12px 16px; margin-bottom:12px;}
+  .risk.h{ border-left-color:var(--danger);}
+  .risk.m{ border-left-color:var(--warn);}
+  .risk.l{ border-left-color:var(--accent);}
+  .risk .rt{font-weight:700;}
+  .risk .rt .lvl{float:right; font-size:12px; border-radius:6px; padding:1px 10px;}
+  .risk.h .lvl{background:#fee2e2; color:#b91c1c;}
+  .risk.m .lvl{background:#fef3c7; color:#b45309;}
+  .risk.l .lvl{background:#d1fae5; color:#047857;}
+
+  /* ---------- 结论卡片 ---------- */
+  .concl{
+    background:linear-gradient(135deg,#0f172a,#1e293b); color:#f8fafc; border-radius:10px;
+    padding:26px 28px; margin-bottom:24px;
+  }
+  .concl h2{color:#93c5fd; border-bottom-color:#334155;}
+  .concl ul{margin-left:20px;}
+  .concl li{margin:6px 0;}
+  .concl .big{font-size:16px; font-weight:700; color:#34d399; margin-bottom:10px;}
+
+  footer{
+    text-align:center; color:var(--muted); font-size:12.5px; padding:24px 0 0;
+  }
+  footer a{color:var(--brand-2); text-decoration:none;}
+
+  .callout{
+    background:#fffbeb; border:1px solid #fde68a; border-left:4px solid var(--warn);
+    border-radius:8px; padding:12px 16px; margin:14px 0; font-size:14px;
+  }
+  .callout.blue{background:#eff6ff; border-color:#bfdbfe; border-left-color:var(--brand);}
+  .callout.green{background:#ecfdf5; border-color:#a7f3d0; border-left-color:var(--accent);}
+
+  @media (max-width:720px){
+    nav.toc ol{columns:1;}
+    header.hero h1{font-size:22px;}
+    section{padding:20px 16px;}
+    table{font-size:13px;}
+    th,td{padding:7px 8px;}
+  }
+  @media print{
+    body{background:#fff;}
+    section{break-inside:avoid; box-shadow:none;}
+    header.hero{background:#1e3a8a;}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="inner">
+    <h1>独立微信小程序商城<br>可行性分析与架构方案</h1>
+    <p class="sub">在「牵牛花（美团闪购中台）」体系之外，自建私域小程序商城 —— 商品录入、订单、售价、配送全自持，仅以月度导入/导出与牵牛花同步库存。</p>
+    <div class="badges">
+      <span>业务定位：私域复购 + 降平台依赖</span>
+      <span>业务结构：零售即时达 + 批发自配送</span>
+      <span>技术路线：Go 自研轻量商城 + 自建同步桥</span>
+      <span>核心约束：牵牛花数据不开放</span>
+      <span>同步策略：月度导入/导出 + 对账</span>
+    </div>
+    <div class="verdict">
+      <strong>结论速览：</strong>方向成立、技术上完全可行。针对你的情况（<strong>个人开发者自研 + 海宁单店 + 零售/批发双业务 + 低预算</strong>），
+      推荐「<strong>自研轻量商城（Go 后端 + uni-app 前端）+ 自建同步桥</strong>」分四期落地，不购买商业授权，首年刚性投入约 0.5～1 万元；
+      成败关键不在商城本身，而在<strong>与牵牛花之间的数据同步机制</strong>能否可靠闭环 —— 需先行验证。
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s1">背景与目标拆解</a></li>
+    <li><a href="#s2">可行性分析（五维评估）</a></li>
+    <li><a href="#s3">总体架构</a></li>
+    <li><a href="#s4">核心模块设计</a></li>
+    <li><a href="#s5">关键业务流程</a></li>
+    <li><a href="#s6">技术选型建议</a></li>
+    <li><a href="#s7">三种建设方案对比</a></li>
+    <li><a href="#s8">分期实施路线图</a></li>
+    <li><a href="#s9">成本与收益测算</a></li>
+    <li><a href="#s10">风险与对策</a></li>
+    <li><a href="#s11">结论与下一步行动</a></li>
+    <li><a href="#s12">参考资料</a></li>
+    <li><a href="#s13">附录：MVP 功能清单</a></li>
+  </ol>
+</nav>
+
+<!-- ================= 1 背景 ================= -->
+<section id="s1">
+  <h2><span class="no">1</span>背景与目标拆解</h2>
+
+  <h3>1.1 现状</h3>
+  <p>线上超市目前通过<strong>牵牛花系统</strong>（美团旗下即时零售中台 SaaS，由杭州湖畔网络开发运营）统一管理淘宝便利店、美团外卖两个渠道：</p>
+  <ul>
+    <li>牵牛花整合两侧的<strong>商品、库存、售价、订单、配送履约</strong>，一套系统多渠道经营；</li>
+    <li>牵牛花为付费商业产品，与美团外卖商家端深度打通，交付周期约 7～30 天；</li>
+    <li><span class="hl">牵牛花的数据不对外开放</span>：其“牵手计划”开放生态主要面向签约的 ERP/ISV/配送伙伴提供标准化对接，普通商家没有自助开放 API。</li>
+  </ul>
+
+  <h3>1.2 目标</h3>
+  <p>自建一个<strong>独立于牵牛花体系之外的微信小程序商城</strong>：</p>
+  <ul>
+    <li>商品录入、售价、订单、支付、配送全部由自有系统承接；</li>
+    <li>每月通过<strong>外部数据导入/导出</strong>与牵牛花做一次商品/库存同步；</li>
+    <li>最终目的：增加固定客户粘性、降低对平台的依赖、减少平台服务费支出、沉淀私有客户资产。</li>
+  </ul>
+
+  <h3>1.3 动机拆解（为什么成立）</h3>
+  <table>
+    <tr><th>动机</th><th>逻辑</th><th>实现手段</th></tr>
+    <tr><td>固定客户粘性</td><td>超市是典型的高频刚需复购生意，最适合私域经营</td><td>小程序 + 订阅消息复购提醒 + 会员积分/储值 + 优惠券</td></tr>
+    <tr><td>降低平台依赖</td><td>平台规则、抽佣、流量政策不受控</td><td>自有流量入口（门店码、社群、公众号、包裹卡）</td></tr>
+    <tr><td>减少平台服务费</td><td>平台佣金+履约服务费通常显著高于微信支付费率</td><td>订单走自有系统，仅承担微信支付 0.6% 与配送成本</td></tr>
+    <tr><td>私有客户管理</td><td>平台不提供客户数据资产</td><td>自有会员库（手机号/openid）、RFM 分群、精准营销</td></tr>
+  </table>
+
+  <div class="callout blue">
+    <strong>客观提醒：</strong>小程序商城没有平台自然流量，获客要靠门店/社群/公众号导流；配送成本需自担。
+    它更适合作为<strong>平台之外的“第二增长曲线”与客户资产池</strong>，而不是取代淘宝/美团渠道。
+  </div>
+
+  <h3>1.4 需求画像（两轮确认，方案按此定制）</h3>
+  <table>
+    <tr><th>项</th><th>画像</th><th>对方案的影响</th></tr>
+    <tr><td>经营规模</td><td>1 家门店（浙江海宁），月单量约 500–3000 单</td><td>轻量架构即可，单机部署足够，不做过度设计</td></tr>
+    <tr><td>业务结构</td><td><span class="hl">双业务线：零售（即时达）+ 批发（自配送）</span></td><td>系统要支撑两套订单流、两套价格、两套履约；是架构核心分叉点</td></tr>
+    <tr><td>零售配送</td><td>门店 5 公里内即时配送 + <strong>到店自提</strong></td><td><strong>4 家配送平台全接入</strong>（美团/达达/闪送/顺丰同城），按价格/时效比价智能路由发单，按单计费；<strong>页面显示预计送达时间，不做硬性时效承诺</strong>；自提免配送费、带动到店消费</td></tr>
+    <tr><td>批发配送</td><td><strong>海宁城区 + 周边乡镇</strong>，自有配送员，时效宽松</td><td>自配送调度：任务分配、批次排单、按线路合并、签收确认</td></tr>
+    <tr><td>批发客户</td><td>混合：周边小 B 商家 + 企业团购；<strong>现阶段 0–10 家起步</strong>，以线下拓新为主</td><td>白名单手动维护即可，预留分级/账期扩展；配套餐饮/便利店扫街开发计划</td></tr>
+    <tr><td>批发定价</td><td><span class="hl">一客一价（客户分级价）</span></td><td>商品需支持客户级价格覆盖；批发价仅白名单可见，防泄露给零售用户</td></tr>
+    <tr><td>批发结算</td><td><span class="hl">混合：款到发货 + 账期月结</span></td><td>结算模块需账期开关、信用额度、到期对账提醒</td></tr>
+    <tr><td>批发商品</td><td>与零售<strong>同一商品池</strong>，双价格通道，库存共用</td><td>SKU 一套、价格两套、库存一个池，商品维护最省</td></tr>
+    <tr><td>批发下单</td><td><strong>自助下单 + 商家代客下单</strong>两种入口</td><td>白名单客户小程序自助下单；微信/电话接单由商家代录；两入口共用同一订单流</td></tr>
+    <tr><td>批发起订量</td><td><strong>不设起订量</strong></td><td>允许小单；批次排单按截单时间聚合，需合并小单、可设最低配送费控制成本</td></tr>
+    <tr><td>批发开票</td><td>先不做，<strong>预留电子发票接口</strong></td><td>结算模块预留开票字段与对接位，有需求再接百望/诺诺类服务</td></tr>
+    <tr><td>专属商品</td><td><span class="hl">未定</span>（先按「与牵牛花一一对应」设计）</td><td>预留小程序专属商品池能力（会员专享/组合装），映射表需可配置豁免</td></tr>
+    <tr><td>后台使用者</td><td><strong>家人/店员日常操作</strong></td><td>管理后台需极简看板化设计：少配置项、大按钮、常用操作前置</td></tr>
+    <tr><td>门店人力</td><td><strong>店员 4 人</strong>（3 女 1 男）</td><td>女店员拣货+贴外卖单 → 拣货流程要极简（拣货单/贴单工作台）；男店员可兼职配送 → 批发配送依赖 1 人，需错峰排班</td></tr>
+    <tr><td>登录方式</td><td><strong>微信授权一键登录</strong>（openid），手机号可选绑定</td><td>降低注册门槛；会员以 openid 为主，手机号用于配送联系与营销（需授权）</td></tr>
+    <tr><td>主体与资质</td><td>企业主体，《食品经营许可证》已具备，<span class="hl">已有酒类销售资质</span>；<span class="hl">微信支付商户号待确认</span>（若需新开约 1–2 周）</td><td>资质顺畅；酒水可直接纳入 MVP；商户号需新开时计入 P0 时间线</td></tr>
+    <tr><td>品牌命名</td><td><strong>独立品牌名</strong>（与门店/平台渠道区分）</td><td>注册前先定名并查重（小程序名称唯一）；品牌物料与包裹卡同步设计</td></tr>
+    <tr><td>牵牛花导出能力</td><td><span class="hl">尚未确认</span></td><td>第一行动项：登录牵牛花后台验证商品/库存能否导出、字段是否完整</td></tr>
+    <tr><td>开发资源</td><td>本人为运维开发工程师（Go / Python），门店由家人经营</td><td>人力成本≈0；技术选型向 Go/Python 能力圈倾斜（见第 6 节）</td></tr>
+    <tr><td>预算与周期</td><td>预算低，时间灵活</td><td>放弃 SaaS 年费路线；云/费率/配送为刚性成本，逐期投入</td></tr>
+    <tr><td>商品规模</td><td><span class="hl">SKU 约 2000+</span>（大型超市体量）</td><td>数据层需分类/检索/图片 CDN 优化；首次建品导入与图片迁移工作量大，同步桥字段对齐要求高</td></tr>
+    <tr><td>零售定价</td><td>小程序售价<strong>略低于平台价</strong>（引流）</td><td>定价模型独立于平台；价差建议控制在 5% 以内，避免与美团/淘宝明显倒挂引发比价/处罚风险</td></tr>
+    <tr><td>私域基础</td><td>几乎为零</td><td>获客组合：<strong>平台订单包裹卡 + 门店物料 + 微信社群</strong>；MVP 先不做营销，跑通交易闭环，P1 再上运营</td></tr>
+    <tr><td>选品范围</td><td>常温日用品 + 酒水为主；生鲜冷藏与预售/社区团购后置</td><td>MVP = 常温 + 酒水（零售 + 批发双线）；生鲜与团购留待 P2 再评估</td></tr>
+  </table>
+</section>
+
+<!-- ================= 2 可行性 ================= -->
+<section id="s2">
+  <h2><span class="no">2</span>可行性分析（五维评估）</h2>
+
+  <table class="cmp">
+    <tr><th>维度</th><th>评级</th><th>结论要点</th></tr>
+    <tr>
+      <td>业务可行性</td>
+      <td class="center"><span class="score s-good">★★★★☆ 较可行</span></td>
+      <td>高频刚需+复购属性适合私域；但需自建获客与配送，前期订单量是关键验证指标</td>
+    </tr>
+    <tr>
+      <td>技术可行性</td>
+      <td class="center"><span class="score s-good">★★★★★ 完全可行</span></td>
+      <td>小程序商城、微信支付、订阅消息、第三方配送 API 全部成熟；无技术障碍</td>
+    </tr>
+    <tr>
+      <td>数据可行性</td>
+      <td class="center"><span class="score s-low">★★☆☆☆ 最大瓶颈</span></td>
+      <td>牵牛花无开放 API，只能月度导入/导出；<strong>需设计同步与对账机制兜底</strong></td>
+    </tr>
+    <tr>
+      <td>合规可行性</td>
+      <td class="center"><span class="score s-mid">★★★★☆ 基本可行</span></td>
+      <td>需食品经营许可、小程序认证、域名备案、微信支付商户号、个人信息合规</td>
+    </tr>
+    <tr>
+      <td>经济可行性</td>
+      <td class="center"><span class="score s-good">★★★★☆ 较可行</span></td>
+      <td>投入可控（详见第 9 节测算）；收益取决于私域订单占比提升</td>
+    </tr>
+  </table>
+
+  <h3>2.1 业务可行性</h3>
+  <ul>
+    <li><strong>有利：</strong>线上超市客单价中低、频次高，天然适配“每周买一次”的订阅式复购；小程序即用即走 + 订阅消息提醒，是私域零售已被验证的形态。</li>
+    <li><strong>挑战：</strong>无平台流量分发 → 需要门店二维码、收银台物料、社群里发小程序卡片、公众号导流、外卖/快递包裹附卡片等组合获客。</li>
+    <li><strong>关键假设（需实测）：</strong>私域用户占比达到总订单的 15%～30% 时，此项目经济上显著为正。</li>
+  </ul>
+
+  <h3>2.2 技术可行性</h3>
+  <ul>
+    <li>微信侧能力齐备：<code>wx.login</code> 静默登录、微信支付 JSAPI、订阅消息（一次性授权，用于订单通知/复购提醒）、门店小程序码。</li>
+    <li>配送可对接<strong>达达、闪送、顺丰同城、美团配送开放平台、蜂鸟即配</strong>任一开放平台，或先用<strong>自配送</strong>（自有员工/骑手，适合固定商圈）。</li>
+    <li>Go 生态有功能完整的开源商城可作参考（如 ShopSuite Go 版 <strong>Golershop</strong>，自带零售 + B2B 批发双模式），但其<strong>商用需商业授权、本项目不购买</strong>；以<strong>自研轻量商城 + 免费开源组件</strong>为主，结合 uniapp 前端，MVP 上线风险可控。</li>
+  </ul>
+
+  <h3>2.3 数据可行性 —— 本项目真正的胜负手</h3>
+  <p>牵牛花不开放数据，意味着库存、价格无法实时双向互通。可行的同步模式是：</p>
+  <ul>
+    <li><strong>正向（牵牛花 → 小程序）：</strong>每月从牵牛花导出商品主数据与库存（CSV/Excel）→ 导入工具做字段映射、差异校验 → 落库；</li>
+    <li><strong>反向（小程序 → 牵牛花）：</strong>小程序侧销量、出库明细导出，供运营在牵牛花做库存核减/补单（半人工）；</li>
+    <li><strong>对账：</strong>每次同步生成差异报告（数量差、价格差、新增/下架商品），人工确认后生效。</li>
+  </ul>
+  <div class="callout">
+    <strong>风险本质：</strong>同步周期内两套库存会漂移（平台单 + 小程序单同时消耗同一批货）。
+    缓解手段：① 小程序对热门 SKU 设置<strong>安全库存/同步窗口禁售</strong>；② 每日（而非仅月度）人工核对关键 SKU；③ 长期争取牵牛花/美团“牵手计划”ISV 通道，升级为 API 级同步。
+  </div>
+
+  <h3>2.4 合规可行性</h3>
+  <table>
+    <tr><th>事项</th><th>说明</th></tr>
+    <tr><td>食品经营许可证</td><td>小程序经营食品类目必须提供；自营预包装食品需完成备案</td></tr>
+    <tr><td>小程序认证</td><td>企业/个体户主体，微信认证约 300 元/年</td></tr>
+    <tr><td>域名 ICP 备案 + HTTPS</td><td>小程序 request 合法域名必须是已备案的 HTTPS 域名</td></tr>
+    <tr><td>微信支付商户号</td><td>营业执照 + 对公账户（个体户可用法人银行卡）；标准费率约 0.6%；<strong>若未开通需预留 1–2 周申请周期</strong></td></tr>
+    <tr><td>个人信息保护</td><td>隐私政策、最小化收集（手机号/收货地址需授权）、《个保法》合规</td></tr>
+  </table>
+
+  <h3>2.5 经济可行性（概览，详见第 9 节）</h3>
+  <p>个人自研口径一次性投入约 <strong>0.5～1 万元</strong>（云 + 认证杂费 + 硬件，无商业授权费用，详见第 9 节），云资源月成本 <strong>200～600 元</strong>；
+  日常变动成本主要是<strong>微信支付 0.6% + 配送费</strong>，显著低于平台佣金 + 履约服务费组合。盈亏平衡取决于私域单量爬坡速度。</p>
+</section>
+
+<!-- ================= 3 总体架构 ================= -->
+<section id="s3">
+  <h2><span class="no">3</span>总体架构</h2>
+
+  <h3>3.1 系统定位：双体系并行</h3>
+  <div class="arch">
+    <div class="layer">
+      <div class="lname">🏪 现有体系（保持不动）</div>
+      <div class="row">
+        <div class="box blue"><div class="t">淘宝便利店</div><div class="d">平台渠道</div></div>
+        <div class="box blue"><div class="t">美团外卖</div><div class="d">平台渠道</div></div>
+      </div>
+      <div class="arrow">⇅ 平台 API 实时打通</div>
+      <div class="row">
+        <div class="box orange" style="flex:2"><div class="t">牵牛花中台（美团闪购 SaaS）</div><div class="d">商品 · 库存 · 售价 · 订单 · 配送 · 对账</div></div>
+      </div>
+    </div>
+    <div class="arrow">⇅&nbsp;&nbsp;仅「月度导入 / 导出 + 对账」（数据不开放，人工/半自动同步桥）</div>
+    <div class="layer">
+      <div class="lname">🆕 新建体系（本次方案）</div>
+      <div class="row">
+        <div class="box green"><div class="t">微信小程序商城（C 端）</div><div class="d">浏览 · 下单 · 支付 · 订单跟踪</div></div>
+        <div class="box green"><div class="t">商家管理后台（Web）</div><div class="d">极简看板 · 商品 · 订单 · 库存 · 报表</div></div>
+        <div class="box purple"><div class="t">牵牛花同步桥</div><div class="d">导入/导出 · 映射 · 校验 · 对账</div></div>
+      </div>
+      <div class="note">三层均为自建/自控，与牵牛花之间只有一个受控的“同步桥”接触点</div>
+    </div>
+  </div>
+
+  <h3>3.2 自建商城中台分层</h3>
+  <div class="arch">
+    <div class="layer">
+      <div class="lname">① 用户层</div>
+      <div class="row">
+        <div class="box"><div class="t">微信小程序</div><div class="d">uni-app / Taro / 原生</div></div>
+        <div class="box"><div class="t">管理后台</div><div class="d">Vue / React</div></div>
+      </div>
+    </div>
+    <div class="arrow">▼ HTTPS / JSON API</div>
+    <div class="layer">
+      <div class="lname">② 应用层（自建商城服务，微服务/模块化单体均可）</div>
+      <div class="row">
+        <div class="box"><div class="t">商品中心</div><div class="d">SPU/SKU·零售价/批发价·上下架</div></div>
+        <div class="box"><div class="t">库存中心</div><div class="d">可售库存·预扣·超卖控制</div></div>
+        <div class="box"><div class="t">订单中心</div><div class="d">零售单/批发单·自助+代客·售后</div></div>
+        <div class="box"><div class="t">会员中心</div><div class="d">openid·等级·积分（储值预留）</div></div>
+        <div class="box"><div class="t">营销中心</div><div class="d">优惠券·满减·拼团·限时购（零售侧，P1 启用）</div></div>
+        <div class="box"><div class="t">支付结算</div><div class="d">微信支付·退款·对账·发票</div></div>
+        <div class="box"><div class="t">零售配送</div><div class="d">5km围栏·4平台聚合·比价路由·自提</div></div>
+        <div class="box"><div class="t">批发配送</div><div class="d">自有配送员·排单调度·签收</div></div>
+        <div class="box"><div class="t">消息中心</div><div class="d">订阅消息·短信·模板通知</div></div>
+        <div class="box"><div class="t">客服中心</div><div class="d">原生客服·FAQ·留言工单</div></div>
+        <div class="box purple"><div class="t">同步桥</div><div class="d">牵牛花导入/导出·映射·对账</div></div>
+      </div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="layer">
+      <div class="lname">③ 数据层</div>
+      <div class="row">
+        <div class="box"><div class="t">MySQL 8</div><div class="d">业务主库</div></div>
+        <div class="box"><div class="t">Redis</div><div class="d">缓存·库存预扣·限流</div></div>
+        <div class="box"><div class="t">对象存储 OSS</div><div class="d">商品图·CDN</div></div>
+        <div class="box"><div class="t">定时任务</div><div class="d">同步·对账·报表</div></div>
+      </div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="layer">
+      <div class="lname">④ 集成层（第三方）</div>
+      <div class="row">
+        <div class="box blue"><div class="t">微信生态</div><div class="d">登录·支付·订阅消息</div></div>
+        <div class="box blue"><div class="t">配送开放平台</div><div class="d">达达/闪送/顺丰同城/美团配送</div></div>
+        <div class="box blue"><div class="t">牵牛花</div><div class="d">CSV 导入/导出（人工配合）</div></div>
+        <div class="box blue"><div class="t">短信/发票</div><div class="d">阿里云/腾讯云短信·电子发票</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 4 模块设计 ================= -->
+<section id="s4">
+  <h2><span class="no">4</span>核心模块设计</h2>
+
+  <table>
+    <tr><th>模块</th><th>职责</th><th>关键数据/机制</th><th>与牵牛花的边界</th></tr>
+    <tr>
+      <td><strong>商品中心</strong></td>
+      <td>SPU/SKU 建模、类目、售价、图片、上下架、条码</td>
+      <td><strong>双价格体系：零售价 + 批发价</strong>（批发可再按客户等级分级价）；小程序零售价可<strong>略低于平台价引流</strong>（价差 ≤5%）；<strong>条码（EAN-13）建档</strong>：扫码枪读条码直接定位商品，同商品不同规格条码不同需按规格建档，牵牛花首次导入时条码一并入库存档；SKU 编码<strong>与牵牛花商品编码对齐</strong>（映射表）；2000+ SKU 需分类/检索/图片 CDN 优化；<strong>专属商品预留</strong>：以一一对应为主，预留专属 SKU 池能力</td>
+      <td>首次从牵牛花导出批量导入；之后可独立录入新品（新品再反向导出给牵牛花人工录入）</td>
+    </tr>
+    <tr>
+      <td><strong>库存中心</strong></td>
+      <td>可售库存 = 物理库存 − 锁定；防超卖；同步窗口管控</td>
+      <td>Redis 原子预扣；月度导入覆盖；每日差异快照</td>
+      <td>以牵牛花导出为基准值 + 小程序侧当日销量回推；热门 SKU 设安全库存缓冲</td>
+    </tr>
+    <tr>
+      <td><strong>订单中心</strong></td>
+      <td>下单 → 支付 → 接单 → 拣货 → 配送 → 完成；售后退款</td>
+      <td><strong>双订单流：零售即时单 + 批发计划单</strong>；批发支持<strong>自助下单 + 商家代客下单</strong>双入口（起订量不限制）；<strong>履约方式：配送 / 到店自提</strong>；订单状态机；幂等防重；支付回调校验；<strong>售后策略：质量问题/缺漏/破损可退 + 未开封 7 天无理由</strong></td>
+      <td>小程序订单<strong>不回流牵牛花</strong>（独立账套）；导出销售明细供运营在牵牛花核减库存</td>
+    </tr>
+    <tr>
+      <td><strong>会员中心</strong></td>
+      <td>微信 openid 注册（<strong>授权一键登录</strong>）、手机号可选绑定、等级、积分（<strong>储值预留，暂不启用</strong>）</td>
+      <td>会员标签、RFM 分群、生日提醒</td>
+      <td>完全独立，为私有资产核心，不外泄</td>
+    </tr>
+    <tr>
+      <td><strong>营销中心</strong></td>
+      <td>优惠券、满减满赠、拼团、限时购、新人礼（<strong>仅零售侧</strong>；MVP 阶段暂不启用，P1 再上线）</td>
+      <td>券的创建/发放/核销；与订单中心联动；批发价不参与零售促销，防串价</td>
+      <td>独立运营，不与平台活动互通（避免串价）</td>
+    </tr>
+    <tr>
+      <td><strong>支付结算</strong></td>
+      <td>微信支付 JSAPI、退款、账单对账、<strong>发票（预留接口，暂不启用）</strong>、批发账期/信用额度</td>
+      <td>每日拉取微信账单 vs 本地订单差异核对；批发客户账期开关 + 信用额度 + 到期提醒</td>
+      <td>独立结算；仅导出销售额报表供财务</td>
+    </tr>
+    <tr>
+      <td><strong>客服中心</strong></td>
+      <td>C 端客服入口、FAQ 自动回复、留言工单处理</td>
+      <td><strong>微信原生「客服消息」</strong>（小程序自带能力，免费，商家在小程序后台/「微信客服助手」App 即回，无需自建聊天）；<strong>留言工单</strong>：用户选订单 + 问题类型 + 文字/图片提交，生成工单，<strong>订阅消息/短信通知店员</strong>，后台按工单状态流转；<strong>FAQ 自动回复</strong>（配送范围/自提/退款政策/酒水年龄/营业时间）；与<strong>售后流程（5.6）联动</strong>：工单可直接转售后/退款</td>
+      <td>完全独立；客服会话不涉及牵牛花数据</td>
+    </tr>
+    <tr>
+      <td><strong>零售配送</strong></td>
+      <td>门店 5 公里围栏、运费模板、第三方即时配送发单</td>
+      <td><strong>4 家平台全接入</strong>（美团/达达/闪送/顺丰同城），按价格/时效<strong>比价路由</strong>；轨迹回传；配送失败自动切换备用平台；<strong>页面显示预计送达时间，不硬性承诺时效</strong>；<strong>到店自提核销</strong>（核销码/订单号）</td>
+      <td>独立于牵牛花的聚合配送</td>
+    </tr>
+    <tr>
+      <td><strong>批发配送</strong></td>
+      <td>自有配送员的任务分配与排单</td>
+      <td>批次排单（按截单时间汇总）、配送员任务看板（简单骑手端）、送达签收确认；时效宽松；<strong>不设起订量，小单并入批次合并配送</strong></td>
+      <td>完全自有，与零售配送互不干扰</td>
+    </tr>
+    <tr>
+      <td><strong>同步桥 ★</strong></td>
+      <td>牵牛花 ↔ 小程序的数据搬运工</td>
+      <td>导入：CSV 解析→字段映射→校验→差异报告→人工确认落库；导出：销售/出库明细 CSV；对账报告归档；<strong>专属商品/豁免映射可配置</strong></td>
+      <td><strong>整个项目唯一与牵牛花交互的模块</strong>，必须最先做、最严格做</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ================= 5 关键流程 ================= -->
+<section id="s5">
+  <h2><span class="no">5</span>关键业务流程</h2>
+
+  <h3>5.1 下单支付流程</h3>
+  <div class="flow"><span class="y">小程序</span> 下单
+    → <span class="b">后端</span> 校验商品/库存 → Redis 预扣库存
+    → 创建订单（待支付） → 调微信支付 <span class="g">JSAPI 下单</span>
+    → 用户支付 → 微信<span class="g">支付回调</span>（验签/幂等） → 订单转「已支付/待接单」
+    → 商家接单 → <span class="y">拣货</span>（拣货单/贴外卖单） → <span class="b">配送（自配/三方）或到店自提核销</span> → 送达/取货
+    → 订单完成 → <span class="y">订阅消息</span> 通知用户
+    → 自动记录库存扣减、会员积分、营销核销、财务流水</div>
+
+  <h3>5.2 批发下单履约流程</h3>
+  <div class="flow"><span class="y">批发客户</span>（白名单/分级价）小程序<span class="b">自助下单</span>，或商家微信/电话接单后<span class="b">代客下单</span>
+    → <span class="b">后端</span> 校验库存 → 创建批发订单（整批预留，不设起订量）
+    → <span class="y">商家</span> 确认接单 → 按截单时间<span class="b">批次排单</span>（小单合并）
+    → 分配<span class="y">自有配送员</span> → 拣货装车 → 送货 → <span class="g">签收确认</span>
+    → 订单完成 → 可选<span class="b">账期月结</span>或即时收款
+    → 出库明细进入「销售回流」供牵牛花核减库存</div>
+
+  <h3>5.3 商品建档与库存同步流程（牵牛花 → 小程序）</h3>
+  <div class="callout blue">
+    <strong>先回答关键问题：是否需要再录一遍商品？</strong>小程序是<strong>完全独立的商品库</strong>，牵牛花数据不对外开放，因此小程序侧<strong>必须有自己的一份商品数据</strong>——"录入"这件事绕不开。但通常<strong>不需要店员手工逐条重录</strong>：<strong>首次建档用牵牛花导出「商品主数据」批量导入一次性完成</strong>；之后每月只同步库存/价格增量。唯一前提是牵牛花导出要含商品字段（行动项 0 验证），若只给库存则用「美团/淘宝商家后台导出商品清单」兜底建档。
+  </div>
+  <div class="flow"><strong>① 首次建档（一次性迁移）：</strong><span class="y">运营</span> 在牵牛花导出「商品主数据」CSV（条码/名称/规格/售价/图片 URL）
+    → 上传同步桥 → <span class="b">字段映射</span>（牵牛花编码 ↔ 小程序 SKU 编码，条码 EAN-13 同步建档）
+    → 校验：新增/改价/下架/缺字段 → 生成<span class="r">差异报告</span> → <span class="y">人工确认</span>
+    → 落库建档：商品表 + 条码 + 双价格 + 图片 → 归档
+    （2000+ SKU 分批复核，扫到未建档条码走扫码枪现场补录）
+    <br><strong>② 月度库存同步（增量）：</strong>每月固定日导出「库存」CSV
+    → 上传同步桥 → 校验：数量差/价格差/新增/下架
+    → 生成差异报告 → <span class="y">人工确认</span> → 落库：更新库存基准、价格、上下架 → 归档对账
+    （关键 SKU 可每周增量核对一次）</div>
+  <p style="color:var(--muted)">日常新增商品：在小程序后台直接录入建档（独立上新），新品再反向导出给牵牛花人工录入，两条商品库各自维护、靠同步桥对齐。</p>
+
+  <h3>5.4 小程序销售回流（小程序 → 牵牛花）</h3>
+  <div class="flow">每日/每周导出<span class="y">销售出库明细 CSV</span>
+    → 运营在牵牛花侧按汇总做<span class="b">库存核减/调拨</span>（或录入批发出库单）
+    → 差异核对 → 关账归档
+    （若后续争取到 ISV/API 通道，可自动化：小程序订单 → API → 牵牛花自动减库存）</div>
+
+  <h3>5.5 对账流程</h3>
+  <ul>
+    <li><strong>资金对账：</strong>每日拉取微信支付账单 ↔ 本地订单/退款流水，差项告警；</li>
+    <li><strong>库存对账：</strong>每次同步生成差异报告 + 每日销售快照，超阈值告警；</li>
+    <li><strong>价格对账：</strong>同步时标记两系统价格差异清单；小程序略低价为<strong>主动引流策略</strong>（价差 ≤5%），需豁免该部分差异，防止误告警与平台比价风险。</li>
+  </ul>
+
+  <h3>5.6 售后与退款流程</h3>
+  <div class="flow"><span class="y">用户</span> 申请售后（质量问题 / 缺漏 / 破损 / 未开封 7 天无理由）
+    → <span class="b">商家</span> 审核（质量问题直接退款或补发；无理由需退回商品）
+    → 退款走微信支付<span class="g">原路退回</span> → 库存回补 + 同步标记
+    → 逆向物流（同城自提退货零运费，降低损耗） → 售后数据入报表</div>
+  <p style="color:var(--muted)">注：生鲜/冷藏短保商品「签收即验收」、不适用无理由退货（后置 P2 时细化）；酒水拆封后仅质量问题可退。</p>
+
+  <h3>5.7 客服与工单流程</h3>
+  <div class="flow"><span class="y">用户</span> 订单/商品页点「联系客服」
+    → 方式一：微信原生<span class="g">客服会话</span>（小程序内置，商家后台/App 即回，免费）
+    → 方式二：<span class="b">留言工单</span>（自动带订单号 + 问题类型 + 文字/图片）
+    → <span class="y">店员</span> 收到订阅消息/短信提醒 → 后台处理：直接回复 / 转售后（5.6）/ 补发
+    → 工单状态流转（待处理→处理中→已解决） → 处理后订阅消息回执用户
+    → 常见问题走 <span class="g">FAQ 自动回复</span>（配送范围/自提/退款/酒水年龄/营业时间）减少人工</div>
+</section>
+
+<!-- ================= 6 技术选型 ================= -->
+<section id="s6">
+  <h2><span class="no">6</span>技术选型建议</h2>
+  <table>
+    <tr><th>层级</th><th>推荐</th><th>理由 / 备注</th></tr>
+    <tr><td>小程序前端</td><td>uni-app（免费开源跨端框架，可生成小程序/H5/公众号）</td><td>一次开发可扩展抖音/支付宝等小程序，降低未来渠道成本</td></tr>
+    <tr><td>管理后台前端</td><td>Vue3 + Element Plus / React + Antd</td><td>团队熟悉即可；<strong>按家人/店员使用设计：极简看板化、大按钮、常用操作前置、少配置项</strong></td></tr>
+    <tr><td>后端服务</td><td><strong>Go（GoFrame / Gin）或 Python（FastAPI / Django）</strong></td><td>你的能力圈优先；Go 适合扣库存/并发场景，运维部署也顺手</td></tr>
+    <tr><td>数据库</td><td>MySQL 8 + Redis</td><td>业务主库 + 库存预扣/缓存/限流；<strong>2000+ SKU</strong>：商品表加索引、搜索先走 LIKE/全文索引，量再大再评估 ES</td></tr>
+    <tr><td>文件存储</td><td>阿里云 OSS / 腾讯云 COS + CDN</td><td>商品图必须走 CDN</td></tr>
+    <tr><td>部署</td><td>国内云轻量服务器（单机）+ 已备案域名 + HTTPS</td><td>500–3000 单/月单机足够；托管 MySQL + 自动备份省心</td></tr>
+    <tr><td>开源商城基线</td><td><strong>自研轻量商城（Go 后端 + uni-app 前端 + 免费开源组件）</strong></td><td>主流开源商城多为 PHP/Java 栈，与 Go 能力圈错位；Golershop（Go 生态、自带 B2B 批发模式）<strong>商用需商业授权、本项目不购买</strong>，仅作功能/UI 参考；MVP 以自研为主</td></tr>
+    <tr><td>定时任务</td><td>xxl-job / Quartz / cron + 脚本</td><td>同步、对账、报表</td></tr>
+    <tr><td>硬件</td><td><strong>二维无线扫码枪 + 热敏标签打印机</strong>；桌面扫描平台可选</td><td>扫码枪只是「键盘模拟」输入设备：扫 EAN-13（中国 69 开头）解码成一串数字，商品信息由后台按条码检索返回（系统先建档）；二维枪可扫用户付款码/自提核销码；热敏打印机打拣货单/贴外卖单。组合预算约 <strong>500～900 元</strong>（枪 200–400 + 打印机 200–500）</td></tr>
+    <tr><td>配送</td><td>零售：4 家开放平台全接入（美团配送 / 达达 / 闪送 / 顺丰同城）+ 到店自提；批发：自有配送员调度</td><td>零售做「价格/时效比价」智能路由（实测覆盖与费率后配置权重）；批发用任务看板排单；自提用核销码核销</td></tr>
+    <tr><td>消息</td><td>微信订阅消息（免费）+ 短信（阿里云/腾讯云）</td><td>订阅消息做复购提醒需用户授权；短信做关键通知兜底</td></tr>
+    <tr><td>客服</td><td><strong>微信原生「客服消息」（免费，零开发）</strong> + 自建留言工单 + FAQ 自动回复</td><td>MVP 直接用小程序自带客服能力，商家在「微信客服助手」App/后台回复；P2 可选企业微信「微信客服」多坐席或第三方客服 SaaS（美洽/七鱼等）</td></tr>
+  </table>
+</section>
+
+<!-- ================= 7 方案对比 ================= -->
+<section id="s7">
+  <h2><span class="no">7</span>三种建设方案对比</h2>
+  <table class="cmp">
+    <tr><th>对比项</th><th>方案 A：纯自研</th><th>方案 B：自研轻量商城 + 自建同步桥 ★推荐</th><th>方案 C：电商 SaaS（有赞/微盟等）</th></tr>
+    <tr><td>实现方式</td><td>从零开发商城全链路</td><td>个人自研轻量商城（Go 后端 + uni-app 前端 + 免费开源组件）+ 自研同步桥</td><td>开通 SaaS 商城 + 自定义域名 + 自研同步桥</td></tr>
+    <tr><td>上线周期</td><td>3～6 个月</td><td>2～4 个月（个人业余节奏）</td><td>2～6 周</td></tr>
+    <tr><td>一次性成本</td><td>15～40 万元</td><td>0.5～1 万元（自研，仅云 + 认证 + 硬件）</td><td>0.5～2 万元（实施）</td></tr>
+    <tr><td>持续成本</td><td>云资源 + 维护</td><td>云资源 + 维护</td><td>年费数千～数万元 + 交易服务费</td></tr>
+    <tr><td>数据主权</td><td>完全自有</td><td>完全自有</td><td>数据在 SaaS 平台（提供导出，通常可迁出）</td></tr>
+    <tr><td>定制自由度</td><td>最高</td><td>高（开源可改）</td><td>低（受平台功能限制）</td></tr>
+    <tr><td>与牵牛花同步</td><td>自研同步桥（最贴合）</td><td>自研同步桥（同左）</td><td>靠 API/导出+导入，受 SaaS 开放能力限制</td></tr>
+    <tr><td>适合场景</td><td>大店/连锁/长期战略</td><td><strong>单店到中型连锁，性价比最高</strong></td><td>快速验证业务，先跑通再自建</td></tr>
+  </table>
+  <div class="callout green">
+    <strong>针对你的情况（个人开发者 + Go 能力圈 + 低预算 + 双业务线）：</strong>推荐<strong>方案 B：自研轻量商城 + 自建同步桥</strong>——
+    Go 后端（GoFrame/Gin 等免费框架）+ uni-app 前端 + 免费开源组件，<strong>不购买任何商业授权</strong>，现金成本压到最低，与你的能力圈和双业务线高度契合；
+    Golershop 等开源商城仅作功能与 UI 参考（其商用需授权，本项目不采用）。<strong>同步桥的验证优先级高于商城本身</strong>——它决定项目的生死。
+  </div>
+</section>
+
+<!-- ================= 8 路线图 ================= -->
+<section id="s8">
+  <h2><span class="no">8</span>分期实施路线图</h2>
+  <p style="color:var(--muted)">周期按全职开发估算；你是个人业余开发，各阶段可按 <strong>2～3 倍</strong>拉长。无论节奏如何，<strong>最先做</strong>的是 P0 里的「牵牛花导出验证」。</p>
+  <div class="timeline">
+    <div class="tl-item">
+      <div class="tl-flag">P0 · 0–3 月<br>打地基</div>
+      <div class="tl-body">
+        <h4>资质与最小可用商城（MVP）</h4>
+        <ul>
+          <li><strong>行动项 0（最先做）：</strong>登录牵牛花后台，验证商品/库存能否导出 CSV/Excel、字段是否完整 —— 整个同步方案的锚点</li>
+          <li>食品经营许可证核验、小程序注册 + 认证、域名备案、<strong>微信支付商户号开通（若需新开预留 1–2 周）</strong>、小程序名称查重定名</li>
+          <li><strong>授权策略：</strong>确认<strong>不购买</strong> Golershop 商业授权；梳理自研免费组件清单（Go 框架 / uni-app / 管理后台模板），逐一核对开源许可证（优先 MIT / Apache-2.0 / BSD）</li>
+          <li>小程序商城 MVP：商品展示、购物车、下单、微信支付、订单跟踪、订阅消息</li>
+          <li><strong>客服 MVP：</strong>接入微信原生「客服消息」（免费，后台/App 即回）+ FAQ 自动回复 + 留言工单（通知店员）</li>
+          <li><strong>双业务线 MVP：</strong>零售即时单（5 公里，接 1 家第三方配送 API，<strong>支持到店自提</strong>）+ 批发单（批发价 + 自助/代客下单 + 自有配送员排单）</li>
+          <li><strong>同步桥 V1（手工）：</strong>牵牛花导出 CSV → 上传 → 映射 → 差异报告 → 人工确认落库</li>
+        </ul>
+        <p style="color:var(--muted)">验收：能完成一单真实购买 + 一次完整的手工库存同步 + 对账</p>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-flag">P1 · 1–2 月<br>粘性</div>
+      <div class="tl-body">
+        <h4>私域运营能力</h4>
+        <ul>
+          <li>会员体系：积分、等级、生日/周期提醒（<strong>储值暂不做</strong>，视运营情况再定）</li>
+          <li>营销：优惠券、满减、新人礼、限时购</li>
+          <li>订阅消息复购提醒（授权后触发），社群 + 门店物料导流上线</li>
+          <li>管理后台：商品/订单/库存/会员/营销全流程可运营</li>
+        </ul>
+        <p style="color:var(--muted)">验收：私域活跃用户与复购率指标上线，周报可看</p>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-flag">P2 · 2–3 月<br>自动化</div>
+      <div class="tl-body">
+        <h4>同步与对账半自动化</h4>
+        <ul>
+          <li>同步桥 V2：定时任务自动导入导出 + 差异报告自动生成/告警（人工仅确认）</li>
+          <li>每日资金对账（微信账单 vs 本地流水）、库存差异快照</li>
+          <li>小程序销售明细导出模板标准化，运营回流牵牛花流程固化</li>
+          <li>热门 SKU 安全库存与同步窗口禁售策略落地</li>
+        </ul>
+        <p style="color:var(--muted)">验收：一次“无人值守”的月度同步（仅确认一步人工）</p>
+      </div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-flag">P3 · 持续<br>升级</div>
+      <div class="tl-body">
+        <h4>API 化与扩展</h4>
+        <ul>
+          <li>与牵牛花/美团商务洽谈“牵手计划”ISV/开放通道，争取 API 级实时同步</li>
+          <li>扩展：拼团、分销、直播带货小程序、骑手端、连锁多门店</li>
+          <li>数据 BI：渠道对比（平台 vs 私域）、RFM 分群精准营销</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 9 成本收益 ================= -->
+<section id="s9">
+  <h2><span class="no">9</span>成本与收益测算</h2>
+  <div class="callout blue">以下为<strong>假设口径的估算</strong>，用于量级判断，实际以报价与合同为准。</div>
+
+  <h3>9.1 一次性投入（个人自研口径）</h3>
+  <table>
+    <tr><th>项目</th><th>金额</th><th>备注</th></tr>
+    <tr><td>商城开发</td><td>≈ 0（自研人力 + 免费开源组件，<strong>无商业授权费</strong>）</td><td>Go 后端 + uni-app 前端 + 开源管理后台模板；组件许可证以 MIT/Apache-2.0 为主</td></tr>
+    <tr><td>同步桥开发</td><td>≈ 0（自研人力）</td><td>本项目关键模块，开发时间要留足</td></tr>
+    <tr><td>小程序认证 / 域名 / 备案</td><td>约 0.03～0.1 万元/年</td><td>认证 300 元/年；域名几十元/年；备案免费</td></tr>
+    <tr><td>云资源（初期）</td><td>约 0.1～0.2 万元/年</td><td>轻量服务器 + OSS/CDN；500–3000 单/月足够</td></tr>
+    <tr><td>硬件设备</td><td>约 0.05～0.1 万元</td><td>二维无线扫码枪 200–400 元 + 热敏标签打印机 200–500 元（打拣货单/贴单）</td></tr>
+    <tr><td><strong>合计</strong></td><td><strong>约 0.5～1 万元（首年，无授权费）</strong></td><td>对比外包 7～16 万元；若选 SaaS 另有年费</td></tr>
+  </table>
+
+  <h3>9.2 持续成本（月度）</h3>
+  <table>
+    <tr><th>项目</th><th>估算</th><th>说明</th></tr>
+    <tr><td>云资源</td><td>200～600 元/月</td><td>ECS + OSS/CDN + 短信，初期低配即可</td></tr>
+    <tr><td>微信支付费率</td><td>流水 × 0.6%</td><td>标准类目费率（以微信官方为准）</td></tr>
+    <tr><td>第三方配送</td><td>约 5～15 元/单</td><td>同城即时配送按距离计价；自配送每单人力约 3–6 元；<strong>到店自提单免配送费</strong></td></tr>
+    <tr><td>SaaS 年费（仅方案 C）</td><td>数千～数万元/年</td><td>视版本与交易服务费</td></tr>
+  </table>
+
+  <h3>9.3 收益测算示例（假设月订单 2000 单、客单价 50 元）</h3>
+  <table>
+    <tr><th>口径</th><th>平台渠道（估算）</th><th>小程序渠道</th><th>差值</th></tr>
+    <tr><td>平台佣金/服务费</td><td>约 5%～10% + 履约服务费</td><td>—</td><td>—</td></tr>
+    <tr><td>支付费率</td><td>含在平台费内</td><td>0.6%（微信支付）</td><td>—</td></tr>
+    <tr><td>配送成本</td><td>平台履约服务费（按距离）</td><td>自担 5–15 元/单 或自配送</td><td>—</td></tr>
+    <tr><td>单月流水</td><td>—</td><td>2000 × 50 = 10 万元</td><td>—</td></tr>
+    <tr><td>交易环节费用</td><td>约 6000～10000 元</td><td>支付 600 元 + 配送约 10000～30000 元（自配送更低）</td><td>配送可控时，私域毛利贡献更高；且沉淀会员与数据</td></tr>
+  </table>
+  <p style="color:var(--muted)">注：平台费率、履约费因城市/类目/合同而异；私域的真实价值还包括平台费之外的<strong>会员资产、复购增量与定价自主权</strong>，不能只看单量。</p>
+  <p style="color:var(--muted)">批发线：客单价与单笔金额远高于零售，自有配送单均成本约 3～6 元且不受 5 公里限制；若做账期月结，还能带来稳定现金流，但需配套客户信用管理（见第 10 节）。</p>
+  <p style="color:var(--muted)">定价注：小程序零售价略低于平台价（引流让利，建议 ≤5%），让利部分计入获客成本；批发分级价与零售促销不参与，防止串价。</p>
+</section>
+
+<!-- ================= 10 风险 ================= -->
+<section id="s10">
+  <h2><span class="no">10</span>风险与对策</h2>
+
+  <div class="risk h">
+    <div class="rt">库存双系统漂移导致超卖/缺货<span class="lvl">高</span></div>
+    <p>平台单与小程序单同时消耗库存，同步周期内必然漂移。</p>
+    <p><strong>对策：</strong>安全库存缓冲（热门 SKU 只放 80% 可售）；每日差异快照告警；同步窗口对关键 SKU 禁售；<strong>零售与批发共享同一库存池，批发大单需整批预留</strong>，避免批发占用零售可售；差评/赔付预案。</p>
+  </div>
+  <div class="risk h">
+    <div class="rt">牵牛花数据封闭，同步依赖人工<span class="lvl">高</span></div>
+    <p>无开放 API，月度导入/导出需人工配合，出错率与时效是硬约束。</p>
+    <p><strong>对策：</strong>同步桥做字段映射校验 + 差异报告 + 操作留痕；模板标准化 SOP；同时与牵牛花商务洽谈 ISV/API 通道（“牵手计划”生态），为自动化留接口。</p>
+  </div>
+  <div class="risk m">
+    <div class="rt">小程序无自然流量，获客慢<span class="lvl">中</span></div>
+    <p>私域需要持续导流成本。</p>
+    <p><strong>对策：</strong>门店物料（收银台立牌、购物袋贴纸）、社群运营、公众号菜单、包裹卡；用新人礼/首单券拉新，订阅消息促复购。</p>
+  </div>
+  <div class="risk m">
+    <div class="rt">配送时效与成本不可控<span class="lvl">中</span></div>
+    <p>自建配送体验直接决定口碑。</p>
+    <p><strong>对策：</strong>4 家配送平台全接入做<strong>比价路由</strong>（价格/时效/覆盖实测后配置权重），配送失败自动切换备用平台；运费模板按距离/金额设计；高峰时段保留自配送兜底。</p>
+  </div>
+  <div class="risk m">
+    <div class="rt">合规风险（资质/个保法）<span class="lvl">中</span></div>
+    <p>食品类目资质不全会被下架；用户手机号/地址属于个人信息。</p>
+    <p><strong>对策：</strong>上线前资质清单核验；隐私政策 + 最小化收集 + 授权弹窗；数据加密与访问审计。</p>
+  </div>
+  <div class="risk m">
+    <div class="rt">生鲜/冷藏损耗与售后<span class="lvl">中</span></div>
+    <p>短保商品对时效、冷链、售后规则要求高，处理不当会亏毛利和口碑。</p>
+    <p><strong>对策：</strong>生鲜列为 <strong>P2 可选评估项</strong>（不承诺上线时间）；若上线依赖门店冷柜周转、限制配送半径与单量、明确「签收即验收」售后规则、损耗计入定价。</p>
+  </div>
+  <div class="risk l">
+    <div class="rt">酒水类目合规<span class="lvl">低（已具备资质）</span></div>
+    <p>你已具备酒类销售资质，风险大幅下降；仍需按微信类目规则提交，并做好年龄核验提示。</p>
+    <p><strong>对策：</strong>小程序酒类类目按官方要求提交；酒水订单加购年龄确认提示；配送交接时按需核验。</p>
+  </div>
+  <div class="risk m">
+    <div class="rt">批发业务风险（账期/价格/抢库存）<span class="lvl">中</span></div>
+    <p>批发若做账期月结有坏账风险；批发价体系管理不当会泄露给零售用户；批发大单会挤占零售可售库存。</p>
+    <p><strong>对策：</strong>批发客户白名单 + 分级价 + 信用额度；批发价仅对白名单可见；大单整批预留库存；前期优先「款到发货」再逐步开放账期。</p>
+  </div>
+  <div class="risk m">
+    <div class="rt">小程序价低于平台价，平台比价/处罚风险<span class="lvl">中</span></div>
+    <p>美团/淘宝若检测到同店同 SKU 价格明显倒挂，可能影响店铺权重甚至处罚。</p>
+    <p><strong>对策：</strong>价差控制在 5% 以内；用组合优惠/会员价而非直接降价；活动价与平台错峰；同步对账时豁免该差异，避免误告警。</p>
+  </div>
+  <div class="risk m">
+    <div class="rt">SKU 2000+ 首次建品与主数据迁移工作量大<span class="lvl">中</span></div>
+    <p>首次从牵牛花导出 2000+ SKU 的字段、图片、类目映射需要批量处理，纯手工易错。</p>
+    <p><strong>对策：</strong>分批导入（先热门 SKU 上线）；图片批量迁移脚本 + CDN 预热；以牵牛花为主数据源单向复制；映射表长期维护。</p>
+  </div>
+  <div class="risk l">
+    <div class="rt">7 天无理由退货损耗<span class="lvl">低</span></div>
+    <p>常温未开封退货带来逆向物流与回库损耗。</p>
+    <p><strong>对策：</strong>同城自提退货零运费；质量问题优先补发/退款不退货；明确回库品处理（可售/报损分类）。</p>
+  </div>
+  <div class="risk l">
+    <div class="rt">批发不设起订量，小单多拉低配送效率<span class="lvl">低</span></div>
+    <p>不设门槛后可能出现批量小额订单，单均配送成本上升。</p>
+    <p><strong>对策：</strong>按截单时间聚合批次合并配送；小额订单收取最低配送费；引导客户集中下单。</p>
+  </div>
+  <div class="risk l">
+    <div class="rt">配送人力集中（批发依赖 1 名男店员）<span class="lvl">低</span></div>
+    <p>批发配送主要由男店员兼职承担，请假或高峰期会积压批次。</p>
+    <p><strong>对策：</strong>零售走三方平台减压；批发批次错峰安排；培训第二配送人（启用配送员端）；到店自提选项缓解配送压力。</p>
+  </div>
+  <div class="risk l">
+    <div class="rt">单人多角色维护风险<span class="lvl">低</span></div>
+    <p>开发、运维、客服、运营都由你承担，出故障时无备份。</p>
+    <p><strong>对策：</strong>选低维护技术栈与托管服务（托管数据库、对象存储、自动备份）；核心告警接入微信通知；预留交接文档。</p>
+  </div>
+  <div class="risk l">
+    <div class="rt">双系统运营人效成本<span class="lvl">低</span></div>
+    <p>商品要维护两套系统，运营工作量增加。</p>
+    <p><strong>对策：</strong>同步桥尽量自动化 + 以牵牛花为主数据源单向复制；专人负责月度同步 SOP。</p>
+  </div>
+  <div class="risk l">
+    <div class="rt">平台/微信政策变化<span class="lvl">低</span></div>
+    <p>微信类目规则、牵牛花收费与合作政策可能调整。</p>
+    <p><strong>对策：</strong>关键能力（支付/同步）预留抽象层，便于切换；定期关注官方公告。</p>
+  </div>
+</section>
+
+<!-- ================= 11 结论 ================= -->
+<section id="s11">
+  <h2><span class="no">11</span>结论与下一步行动</h2>
+  <div class="concl">
+    <p class="big">✔ 结论：项目可行，值得启动 —— 但必须先验证「同步机制」，再全面铺开。</p>
+    <ul>
+      <li><strong>定位：</strong>小程序商城是平台渠道之外的<strong>私域第二曲线与客户资产池</strong>，不是替代淘宝/美团；</li>
+      <li><strong>路径：</strong>推荐「自研轻量商城（方案 B）+ 自研同步桥」——<strong>不购买商业授权</strong>，双业务线 MVP 3 个月内跑通；条件紧可先用 SaaS（方案 C）验证业务；</li>
+      <li><strong>关键成功因素：</strong>同步桥的可靠性、私域获客节奏、配送履约质量，三者缺一不可；</li>
+      <li><strong>最大变量：</strong>牵牛花是否开放 API —— 建议同步推进商务谈判，一旦拿到接口，同步从月度升级为实时，项目价值倍增。</li>
+    </ul>
+  </div>
+
+  <h3>立刻要做的 6 件事</h3>
+  <ol>
+    <li><strong>资质清单核验：</strong>食品经营许可证、酒类销售资质、小程序认证、微信支付商户号、域名备案是否齐备；</li>
+    <li><strong>商务动作：</strong>与牵牛花/美团商务沟通开放接口（ISV/“牵手计划”通道）的可行性；</li>
+    <li><strong>同步演练与主数据盘点：</strong>在牵牛花真实导出一次商品+库存，人工模拟「导出→映射→导入→对账」全流程；同时整理 2000+ SKU 清单（条码/类目/图片/单位）分批复核，确认字段完整性与工作量；</li>
+    <li><strong>方案拍板：</strong>试跑 Golershop 演示站（demo.golershop.cn）参考其零售 + 批发功能设计（<strong>不购买商业授权</strong>）；确定自研 MVP 功能清单（建议不超过 8 个页面 + 5 个后台模块，<strong>后台按家人/店员可操作为准：极简看板化</strong>）；<strong>采购硬件（二维扫码枪 + 热敏标签打印机，约 500–900 元）</strong>；</li>
+    <li><strong>配送测试：</strong>零售实测 4 家配送平台（美团/达达/闪送/顺丰同城）在海宁的价格与时效，定出比价路由权重；批发跑一轮自有配送员排单演练；</li>
+    <li><strong>获客与售后规则：</strong>设计「平台订单包裹卡 + 门店物料 + 微信社群 + 订阅消息」的组合拉新复购闭环；确定售后执行细则（质量问题退 + 未开封 7 天无理由，含退款方式/逆向物流/回库处理）；定出前 90 天私域订单目标；<strong>同步启动批发客户线下拓新（餐饮/便利店扫街 + 首单优惠）</strong>。</li>
+  </ol>
+</section>
+
+<!-- ================= 12 参考 ================= -->
+<section id="s12">
+  <h2><span class="no">12</span>参考资料</h2>
+  <ul style="font-size:13.5px;">
+    <li>美团官网：<a href="https://www.meituan.com/news/NN231124070002639" target="_blank" rel="noopener">《解决方案再升级 美团牵牛花推出“牵手计划”构建即时零售新生态》</a> —— 牵牛花定位、多渠道能力、开放生态（牵手计划）与效果数据</li>
+    <li>美团闪购 123 平台：<a href="https://123.meituan.com/serve/web/business/446" target="_blank" rel="noopener">《美团闪购牵牛花系统（零售IT解决方案）》</a> —— 功能清单、收费方式（商务洽谈）、交付周期、准入类目限制</li>
+    <li>牵牛花官方文档（杭州湖畔网络）：<a href="https://hupun.yuque.com/unzko7/oedgy7/mnd1znalqglhx6pq?language=zh-cn" target="_blank" rel="noopener">牵牛花 · 杭州湖畔网络技术有限公司</a></li>
+    <li>微信支付接入指引：<a href="https://pay.wechatpay.cn/static/applyment_guide/applyment_detail_miniapp.shtml" target="_blank" rel="noopener">小程序 - 微信支付接入指引</a> —— 商户号申请与费率要求</li>
+    <li>微信公众平台：<a href="https://fuwu.weixin.qq.com/community/minihome/doc/0000e42eb24a10c87884d7d8267000" target="_blank" rel="noopener">开发者专区文档</a> —— 小程序能力与类目规则</li>
+    <li>小程序经营类目（食品资质要求）：<a href="https://www.qinsilk.com/mms/front/help/question-id1648.html" target="_blank" rel="noopener">小程序经营类目内容</a> —— 食品类目需食品经营许可证等资质</li>
+    <li>Golershop（ShopSuite 开源商城 Go 版）：<a href="https://github.com/shsuishang/golershop" target="_blank" rel="noopener">GitHub 仓库</a>、<a href="https://demo.golershop.cn" target="_blank" rel="noopener">在线演示站</a>、<a href="https://docs.shopsuite.cn/golershop/" target="_blank" rel="noopener">帮助文档</a> —— Go + GoFrame + Uniapp 技术栈，自带零售 + B2B 批发双模式；商用需商业授权（随商信息技术（上海）有限公司），本项目<strong>不购买</strong>，仅作功能/UI 参考</li>
+  </ul>
+  <div class="callout">
+    <strong>免责声明：</strong>本报告中的费率、周期、成本均为公开资料与行业经验的估算口径，实际以微信、美团/牵牛花官方政策与商务合同为准。
+  </div>
+</section>
+
+<!-- ================= 13 MVP 清单附录 ================= -->
+<section id="s13">
+  <h2><span class="no">13</span>附录：MVP 功能清单（开发对照表）</h2>
+  <p>范围按前几轮确认的画像收敛：<strong>零售（即时配送 + 到店自提）+ 批发（自助/代客下单 + 自有配送员）双线、常温 + 酒水、SKU 2000+、不设起订量、不承诺硬时效、营销 P1 再上</strong>。C 端 ≤8 页、后台 ≤5 模块，可作为开发阶段的功能验收清单。</p>
+
+  <h3>13.1 C 端小程序（8 页）</h3>
+  <table>
+    <tr><th>页面</th><th>核心功能</th><th>要点</th></tr>
+    <tr><td>1. 首页</td><td>品牌头图/公告、分类入口、推荐位、搜索框、门店信息（营业时间/电话/自提提示）</td><td>极简首屏，引导进分类或搜索</td></tr>
+    <tr><td>2. 商品列表 + 搜索</td><td>分类筛选、关键词搜索、销量/价格排序、库存标识</td><td>2000+ SKU 检索：MySQL 索引 + 全文检索起步，分页加载</td></tr>
+    <tr><td>3. 商品详情</td><td>多规格选择、零售价/批发价（白名单可见批发价）、库存、加购、酒水年龄提示</td><td>零售用户不可见批发价；双价格来源同一 SKU</td></tr>
+    <tr><td>4. 购物车</td><td>增删改、合并结算、满减提示（P1）、失效商品提示</td><td>库存变化实时校验</td></tr>
+    <tr><td>5. 结算下单</td><td>地址管理、<strong>配送/自提切换</strong>、运费试算、优惠券（P1）、微信支付</td><td>配送显示预计送达时间（不硬承诺）；自提生成核销码；批发单走白名单/分级价 + 账期选项</td></tr>
+    <tr><td>6. 订单列表/详情</td><td>状态跟踪（待支付/待接单/拣货中/配送中/自提待取/完成）、催单、取消、<strong>联系客服</strong></td><td>订阅消息状态通知；客服入口带订单上下文</td></tr>
+    <tr><td>7. 自提核销</td><td>出示核销码/二维码，店员扫码或手输核销</td><td>核销后订单转完成；防重复核销</td></tr>
+    <tr><td>8. 我的</td><td>会员信息（一键登录）、地址簿、售后入口、优惠券（P1）、<strong>联系客服（原生会话/留言工单）</strong></td><td>openid 一键登录，手机号可选绑定</td></tr>
+  </table>
+
+  <h3>13.2 商家管理后台（5 模块，极简看板化，家人/店员可操作）</h3>
+  <table>
+    <tr><th>模块</th><th>核心功能</th><th>要点</th></tr>
+    <tr><td>1. 商品管理</td><td>批量导入建档（条码 EAN-13/名称/规格/双价格/图片）、扫码枪扫描调取、编辑、上下架、分类</td><td>牵牛花首次导入 + 手工补录；同商品不同规格按条码分建档；图片走 CDN</td></tr>
+    <tr><td>2. 订单管理</td><td>零售/批发分栏、接单、<strong>打印拣货单/贴单</strong>、配送发单（4 平台路由）或自提核销、批发代客下单、售后处理（质量问题退 + 7 天无理由）、<strong>客服工单处理</strong></td><td>一键打印模板；批发批次按截单时间聚合；售后原路退款 + 库存回补；客服留言工单状态流转</td></tr>
+    <tr><td>3. 库存与同步</td><td>牵牛花 CSV 导入（映射/差异报告/人工确认）、手动调库存、安全库存设置、每日差异快照</td><td>同步桥唯一入口；热门 SKU 缓冲 80% 可售；同步窗口禁售开关</td></tr>
+    <tr><td>4. 客户管理</td><td>批发白名单 + 客户分级价 + 账期开关/信用额度/到期提醒；零售会员列表/积分（P1）</td><td>0–10 家批发客户手动维护即可，预留扩展</td></tr>
+    <tr><td>5. 报表对账</td><td>日销售报表、微信账单对账（差异告警）、库存差异快照、销售回流导出 CSV</td><td>周报/月报导出 Excel</td></tr>
+  </table>
+
+  <h3>13.3 基础设施与外部开通清单</h3>
+  <table>
+    <tr><th>事项</th><th>说明</th><th>周期/成本</th></tr>
+    <tr><td>小程序注册 + 认证</td><td>独立品牌名查重定名；企业主体认证</td><td>约 300 元/年，1–2 周</td></tr>
+    <tr><td>域名 ICP 备案 + HTTPS</td><td>request 合法域名必须备案</td><td>备案 1–3 周</td></tr>
+    <tr><td>微信支付商户号</td><td>待确认是否已开通；新开约 1–2 周</td><td>费率约 0.6%</td></tr>
+    <tr><td>食品/酒水类目资质</td><td>提交《食品经营许可证》+ 酒类销售资质</td><td>审核 1–7 天</td></tr>
+    <tr><td>订阅消息模板</td><td>订单通知/配送提醒/复购提醒模板申请</td><td>审核 1–3 天</td></tr>
+    <tr><td>4 家配送平台入驻</td><td>美团配送/达达/闪送/顺丰同城开放平台账号（你已在平台侧用过，确认 API 权限）</td><td>各平台审核 1–2 周</td></tr>
+    <tr><td>客服能力</td><td>微信原生「客服消息」（免费）：后台开通客服能力 + 配置 FAQ 自动回复 + 「微信客服助手」App 装店员手机；留言工单随小程序一起开发</td><td>开通 1 天内；开发随 MVP</td></tr>
+    <tr><td>硬件</td><td>二维无线扫码枪 + 热敏标签打印机</td><td>约 500–900 元</td></tr>
+  </table>
+
+  <div class="callout blue">
+    <strong>P1 后再启用：</strong>营销模块（优惠券/满减/新人礼/限时购）、会员积分、储值（预留）、拼团/分销/直播、批发电子发票（预留接口）、生鲜/预售/社区团购（P2 可选评估）。
+  </div>
+</section>
+
+<footer>
+  独立微信小程序商城 · 可行性分析与架构方案 &nbsp;|&nbsp; 生成于 DSH 会话
+</footer>
+</div>
+</body>
+</html>

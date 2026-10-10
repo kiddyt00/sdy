@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>独立小程序商城 · 细节讨论记录</title>
+<style>
+  :root{--ink:#1f2937;--sub:#6b7280;--line:#e5e7eb;--blue:#1d4ed8;--blue-bg:#e8f1fb;--green:#15803d;--green-bg:#eaf7ec;--yellow-bg:#fef3c7;--gray-bg:#f8fafc;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;color:var(--ink);line-height:1.7;background:#fafafa;padding:24px 12px 60px;}
+  .wrap{max-width:960px;margin:0 auto;}
+  header.hero{background:linear-gradient(135deg,#1e3a8a,#1d4ed8);color:#fff;border-radius:14px;padding:28px 30px;margin-bottom:22px;}
+  header.hero h1{font-size:26px;letter-spacing:1px;margin-bottom:6px;}
+  header.hero p{font-size:14px;color:#dbeafe;opacity:.95;}
+  h2{font-size:20px;color:#1e3a8a;border-left:5px solid #1d4ed8;padding-left:10px;margin:34px 0 14px;}
+  h3{font-size:17px;color:#111827;margin:24px 0 10px;}
+  h4{font-size:15px;color:#374151;margin:18px 0 8px;}
+  p{margin:8px 0;}
+  ul,ol{margin:8px 0 8px 22px;}
+  li{margin:4px 0;}
+  table{width:100%;border-collapse:collapse;margin:12px 0 18px;font-size:14px;background:#fff;}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#e5e7eb;font-weight:700;white-space:nowrap;}
+  tr:nth-child(even) td{background:#f9fafb;}
+  .callout{border-radius:10px;padding:14px 18px;margin:14px 0;font-size:14px;border:1px solid;}
+  .callout.blue{background:var(--blue-bg);border-color:#bfdbfe;}
+  .callout.green{background:var(--green-bg);border-color:#bbf7d0;}
+  .callout.yellow{background:var(--yellow-bg);border-color:#fde68a;}
+  .flow{background:var(--gray-bg);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:14px 0;font-size:14px;}
+  .concl{background:var(--green-bg);border-left:5px solid var(--green);border-radius:6px;padding:12px 16px;margin:14px 0;font-size:14px;}
+  .risk{background:var(--yellow-bg);border-left:5px solid #b45309;border-radius:6px;padding:12px 16px;margin:14px 0;font-size:14px;}
+  .tag{display:inline-block;font-size:12px;padding:1px 10px;border-radius:999px;margin-right:6px;}
+  .tag.doing{background:#dbeafe;color:#1d4ed8;}
+  .tag.todo{background:#f3f4f6;color:#6b7280;}
+  .tag.done{background:#dcfce7;color:#15803d;}
+  footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:var(--sub);font-size:13px;}
+  code{background:#f3f4f6;padding:1px 6px;border-radius:4px;font-size:13px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>独立小程序商城 · 细节讨论记录</h1>
+  <p>与《独立小程序商城可行性分析与架构方案》并行：专门记录后续各轮「具体细节」讨论 —— 每轮问题、你的回答、落定结论、对主方案的影响。</p>
+</header>
+
+<div class="callout blue">
+  <strong>本文档怎么用：</strong>每轮讨论一个小主题，以「梳理 → 提问 → 你的回答 → 落定结论」推进；结论会同步进主方案文档（改前拉取比对、改后推送腾讯文档）。本文档本身也随每轮更新并推送腾讯文档，保持在线最新。
+</div>
+
+<h2>一、讨论主题清单</h2>
+<table>
+  <tr><th>主题</th><th>状态</th><th>备注</th></tr>
+  <tr><td>扫码枪商品入库</td><td><span class="tag doing">讨论中</span></td><td>第 1 轮：新品建档 + 进货收货 + 盘点，条码规则与同步关系</td></tr>
+  <tr><td>库存同步细节</td><td><span class="tag todo">未开始</span></td><td>同步窗口、热门 SKU 缓冲、每日核对节奏</td></tr>
+  <tr><td>批发业务细节</td><td><span class="tag todo">未开始</span></td><td>一客一价、批次排单、小单合并</td></tr>
+  <tr><td>会员与营销</td><td><span class="tag todo">未开始</span></td><td>积分/等级/生日提醒，营销工具启用节奏</td></tr>
+  <tr><td>客服体系</td><td><span class="tag todo">未开始</span></td><td>原生客服消息 + 留言工单 + FAQ</td></tr>
+  <tr><td>配送与自提</td><td><span class="tag todo">未开始</span></td><td>4 家配送聚合比价路由、自提核销</td></tr>
+  <tr><td>财务对账与开票</td><td><span class="tag todo">未开始</span></td><td>零售/批发对账、批发电子发票预留</td></tr>
+  <tr><td>后台与数据</td><td><span class="tag todo">未开始</span></td><td>看板化后台、报表、SKU 主数据</td></tr>
+</table>
+
+<h2>二、轮次记录</h2>
+
+<h3>第 1 轮 · 扫码枪商品入库</h3>
+
+<div class="callout blue">
+  <strong>先厘清概念：</strong>「扫码枪商品入库」包含两个含义，共用扫码动作但流程不同——<br>
+  ① <strong>新品建档</strong>：商品档案里还没有这条商品 → 扫条码 → 补录信息 → 建立档案；<br>
+  ② <strong>进货收货入库</strong>：档案已有 → 扫码登记到货数量 → 库存增加。<br>
+  下面先做全景梳理，再逐点与你确认。
+</div>
+
+<h4>2.1 入库动作全流程</h4>
+<div class="flow">
+  <strong>扫码（枪 / 手机摄像头）→ 后端按条码查档案 →</strong><br>
+  ├─ <strong>有档案</strong> → 录入数量（可连续扫码自动累加）→ 选供应商 / 批次 / 效期 → 确认生成<strong>入库单</strong> → 库存增加 → 参与月度对账同步<br>
+  └─ <strong>无档案</strong> → 进入<strong>新品建档</strong>：条码自动带出 → 补录 名称 / 类目 / 单位 / 规格 / 进价 / 售价 / 图片 → 保存建档 → 新品反向同步到牵牛花
+</div>
+
+<table>
+  <tr><th>场景</th><th>触发</th><th>核心动作</th><th>产出</th><th>与牵牛花关系</th></tr>
+  <tr><td><strong>新品建档</strong></td><td>新商品首次到货；或扫码发现档案里没有</td><td>扫码 → 查无 → 补录信息 → 建档</td><td>商品档案 +1</td><td>新品需反向同步到牵牛花</td></tr>
+  <tr><td><strong>进货收货入库</strong></td><td>供应商送货到店</td><td>扫码 → 有档案 → 录数量 → 选供应商/批次 → 确认</td><td>入库单 + 库存增加</td><td>入库量计入月度库存同步</td></tr>
+  <tr><td><strong>盘点核对</strong></td><td>定期盘点 / 临期检查</td><td>扫条码核对系统库存</td><td>差异报告</td><td>差异人工确认后才同步</td></tr>
+</table>
+
+<h4>2.2 扫码设备怎么选</h4>
+<table>
+  <tr><th>方案</th><th>成本</th><th>说明</th></tr>
+  <tr><td>手机摄像头（零成本）</td><td>0 元</td><td>小程序内 wx.scanCode 直接扫码，MVP 阶段可先顶替</td></tr>
+  <tr><td>USB 一维枪</td><td>40～150 元</td><td>插收银电脑即用，键盘模拟输入</td></tr>
+  <tr><td>无线一维枪</td><td>100～250 元</td><td>仓库/货架走动扫描更方便</td></tr>
+  <tr><td>无线二维枪 <strong>（推荐）</strong></td><td>200～400 元</td><td>支持商品码/付款码/混合码，4 人团队可共用</td></tr>
+  <tr><td>热敏标签打印机</td><td>200～500 元</td><td>自制条码贴签、价签、货架签（无条码商品用）</td></tr>
+</table>
+
+<h4>2.3 条码规则（关键前提）</h4>
+<ul>
+  <li><strong>条码 = 商品唯一键</strong>（EAN-13）：500ml 和 1L 是两个不同条码，一货一码，同商品不同规格不可共用一个条码。</li>
+  <li><strong>无条码商品</strong>（散装、称重、生鲜、临期拆包）：需要策略——自制内部条码 + 标签打印，或按称重码/件卖处理。</li>
+  <li><strong>校验与查重</strong>：扫码枪读进来是纯数字串，后端要做格式校验、重复条码拦截，避免一码多货。</li>
+</ul>
+
+<h4>2.4 与牵牛花的同步关系（沿用主方案已定框架）</h4>
+<div class="concl">
+  <strong>已定：</strong>建档双向——首次从牵牛花批量迁移（含条码字段，校验 + 差异报告人工确认）；小程序里新建的商品反向同步回牵牛花。入库单数量作为月度库存增量同步的一部分，不实时打通。
+</div>
+
+<h4>2.5 本轮待确认的决策点</h4>
+<table>
+  <tr><th>决策点</th><th>选项</th><th>影响</th></tr>
+  <tr><td>D1 入库场景范围</td><td>只做进货收货 / 新品建档也要 / 盘点也要</td><td>决定 MVP 功能边界与页面数量</td></tr>
+  <tr><td>D2 无条码商品策略</td><td>自制条码贴签 / 称重码 / 暂不处理</td><td>决定散装/生鲜能不能入库、要不要买标签打印机</td></tr>
+  <tr><td>D3 批次与效期</td><td>记效期（临期提醒）/ 只记批次 / MVP 不记</td><td>食品类合规与损耗管理，影响录入页面复杂度</td></tr>
+  <tr><td>D4 入库单完整度</td><td>简单登记 / 完整采购单（供应商、应付账款）</td><td>影响财务对账模块的设计</td></tr>
+  <tr><td>D5 多单位换算</td><td>要不要支持 箱/瓶 等换算</td><td>决定库存单位与录入单位的一致性</td></tr>
+  <tr><td>D6 外部条码库自动补全</td><td><strong>已定：</strong>接阿里云条码查询 API，本地优先 + 云端兜底 + 回填本地条码库（§2.7）</td><td>查无商品建档效率；云端按次计费需节流</td></tr>
+  <tr><td>D7 扫码枪采购组合</td><td><strong>已定：</strong>先不买枪，MVP 用手机摄像头扫码验证流程；跑通后再按「无线 2D + 有线备用」采购（§2.8）</td><td>硬件 500–900 元从 P0 延后；扫码枪接入设计保留备用</td></tr>
+</table>
+
+<h4>2.6 扫码之后，详细信息从哪来（核心机制）</h4>
+<div class="callout blue">
+  <strong>先破除一个误区：</strong>扫码枪只是把条码变成一串数字（键盘模拟输入，如 6901234567892），枪本身不含任何商品信息。所谓「扫一下就有详情」，靠的是<strong>软件拿着这串数字去查数据源</strong>——数据源里没有，就什么都显示不出来。
+</div>
+<div class="flow">
+  <strong>扫码（枪 / 手机摄像头）→ 得到条码数字串 → 查「自家商品库」→</strong><br>
+  ├─ <strong>命中</strong> → 返回 名称 / 规格 / 图片 / 价格 / 库存 → 秒出详情<br>
+  └─ <strong>未命中</strong> →（可选）调<strong>外部条码库</strong>自动补全候选（名称 / 品牌 / 规格 / 图片）→ 人工核对修改 → 保存建档 → 从此以后该码秒出详情
+</div>
+<table>
+  <tr><th>信息源</th><th>能提供什么</th><th>拿不到什么</th><th>获取方式</th><th>定位</th></tr>
+  <tr><td><strong>自家商品库</strong>（小程序后台）</td><td>名称/规格/图片/分类/自家售价/实时库存</td><td>—（最全）</td><td>建档时录入（迁移+手工+扫码补录）</td><td><strong>主力</strong>：每次扫码必查</td></tr>
+  <tr><td>牵牛花迁移档案</td><td>名称/规格/类目/条码</td><td>实时库存、自家定价</td><td>首次月度 CSV 批量导入</td><td>首批建档的数据底座</td></tr>
+  <tr><td>外部条码库 API</td><td>名称/品牌/规格/图片（覆盖国内 69 码为主）</td><td>价格、库存、自家分类</td><td>按次调用、低收费</td><td>「查无商品」自动补候选，人工确认后落库</td></tr>
+</table>
+<p><strong>外部条码库可选来源（已查证）：</strong></p>
+<ul>
+  <li>阿里云云市场「商品条码查询」API（按次低收费，需实名）：<a href="https://market.aliyun.com/detail/cmapi00070320">入口1</a> / <a href="https://market.aliyun.com/detail/cmapi00073743">入口2</a>，实践文章见 <a href="https://developer.aliyun.com/article/1761894">零售进销存开发：商品条码查询 API 方案实践</a></li>
+  <li>open.bcpmdata.com 商品条码 API：<a href="https://open.bcpmdata.com/api/182.html">接口说明</a></li>
+  <li>中国物品编码中心（GS1 中国，官方条码源头）：官网有免费条码查询入口，适合人工核对，不适合程序高频调用</li>
+  <li>淘宝 / 京东开放平台条码接口：需企业资质与类目申请，门槛高，个人开发者一般不用</li>
+</ul>
+<div class="risk">
+  <strong>必须注意：</strong>外部条码库数据不全、滞后、甚至有错（一码多品、改名换包装）。所以外部库只能做「自动填候选」+「人工确认」，<strong>价格与库存绝不能自动填外部数据</strong>——价格用自家定价，库存以自家入库/盘点为准。
+</div>
+<div class="concl">
+  <strong>D6 已定（用户 m00815 确定）：</strong>采用阿里云云市场「商品条码查询」API，设计为<strong>本地优先 + 云端兜底 + 回填本地</strong>——云端只在「本地两库都未命中」时调用一次，查得结果回填进<strong>本地条码库</strong>，详见 §2.7。
+</div>
+
+<h4>2.7 设计方案：本地条码库（字典） + 商品库（档案），云端兜底</h4>
+<div class="callout blue">
+  <strong>关键区分（用户 m00832 修正）：本地条码库 ≠ 商品库。</strong><br>
+  <strong>本地条码库（barcode_lib）</strong>是「字典层」：条码 → 基础信息（名称/品牌/规格/图片），来自云端查询、迁移或建档沉淀，<strong>永久保存</strong>，任何扫码先命中它、复用结果、免重复调云端。<br>
+  <strong>商品库（product）</strong>是「档案层」：已建档商品的全量档案（自家分类/进价/售价/单位/库存/同步状态）。<br>
+  两者关系：商品库里的条码必然能在条码库里找到字典项；条码库有字典项但<strong>未必已建档</strong>。建档 = 从条码库带出基础信息 + 人工补全业务字段 → 写入商品库。
+</div>
+<div class="flow">
+  <strong>扫码（枪 / 手机）→ 条码数字串 → POST /api/barcode/resolve →</strong><br>
+  ① 查「商品库 product」（条码唯一索引）→ <strong>命中</strong> → 返回完整详情（含价格库存，source=local）→ 结束，<strong>永不调云端</strong><br>
+  ② 未命中 → 查「本地条码库 barcode_lib」（字典）<br>
+  &nbsp;&nbsp;├─ 命中 → 返回基础信息 + 「未建档，一键建档」提示（source=lib）→ 不调云端<br>
+  &nbsp;&nbsp;├─ 有「查无」标记（未过期）→ 返回空 + 引导手工建档（source=none）→ 不调云端<br>
+  &nbsp;&nbsp;└─ 无记录 → ③ 调云端 API（限频 + 去重锁）<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;├─ 查到 → <strong>写入本地条码库（永久）</strong> → 返回基础信息（source=cloud）→ 人工确认 → 建档进商品库<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;└─ 查无 → 条码库记「查无」标记（TTL 90 天）→ 引导手工建档
+</div>
+<p><strong>两个库 + 日志的设计：</strong></p>
+<table>
+  <tr><th>存储</th><th>定位</th><th>关键字段</th><th>命中即免云端</th></tr>
+  <tr><td><strong>product</strong> 商品库</td><td>档案层：已建档商品全量</td><td>条码（唯一索引，关联条码库）/名称/规格/图片/自家分类/进价/售价/单位/库存/牵牛花同步状态</td><td>✅ 永久</td></tr>
+  <tr><td><strong>barcode_lib</strong> 本地条码库</td><td>字典层：条码→基础信息，永久沉淀</td><td>条码（唯一主键）/名称/品牌/规格/图片/来源（cloud·migrate·manual）/状态（normal / not_found）/查无标记有效期（TTL 90 天）</td><td>✅ 永久（查无标记过期后可重查）</td></tr>
+  <tr><td><strong>scan_log</strong> 扫码日志（可选）</td><td>运营统计与排查</td><td>条码/时间/命中层级（product·lib·cloud·none）/操作人</td><td>—</td></tr>
+</table>
+<p><strong>云端调用节流规则：</strong></p>
+<ul>
+  <li><strong>三级命中才上云</strong>：product → barcode_lib → 云端，前两级命中绝不调云端</li>
+  <li><strong>同码并发合并</strong>：1 秒内同一码只放行 1 次云端调用（后端锁），其余请求直接等结果</li>
+  <li><strong>全局限速串行</strong>：云端请求走串行队列，防止瞬时并发把套餐次数烧完</li>
+  <li><strong>失败熔断</strong>：单次失败重试 1 次；连续失败 5 次熔断当日（转手工建档，次日自动恢复）</li>
+  <li><strong>用量看板</strong>：后台显示「今日云端调用 / 套餐剩余」，建档高峰期可手动暂停云端</li>
+</ul>
+<p><strong>与扫码枪 / 手机联动（共用同一接口）：</strong></p>
+<ul>
+  <li><strong>统一接口</strong> <code>/api/barcode/resolve</code>：扫码枪和手机扫码都调它，业务逻辑完全一致，枪零配置（键盘模拟，无需驱动）</li>
+  <li><strong>扫码枪（电脑后台）</strong>：入库/建档页面输入框聚焦 → 枪扫入数字串 → 页面即时返回详情或字典候选 → 一键确认建档</li>
+  <li><strong>手机（小程序）</strong>：<code>wx.scanCode</code> 拿码 → 调同一接口 → 展示详情/候选 → 确认建档</li>
+</ul>
+<p><strong>建档闭环与成本账：</strong></p>
+<ul>
+  <li>字典候选确认 → 建档进商品库（自家分类/进价/售价/单位可改、图片可换）→ 新品进「待同步」队列，月度反向同步牵牛花</li>
+  <li>云端只在「两库都未命中」扣次数：建档期把 2000+ SKU 扫一遍后，日常新增品极少，<strong>云端月调用量趋近于 0</strong></li>
+  <li>套餐建议：先买小次数套餐跑通流程（购买页实际价格/次数为准），建档完成后再按需扩容；整块预算可控制在几百元内</li>
+</ul>
+<div class="risk">
+  <strong>红线：</strong>云端返回的名称/规格可能错（一码多品、换包装），字典可自动沉淀复用，但<strong>建档进商品库必须人工确认</strong>；<strong>价格与库存永不自动填云端值</strong>——价格用自家定价，库存以自家入库/盘点为准；<strong>扫码只读不改库存</strong>——库存一律手动调整（D8）。
+</div>
+<div class="concl">
+  <strong>最终效果：</strong>同一支枪/手机，第一次遇到新码多一步「核对→确认建档」，之后所有码<strong>秒出详情、零云端成本</strong>——条码库（字典）越用越厚，商品库（档案）越建越全。
+</div>
+
+<h4>2.8 扫码枪交互设计与采购（用户 m00859 提问）</h4>
+<div class="callout blue">
+  <strong>交互方式结论（建议方案）：</strong>「2.4G 无线（USB 接收器）」为主 + 「USB 有线」备用。<br>
+  关键认识：<strong>扫码枪对系统来说就是一个「键盘」</strong>——它把条码数字串 + 回车直接打进输入框，<strong>零驱动、零配置、天然适配网页后台</strong>，不需要任何枪端开发；「适配我们的系统」的工作全部在我们自己前端（见下方清单），与枪的品牌型号无关。
+</div>
+<p><strong>三种连接方式对比：</strong></p>
+<table>
+  <tr><th>方式</th><th>原理</th><th>优点</th><th>缺点</th><th>适用场景</th></tr>
+  <tr><td><strong>USB 有线</strong>（键盘模拟）</td><td>插线即键盘</td><td>最便宜 40–150 元、免充电、零延迟</td><td>线缆束缚</td><td>固定台（建档/收银/打包）</td></tr>
+  <tr><td><strong>2.4G 无线</strong>（USB 接收器）</td><td>枪 ↔ 接收器私有 2.4G，接收器插电脑当键盘</td><td>无束缚、免配对、距离 30–50 米、充电底座</td><td>接收器占一个 USB 口</td><td>★ 仓库/拣货/盘点（推荐主力）</td></tr>
+  <tr><td><strong>蓝牙</strong>（HID / SPP）</td><td>蓝牙键盘模式，或串口模式</td><td>可连手机/平板</td><td>需配对、重连偶尔丢码、SPP 要写串口程序、电量管理</td><td>手机端场景（但我们手机端用摄像头扫码，免费，用不到）</td></tr>
+</table>
+<p><strong>为什么不用蓝牙为主：</strong></p>
+<ul>
+  <li>蓝牙 HID 连手机要求输入框有焦点且一次只配对一台设备；我们手机端已有 <code>wx.scanCode</code> 摄像头扫码（零成本），桌面端用 2.4G 更稳定</li>
+  <li>蓝牙只适合「没有 USB 接收器、又偏要用枪扫」的极少数场景，不作为主方案</li>
+</ul>
+<p><strong>与系统交互的具体设计（我们系统侧要做的事）：</strong></p>
+<ul>
+  <li><strong>全局「扫码台」</strong>：后台任一页面按快捷键（如 F2 或右上角扫码图标）弹出扫码输入框，始终保持监听</li>
+  <li>枪扫入数字串 + 回车 → 前端捕获 Enter → 调 <code>/api/barcode/resolve</code>（与手机完全同一接口）</li>
+  <li><strong>结果卡片</strong>：商品库详情 / 条码库字典 +「一键建档」/ 云端候选确认 / 查无引导手工建档（对应 §2.7 三级链路）</li>
+  <li><strong>防重复与连扫</strong>：同一码 1 秒内只触发一次；连续扫描自动追加成列表（批量建档/盘点用）——枪每扫一码自动回车，天然支持连扫，无需特殊协议</li>
+  <li><strong>枪端可配置</strong>（用说明书里的配置码扫一下即可，无需开发）：默认后缀「回车」已满足；需要时加前缀区分来源、调整字符间隔、关声音等</li>
+</ul>
+<p><strong>二次开发 / 适配性（用户关心点）：</strong></p>
+<ul>
+  <li><strong>不需要厂商 SDK</strong>：键盘模拟（HID）模式下任何品牌扫码枪都即插即用，不存在「适配我们系统」的开发问题</li>
+  <li>未来若要做枪端高级功能（枪上按键自定义触发动作、蓝牙多枪同连管理、批量上传模式），新大陆/霍尼韦尔/斑马等提供 SDK——但这是升级项，MVP 不需要</li>
+</ul>
+<p><strong>采购建议（符合主方案硬件预算 500–900 元）：</strong></p>
+<ul>
+  <li>1 台 <strong>2.4G 无线 2D</strong> 扫码枪（仓库/拣货/盘点主力）——200–400 元</li>
+  <li>1 台 <strong>USB 有线 2D</strong>（固定建档/收银台，可选，先用无线那把也够）——150–350 元</li>
+  <li>品牌参考：汉印、新大陆、得力、霍尼韦尔（贵）；选 <strong>2D 款</strong>：能读屏幕码/破损码/电子价签二维码，比 1D 耐造、兼容未来场景</li>
+</ul>
+<div class="callout green">
+  <strong>D7 已定（用户确认）：</strong>先不买枪——MVP 阶段全部用手机摄像头扫码（<code>wx.scanCode</code>）验证流程，流程跑通后再按需采购；届时按「2.4G 无线 2D 为主 + USB 有线备用」组合执行（见上方采购建议）。
+</div>
+
+<h2>三、已定决策汇总</h2>
+<table>
+  <tr><th>决策</th><th>来源</th><th>对主方案的影响</th></tr>
+  <tr><td>外部条码库（D6）：接阿里云云市场「商品条码查询」API，本地优先、云端兜底、查得即回填<b>本地条码库（字典）</b>，云端仅限「商品库+条码库」双库未命中时首次调用</td><td>第 1 轮（用户 m00815 确定，m00832 修正库结构）</td><td>主方案 §5.3 建档流程升级；引入 barcode_lib 字典层 + product 档案层双库</td></tr>
+  <tr><td>扫码枪采购（D7）：MVP 不采购，手机摄像头扫码（wx.scanCode）验证流程；跑通后再按「2.4G 无线 2D 为主 + USB 有线备用」采购</td><td>第 1 轮（用户确认 D7）</td><td>硬件 500–900 元延后至流程验证后；§2.8 交互设计保留</td></tr>
+  <tr><td>扫码只读规则（D8）：扫码只做<b>识别/建档/查询</b>，不改变库存；库存一律<b>手动调整</b>——入库单录入数量、盘点差异、直接改数（整车饮料到货按箱手动调整，扫一箱+1 无意义）</td><td>第 1 轮（用户反馈：扫码+1/+2 无意义，整车进货手动调库存）</td><td>扫码台去掉「扫码即改库存」交互；入库单仍需人工录数量；demo 已按此修改</td></tr>
+  <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
+</table>
+
+<h2>四、待确认事项</h2>
+<table>
+  <tr><th>事项</th><th>状态</th><th>关联</th></tr>
+  <tr><td>入库场景范围（D1）</td><td><span class="tag doing">本轮确认</span></td><td>MVP 范围</td></tr>
+  <tr><td>无条码商品策略（D2）</td><td><span class="tag doing">本轮确认</span></td><td>散装/生鲜入库</td></tr>
+  <tr><td>批次/效期（D3）</td><td><span class="tag doing">本轮确认</span></td><td>食品合规</td></tr>
+  <tr><td>外部条码库自动补全（D6）</td><td><span class="tag done">已定</span></td><td>接阿里云 API，本地优先（§2.7）</td></tr>
+  <tr><td>商户号是否需新开</td><td><span class="tag todo">待确认</span></td><td>主方案 P0（1–2 周）</td></tr>
+  <tr><td>牵牛花导出字段能力</td><td><span class="tag todo">行动项 0</span></td><td>建档迁移前提</td></tr>
+  <tr><td>4 家配送 API 权限</td><td><span class="tag todo">待确认</span></td><td>各 1–2 周</td></tr>
+  <tr><td>批发电子发票/储值/生鲜</td><td><span class="tag todo">P1+ 启用</span></td><td>节奏后置</td></tr>
+</table>
+
+<footer>
+  与主方案文档《独立小程序商城可行性分析与架构方案》配套使用 · 本记录每轮更新后推送腾讯文档（每次生成新链接，旧版可清理）· 生成于 2026-10-10
+</footer>
+
+</div>
+</body>
+</html>

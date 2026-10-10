@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>条码双库 Demo · 商品库 + 本地条码库 + 云端兜底（§2.7）</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --card:#fff; --line:#e3e8ee; --ink:#1f2937; --dim:#6b7280;
+    --blue:#2563eb; --green:#16a34a; --purple:#7c3aed; --orange:#ea580c; --red:#dc2626;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6}
+  header{background:linear-gradient(120deg,#0f172a,#1e3a8a);color:#fff;padding:14px 22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+  header h1{font-size:17px;font-weight:600}
+  header .sub{font-size:12px;opacity:.75}
+  .stats{display:flex;gap:14px;align-items:center;font-size:12px;background:rgba(255,255,255,.12);padding:8px 14px;border-radius:10px;flex-wrap:wrap}
+  .stats b{color:#fbbf24}
+  .quota-bar{width:110px;height:8px;background:rgba(255,255,255,.25);border-radius:4px;overflow:hidden}
+  .quota-bar i{display:block;height:100%;background:linear-gradient(90deg,#fbbf24,#fb7185);width:0;font-style:normal;color:transparent}
+  .container{max-width:1080px;margin:18px auto;padding:0 16px}
+  nav{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+  .tab{border:1px solid var(--line);background:#fff;color:var(--dim);padding:7px 16px;border-radius:8px;cursor:pointer;font-size:13px}
+  .tab.on{background:var(--blue);border-color:var(--blue);color:#fff}
+  .pane{display:none}
+  .pane#pane-scan{display:block}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+  .card h3{font-size:14px;margin-bottom:10px;color:#111827}
+  .scan-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  #scanInput{flex:1;min-width:240px;font-size:16px;padding:11px 14px;border:2px solid var(--line);border-radius:8px;font-family:ui-monospace,Consolas,monospace;letter-spacing:1px}
+  #scanInput:focus{outline:none;border-color:var(--blue)}
+  .btn{border:1px solid var(--line);background:#fff;color:var(--ink);padding:9px 16px;border-radius:8px;cursor:pointer;font-size:13px}
+  .btn:hover{background:#f1f5f9}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  .btn.primary:hover{background:#1d4ed8}
+  .btn.ghost{background:transparent;border-color:var(--line)}
+  select{font-size:13px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;max-width:340px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .chip{border:1px dashed var(--line);background:#f8fafc;color:var(--ink);padding:6px 13px;border-radius:999px;cursor:pointer;font-size:12px;font-family:ui-monospace,Consolas,monospace}
+  .chip:hover{background:#eef2ff;border-color:var(--blue);color:var(--blue)}
+  .hint{color:var(--dim);font-size:12px;margin-top:8px}
+  .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;vertical-align:middle}
+  .badge-green{background:#dcfce7;color:#166534}.badge-blue{background:#dbeafe;color:#1e40af}
+  .badge-purple{background:#ede9fe;color:#6b21a8}.badge-gray{background:#f3f4f6;color:#4b5563}
+  .badge-orange{background:#ffedd5;color:#9a3412}.badge-red{background:#fee2e2;color:#991b1b}
+  .result-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .code-lg{font-family:ui-monospace,Consolas,monospace;font-size:22px;font-weight:700;letter-spacing:1px}
+  .note{font-size:12px;color:var(--dim);margin-top:4px}
+  .note.warn{color:var(--orange);background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px}
+  .hl{color:var(--orange);font-weight:700}
+  table.kv{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+  table.kv td{padding:5px 8px;border-bottom:1px dashed var(--line)}
+  table.kv td.k{width:110px;color:var(--dim)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left}
+  th{background:#f8fafc;font-weight:600;white-space:nowrap}
+  .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  .dim{color:var(--dim);font-size:12px}
+  .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .link-btn{border:none;background:none;color:var(--red);cursor:pointer;font-size:12px;padding:2px 4px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal{background:#fff;border-radius:14px;padding:20px 22px;width:420px;max-width:94vw;max-height:90vh;overflow:auto}
+  .modal h3{margin-bottom:10px}
+  .modal label{display:block;font-size:13px;margin:8px 0 3px;color:#374151}
+  .modal input{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;margin-top:3px}
+  .modal input:focus{outline:none;border-color:var(--blue)}
+  .toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);background:#111827;color:#fff;padding:9px 18px;border-radius:10px;font-size:13px;z-index:99;transition:opacity .3s;box-shadow:0 6px 20px rgba(0,0,0,.2)}
+  .toast.ok{background:var(--green)} .toast.err{background:var(--red)} .toast.hide{opacity:0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  footer{max-width:1080px;margin:24px auto 40px;padding:0 16px;color:var(--dim);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>条码双库 Demo · 商品库 + 本地条码库 + 云端兜底</h1>
+    <div class="sub">对应《细节讨论记录》§2.7 三级链路：product → barcode_lib → 云端（仅双库未命中才调用）</div>
+  </div>
+  <div class="stats">
+    <span>Provider：<b id="statProvider">—</b></span>
+    <span>今日云端调用 <b id="statCount">0</b> / <b id="statQuota">—</b></span>
+    <div class="quota-bar"><i id="statPct"></i></div>
+    <span id="statCircuit" style="display:none" class="badge badge-orange">云端熔断中</span>
+  </div>
+</header>
+
+<div class="container">
+  <nav>
+    <button class="tab on" data-tab="scan">扫码台</button>
+    <button class="tab" data-tab="products">商品库</button>
+    <button class="tab" data-tab="lib">本地条码库</button>
+    <button class="tab" data-tab="log">扫码日志</button>
+    <button class="tab" data-tab="settings">设置</button>
+  </nav>
+
+  <!-- 扫码台 -->
+  <div class="pane" id="pane-scan">
+    <div class="card">
+      <h3>扫码台（扫码枪 = 键盘：聚焦后直接扫，回车即查）</h3>
+      <div class="scan-row">
+        <input id="scanInput" placeholder="输入或扫码 8/12/13/14 位数字条码，回车查询" autocomplete="off" spellcheck="false">
+        <button class="btn primary" id="btnScan">查询</button>
+      </div>
+      <div class="hint">示例码（点击直接试扫，模拟手机扫码）：</div>
+      <div class="chips">
+        <button class="chip" data-code="6901234567892">① 已建档商品</button>
+        <button class="chip" data-code="6902083884567">② 条码库字典</button>
+        <button class="chip" data-code="6901028076768">③ 云端新码</button>
+        <button class="chip" data-code="6900000000000">④ 云端查无</button>
+        <button class="chip" data-code="6904321000999">⑤ 未知码</button>
+      </div>
+      <div class="hint">① 不调云端 · ② 未建档可一键建档 · ③ 查后回填条码库 · ④ 记 90 天查无标记 · ⑤ 云端也无数据。真实 API 模式下 ③ 可能显示查无（该库收录范围有限）。</div>
+    </div>
+    <div class="card" id="result">
+      <div class="note">扫码后结果将显示在这里。</div>
+    </div>
+  </div>
+
+  <!-- 商品库 -->
+  <div class="pane" id="pane-products">
+    <div class="card">
+      <h3>商品库（档案层）：已建档商品全量档案</h3>
+      <table><thead><tr><th>条码</th><th>名称 / 规格</th><th>售价</th><th>库存</th><th>同步状态</th><th></th></tr></thead><tbody id="tblProducts"></tbody></table>
+    </div>
+  </div>
+
+  <!-- 本地条码库 -->
+  <div class="pane" id="pane-lib">
+    <div class="card">
+      <h3>本地条码库（字典层）：条码 → 基础信息，永久沉淀</h3>
+      <div class="hint">已预置 3 条演示字典；扫码时云端命中的条码会自动回填到这里。</div>
+      <table><thead><tr><th>条码</th><th>名称</th><th>来源</th><th>状态</th></tr></thead><tbody id="tblLib"></tbody></table>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="pane" id="pane-log">
+    <div class="card">
+      <h3>扫码日志（scan_log）</h3>
+      <table><thead><tr><th>时间</th><th>条码</th><th>命中层级</th><th>说明</th></tr></thead><tbody id="tblLog"></tbody></table>
+    </div>
+  </div>
+
+  <!-- 设置 -->
+  <div class="pane" id="pane-settings">
+    <div class="card">
+      <h3>设置（仅保存在本浏览器 localStorage）</h3>
+      <div class="grid2">
+        <div>
+          <label style="font-size:13px">云端 Provider
+            <select id="setProvider" style="width:100%;margin-top:4px">
+              <option value="mock">Mock（内置样例数据，离线演示）</option>
+              <option value="ali">阿里云市场 · 商品条码查询 API（真实）</option>
+            </select>
+          </label>
+          <label style="font-size:13px;display:block;margin-top:10px">APPCODE（阿里云市场控制台获取）
+            <input id="setAppcode" type="password" placeholder="填入 APPCODE 后保存" style="width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
+          </label>
+          <label style="font-size:13px;display:block;margin-top:10px">网关地址（云市场商品页分配，形如 https://xxx.market.alicloudapi.com）
+            <input id="setGateway" style="width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
+          </label>
+        </div>
+        <div>
+          <div class="grid2" style="margin-bottom:10px">
+            <label style="font-size:13px">每日配额(次)<br><input id="setQuota" type="number" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:8px"></label>
+            <label style="font-size:13px">查无TTL(天)<br><input id="setTtl" type="number" style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--line);border-radius:8px"></label>
+          </div>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin-top:4px"><input id="setFailSim" type="checkbox"> 云端失败模拟（连续 5 次触发当日熔断演示）</label>
+          <div class="note warn" style="margin-top:10px">真实云端有 CORS 限制：浏览器直连阿里云网关可能被拦。本地联调用 <b>proxy.py</b>（<code>BARCODE_PORT=8910 python3 proxy.py</code> 后打开 http://127.0.0.1:8910/index.html，网关填 http://127.0.0.1:8910/barcode，APPCODE 留空——凭证在 appcode.txt 由代理注入）。生产环境一律由后端调用，前端不持有 APPCODE。</div>
+          <div class="actions">
+            <button class="btn" id="btnExport">导出数据(JSON)</button>
+            <button class="btn" id="btnReset">重置演示数据</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  设计依据：《独立小程序商城 · 细节讨论记录》§2.7（本地条码库=字典层 / 商品库=档案层 / 云端仅兜底）。红线提醒：云端数据只做候选，建档必须人工确认；价格与库存永不自动填云端值。阿里云条码查询按次计费、非 200 不扣费、业务码非 0 视为无数据。本 Demo 数据仅存本地浏览器，用于演示与流程验证。
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

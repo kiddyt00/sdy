@@ -1,0 +1,26 @@
+# ===== 敏感信息（绝对不入库，原则）=====
+.tencent_docs_cred.json
+barcode-demo/appcode.txt
+
+# ===== 本地运行状态（每台机器/每次运行都会变）=====
+.tencent_docs_state.json
+.tencent_docs_last_pull.txt
+.tencent_docs_last_push.txt
+.tencent_docs_last_push.*.txt
+在线文档拉取.docx
+
+# ===== Python 环境 =====
+.venv/
+__pycache__/
+*.pyc
+
+# ===== 生成产物（可由 convert_html.py 重新生成）=====
+*.docx
+/独立小程序商城可行性分析与架构方案.md
+/细节讨论记录.md
+
+# ===== 编辑器 / 系统 =====
+.DS_Store
+*.swp
+.idea/
+.vscode/
