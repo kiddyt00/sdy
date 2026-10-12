@@ -128,6 +128,19 @@ const o6 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '吴十'
 throws(() => Mall.advanceOrder(o6.id, 'done'), 'pending → done 非法（必须经 delivering/ready）');
 throws(() => Mall.advanceOrder(o6.id, 'cancelled'), 'pending → cancelled 非法（取消走 cancelOrder）');
 ok(Mall.getOrders()[0].status === 'pending', '非法迁移后状态仍为 pending');
+{
+  // 同一毫秒连下两单不能撞号（本地单号 = 毫秒时间戳；撞号会让流转/取消找错单）
+  const realNow = Date.now;
+  Date.now = () => 1760000000000;
+  fresh();
+  Mall.addToCart('6907992751797', 1);
+  const a1 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '甲', phone: '13000000001' } });
+  Mall.addToCart('6907992751797', 1);
+  const a2 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '乙', phone: '13000000002' } });
+  Date.now = realNow;
+  ok(a1.id !== a2.id, '同一毫秒内两单订单号不重复（' + a1.id + ' / ' + a2.id + '）');
+  ok(Mall.getOrders().length === 2, '两单都在库里（2 条）');
+}
 
 // ============ ⑥ 售罄 ============
 section('⑥ 售罄禁购');

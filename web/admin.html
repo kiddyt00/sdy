@@ -43,6 +43,16 @@
   .rpt-top .bar i { display: block; height: 100%; background: var(--brand); }
   .rpt-pre { white-space: pre; font: 12px/1.7 "PingFang SC", "Microsoft YaHei", monospace; background: #f8fafc; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; overflow: auto; max-height: 360px; color: var(--ink); margin: 0; }
   #printRoot #rptPrint { width: 72mm; margin: 0 auto; white-space: pre; font: 12px/1.6 "PingFang SC", monospace; }
+  /* ---------- 批量改价 / 批量操作（D20） ---------- */
+  .bulk-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+  .bulk-row .bl { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  .bulk-row .inp, .bulk-row .sel { min-width: 104px; }
+  .bulk-row .quick { display: flex; gap: 6px; flex-wrap: wrap; }
+  .bulk-sep { margin: 14px 0 10px; border-top: 1px dashed var(--line); }
+  .bulk-preview tr.capped td { background: #fff1f2; }
+  .bulk-preview tr.blocked td { background: #fff7ed; }
+  .bulk-preview tr.same td { color: var(--muted); }
+  .bulk-cb { width: 15px; height: 15px; cursor: pointer; }
   @page { margin: 6mm; }
   @media print {
     body { background: #fff; }
@@ -238,6 +248,46 @@
           <div class="chips" id="prodCats"></div>
           <div class="kpis" id="prodStats" style="margin:14px 0"></div>
           <div class="table-wrap" id="prodTable"></div>
+
+          <!-- ---------- 批量改价 / 批量操作（任务池第 5 项，D20） ---------- -->
+          <div class="panel" id="bulkPanel" style="margin-top:14px;box-shadow:none;border-style:dashed">
+            <div class="panel-head">
+              <h3>⚡ 批量改价 / 批量操作<span class="sub" id="bulkSelHint">先在上表勾选商品</span></h3>
+              <div class="acts">
+                <button class="btn btn-xs" onclick="bulkSelectAll()">勾选当前筛选（<span id="bulkFilterCount">0</span>）</button>
+                <button class="btn btn-xs" onclick="bulkClear()">清空勾选</button>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="bulk-row">
+                <label class="bl">调整方式<select class="sel" id="bulkMode" onchange="renderBulkPreview()"></select></label>
+                <label class="bl">数值<input class="inp" id="bulkValue" type="number" step="0.01" value="10" oninput="renderBulkPreview()"></label>
+                <label class="bl">取整<select class="sel" id="bulkStep" onchange="renderBulkPreview()"></select></label>
+                <span class="quick">
+                  <button class="btn btn-xs" onclick="quickBulk('pct',10)">＋10%</button>
+                  <button class="btn btn-xs" onclick="quickBulk('pct',-10)">−10%</button>
+                  <button class="btn btn-xs" onclick="quickBulk('delta',1)">＋1 元</button>
+                  <button class="btn btn-xs" onclick="quickBulk('delta',-1)">−1 元</button>
+                </span>
+                <button class="btn btn-xs" onclick="useBulkCaps()">按防线顶格</button>
+                <button class="btn btn-primary btn-xs" onclick="applyBulk()">应用到勾选商品</button>
+              </div>
+              <p class="hint" style="margin:10px 0 0">
+                售价按你设的规则逐款改，<b>必须过比价防线</b>（批发商品与缺参考价的跳过检查，仍记流水）；
+                超防线的商品默认<b>跳过并标红</b>，可点「按防线顶格」改用「参考价 × 0.95」；批量只改售价 / 分类 / 批发标记，<b>库存一律不动</b>（D16 / D20）。
+              </p>
+              <div class="table-wrap bulk-preview" id="bulkPreview" style="margin-top:12px"></div>
+
+              <div class="bulk-sep"></div>
+              <div class="bulk-row">
+                <label class="bl">批量改分类<input class="inp" id="bulkCat" list="catList" placeholder="如 饮料"></label>
+                <button class="btn btn-xs" onclick="applyBulkCat()">应用分类</button>
+                <label class="bl">批量批发标记<select class="sel" id="bulkWhole"><option value="1">设为批发</option><option value="0">取消批发</option></select></label>
+                <button class="btn btn-xs" onclick="applyBulkWhole()">应用标记</button>
+              </div>
+              <div id="bulkResult" class="mt"></div>
+            </div>
+          </div>
           <p class="hint mt">
             建档只登记与改价，<b>不动库存</b>；库存请到「库存与流水」入库 / 改数 / 盘点。
             删除要求库存为 0 且没有进行中的订单；扫码台只沉淀条码库，不改档案（D6 / D8）。
@@ -792,13 +842,17 @@ function renderProducts() {
   $('prodLowBtn').className = 'btn btn-xs' + (prodLow ? ' btn-primary' : '');
 
   $('prodTable').innerHTML = list.length
-    ? '<div class="table-wrap"><table class="table"><thead><tr><th>商品</th><th>分类 / 单位</th><th class="num">进价</th><th class="num">售价</th><th class="num">参考价</th><th class="num">库存</th><th>价格防线</th><th>操作</th></tr></thead><tbody>' +
+    ? '<div class="table-wrap"><table class="table"><thead><tr>' +
+        '<th style="width:34px"><input type="checkbox" class="bulk-cb" id="prodAll" title="全选当前筛选" onchange="bulkToggleAll(this.checked)"></th>' +
+        '<th>商品</th><th>分类 / 单位</th><th class="num">进价</th><th class="num">售价</th><th class="num">参考价</th><th class="num">库存</th><th>价格防线</th><th>操作</th></tr></thead><tbody>' +
       list.map(p => {
         const chk = Pricing.checkRetailPrice(p);
         const guard = !chk.ok
           ? '<span class="badge st-cancelled">超价 ' + Math.abs(chk.diffPct || 0) + '%</span>'
           : (p.refPrice ? '<span class="badge st-done">合规</span>' : '<span class="badge st-pending">缺参考价</span>');
         return '<tr' + (p.stock <= Admin.LOW_STOCK ? ' style="background:#fffbeb"' : '') + '>' +
+          '<td><input type="checkbox" class="bulk-cb"' + (bulkSel[p.code] ? ' checked' : '') +
+            ' onchange="bulkToggle(\'' + esc(p.code) + '\', this.checked)"></td>' +
           '<td><b>' + esc(p.name) + '</b>' + ((p.isWholesale || p.wholesale) ? ' <span class="badge st-info">批发</span>' : '') +
             '<div class="muted" style="font-size:11.5px">' + esc(p.code) + (p.brand ? ' · ' + esc(p.brand) : '') + (p.spec ? ' · ' + esc(p.spec) : '') + '</div></td>' +
           '<td>' + esc(p.category || Admin.DEFAULT_CATEGORY) + '<div class="muted" style="font-size:11.5px">' + esc(p.unit || Admin.DEFAULT_UNIT) + '</div></td>' +
@@ -812,10 +866,209 @@ function renderProducts() {
         '</tr>';
       }).join('') + '</tbody></table></div>'
     : '<div class="empty"><span class="big">🏷️</span>' + (kw || prodCat || prodLow ? '没有匹配的商品' : '商品库是空的，点右上角「＋ 新建商品」建档') + '</div>';
+
+  // 批量改价面板的联动：筛选计数、全选态、分类 datalist、预览
+  if ($('bulkFilterCount')) $('bulkFilterCount').textContent = String(list.length);
+  if ($('prodAll')) $('prodAll').checked = list.length > 0 && list.every(p => bulkSel[p.code]);
+  if ($('catList')) $('catList').innerHTML = Admin.categories().map(c => '<option value="' + esc(c) + '"></option>').join('');
+  renderBulkPreview();
 }
 
 function pickCat(c) { prodCat = c; renderProducts(); }
 function toggleLow() { prodLow = !prodLow; renderProducts(); }
+
+/* ---------------- 批量改价 / 批量操作（任务池第 5 项，D20） ----------------
+ * 先在商品表格里勾选（或「勾选当前筛选」），再选规则 → 预览（逐款过比价防线）→ 应用。
+ * 超防线的商品默认跳过并标红，可「按防线顶格」（参考价 × 0.95）；库存一律不动。
+ */
+let bulkSel = {};              // code → 1，勾选集合（跨筛选保留）
+let bulkUseCapsOn = false;     // 是否对超防线商品改用顶格价
+let bulkRowsCache = [];        // 最近一次预览结果
+
+function bulkFilterList() {
+  const kw = (($('prodQ') && $('prodQ').value) || '').trim();
+  return Admin.listProducts({ keyword: kw, category: prodCat, lowOnly: prodLow });
+}
+function bulkRule() {
+  return {
+    mode: ($('bulkMode') && $('bulkMode').value) || 'pct',
+    value: Number(($('bulkValue') && $('bulkValue').value) || 0),
+    step: Number(($('bulkStep') && $('bulkStep').value) || 0.01)
+  };
+}
+function bulkCodes() { return Object.keys(bulkSel).filter(c => bulkSel[c]); }
+function bulkProducts() { return bulkCodes().map(c => Mall.getProduct(c)).filter(Boolean); }
+function bulkToggle(code, on) {
+  if (on) bulkSel[code] = 1; else delete bulkSel[code];
+  renderBulkPreview();
+}
+function bulkToggleAll(on) {
+  bulkFilterList().forEach(p => { if (on) bulkSel[p.code] = 1; else delete bulkSel[p.code]; });
+  renderProducts();
+}
+function bulkSelectAll() { bulkToggleAll(true); toast('已勾选当前筛选的 ' + bulkFilterList().length + ' 个商品'); }
+function bulkClear() { bulkSel = {}; bulkUseCapsOn = false; $('bulkResult').innerHTML = ''; renderProducts(); }
+function quickBulk(mode, value) {
+  if ($('bulkMode')) $('bulkMode').value = mode;
+  if ($('bulkValue')) $('bulkValue').value = value;
+  renderBulkPreview();
+}
+function useBulkCaps() {
+  const caps = bulkRowsCache.filter(r => r.status === 'capped').length;
+  if (!caps) return toast('当前没有超防线的商品');
+  bulkUseCapsOn = true;
+  renderBulkPreview();
+  toast('把 ' + caps + ' 个超防线商品改用「参考价 × 0.95」顶格价', 3600);
+}
+
+function renderBulkPreview() {
+  const box = $('bulkPreview');
+  if (!box) return;
+  if ($('bulkMode') && $('bulkMode').options && !$('bulkMode').options.length) {
+    $('bulkMode').innerHTML = Admin.BULK_MODES.map(m => '<option value="' + m[0] + '">' + m[1] + '</option>').join('');
+    $('bulkStep').innerHTML = Admin.BULK_ROUNDS.map(r => '<option value="' + r[0] + '">' + r[1] + '</option>').join('');
+  }
+  const list = bulkProducts();
+  if (!list.length) {
+    bulkRowsCache = [];
+    if ($('bulkSelHint')) $('bulkSelHint').textContent = '先在上表勾选商品';
+    box.innerHTML = '<div class="empty" style="padding:22px"><span class="big">☑️</span>还没有勾选商品：在上表逐行勾选，或点右上「勾选当前筛选」</div>';
+    return;
+  }
+  const rule = bulkRule();
+  const rows = Admin.bulkPlan(list, rule, bulkUseCapsOn ? { useCaps: bulkSel } : null);
+  bulkRowsCache = rows;
+  const s = Admin.bulkSummary(rows);
+  if ($('bulkSelHint')) {
+    $('bulkSelHint').textContent = '已勾选 ' + list.length + ' 个 · 可改 ' + s.change +
+      (s.capped ? ' · 超防线 ' + s.capped : '') + (s.blocked ? ' · 不能改 ' + s.blocked : '') +
+      (s.same ? ' · 未变 ' + s.same : '') + '（规则：' + Admin.ruleLabel(rule) + '）';
+  }
+  const badge = st => st === 'change' ? '<span class="badge st-done">可改</span>'
+    : st === 'capped' ? '<span class="badge st-cancelled">超防线</span>'
+      : st === 'blocked' ? '<span class="badge st-pending">不能改</span>' : '<span class="badge">未变</span>';
+  box.innerHTML = '<table class="table bulk-preview"><thead><tr><th>商品</th><th class="num">现价</th><th class="num">新价</th><th class="num">涨跌</th><th>防线</th><th>说明</th></tr></thead><tbody>' +
+    rows.map(r => '<tr class="' + r.status + '">' +
+      '<td><b>' + esc(r.name) + '</b><div class="muted" style="font-size:11.5px">' + esc(r.code) + (r.isWholesale ? ' · 批发' : '') + '</div></td>' +
+      '<td class="num">' + yuan(r.oldPrice) + '</td>' +
+      '<td class="num"><b>' + (r.status === 'blocked' ? '—' : yuan(r.newPrice)) + '</b>' +
+        (r.status !== 'change' && r.cap ? '<div class="muted" style="font-size:11.5px">顶格 ' + yuan(r.cap) + '</div>' : '') + '</td>' +
+      '<td class="num">' + (r.status === 'change' && r.delta ? (r.delta > 0 ? '▲ ' : '▼ ') + Math.abs(r.delta).toFixed(2) : '—') + '</td>' +
+      '<td>' + badge(r.status) + '</td>' +
+      '<td class="muted" style="font-size:12px">' + esc(r.msg) + '</td></tr>').join('') + '</tbody></table>';
+}
+
+function bulkResultHTML(res, label) {
+  const fails = res.failed || [];
+  return '<div class="row-between"><div>' +
+    '<span class="badge ' + (res.changed ? 'st-done' : 'st-pending') + '">' + esc(label) + '：成功 ' + res.changed + ' 个</span> ' +
+    (res.skipped ? '<span class="badge">跳过 ' + res.skipped + '</span> ' : '') +
+    (fails.length ? '<span class="badge st-cancelled">失败 ' + fails.length + '</span>' : '') +
+    '</div><div class="muted" style="font-size:12px">每款都写了商品流水，可在「库存与流水」查「' + esc(label) + '」</div></div>' +
+    (fails.length ? '<div class="hint" style="margin-top:8px">' + fails.slice(0, 6).map(f => esc((f.name || f.code) + '：' + f.msg)).join('<br>') + '</div>' : '');
+}
+
+async function applyBulk() {
+  const rows = bulkRowsCache.filter(r => r.status === 'change');
+  if (!bulkCodes().length) return toast('请先勾选商品', 3200);
+  if (!rows.length) {
+    const capped = bulkRowsCache.filter(r => r.status === 'capped').length;
+    return toast(capped ? '没有可改的行：有 ' + capped + ' 个超防线，可点「按防线顶格」' : '没有可改的行：换个规则试试', 4000);
+  }
+  const label = Admin.ruleLabel(bulkRule());
+  const capped = bulkRowsCache.filter(r => r.status === 'capped').length;
+  if (typeof confirm === 'function' && !confirm('按「' + label + '」改 ' + rows.length + ' 个商品的售价？' +
+    (capped ? '\n另有 ' + capped + ' 个超防线将跳过。' : '') + '\n库存不动，每款记一条流水。')) return;
+  let res;
+  if (online()) {
+    res = { changed: 0, skipped: 0, failed: [] };
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const p = Mall.getProduct(r.code);
+      if (!p) { res.failed.push({ code: r.code, name: r.name, msg: '商品不存在' }); continue; }
+      try {
+        await SdyApi.upsertProduct({
+          code: p.code, name: p.name, brand: p.brand || '', spec: p.spec || '',
+          category: p.category || Admin.DEFAULT_CATEGORY, unit: p.unit || Admin.DEFAULT_UNIT,
+          costPrice: p.costPrice || 0, salePrice: r.newPrice, refPrice: p.refPrice || 0,
+          isWholesale: !!(p.isWholesale || p.wholesale)
+        });
+        Admin.logProductEvent('edit', Object.assign({}, p, { salePrice: r.newPrice }), { by: BY, reason: label, stock: p.stock });
+        res.changed++;
+      } catch (e) { res.failed.push({ code: r.code, name: r.name, msg: e.message }); }
+    }
+  } else {
+    res = Admin.applyBulkPlan(rows, { rule: bulkRule(), by: BY });
+  }
+  $('bulkResult').innerHTML = bulkResultHTML(res, label);
+  renderAllAdmin();
+  toast('批量改价完成：成功 ' + res.changed + ' 个' + ((res.failed || []).length ? '，失败 ' + res.failed.length + ' 个' : '') + (online() ? '' : '（本地演示）'), 4000);
+}
+
+async function applyBulkCat() {
+  const codes = bulkCodes();
+  if (!codes.length) return toast('请先勾选商品', 3200);
+  const cat = (($('bulkCat') && $('bulkCat').value) || '').trim();
+  if (!cat) return toast('请填写要改成的分类名', 3200);
+  if (typeof confirm === 'function' && !confirm('把 ' + codes.length + ' 个商品的分类改成「' + cat + '」？')) return;
+  let res;
+  if (online()) {
+    res = { changed: 0, failed: [] };
+    for (let i = 0; i < codes.length; i++) {
+      const p = Mall.getProduct(codes[i]);
+      if (!p) { res.failed.push({ code: codes[i], msg: '商品不存在' }); continue; }
+      try {
+        await SdyApi.upsertProduct({
+          code: p.code, name: p.name, brand: p.brand || '', spec: p.spec || '', category: cat,
+          unit: p.unit || Admin.DEFAULT_UNIT, costPrice: p.costPrice || 0, salePrice: p.salePrice || 0,
+          refPrice: p.refPrice || 0, isWholesale: !!(p.isWholesale || p.wholesale)
+        });
+        Admin.logProductEvent('edit', Object.assign({}, p, { category: cat }), { by: BY, reason: '批量改分类：' + cat, stock: p.stock });
+        res.changed++;
+      } catch (e) { res.failed.push({ code: codes[i], name: p.name, msg: e.message }); }
+    }
+  } else {
+    res = Admin.applyBulkField(codes, 'category', cat, { by: BY });
+  }
+  $('bulkResult').innerHTML = bulkResultHTML(res, '批量改分类：' + cat);
+  renderAllAdmin();
+  toast('已改分类：' + res.changed + ' 个商品', 3200);
+}
+
+async function applyBulkWhole() {
+  const codes = bulkCodes();
+  if (!codes.length) return toast('请先勾选商品', 3200);
+  const on = (($('bulkWhole') && $('bulkWhole').value) || '1') === '1';
+  if (typeof confirm === 'function' && !confirm('把 ' + codes.length + ' 个商品' + (on ? '设为批发（跳过比价检查）' : '取消批发（恢复比价检查）') + '？')) return;
+  const label = '批量改批发标记：' + (on ? '设为批发' : '取消批发');
+  let res;
+  if (online()) {
+    res = { changed: 0, failed: [] };
+    for (let i = 0; i < codes.length; i++) {
+      const p = Mall.getProduct(codes[i]);
+      if (!p) { res.failed.push({ code: codes[i], msg: '商品不存在' }); continue; }
+      if (!on) {
+        // 取消批发 = 交回比价防线，超线的先拦下（与 Admin.applyBulkField 同口径）
+        const chk = Pricing.checkRetailPrice(Object.assign({}, p, { isWholesale: false, wholesale: false }));
+        if (!chk.ok) { res.failed.push({ code: p.code, name: p.name, msg: '取消批发后' + chk.msg }); continue; }
+      }
+      try {
+        await SdyApi.upsertProduct({
+          code: p.code, name: p.name, brand: p.brand || '', spec: p.spec || '',
+          category: p.category || Admin.DEFAULT_CATEGORY, unit: p.unit || Admin.DEFAULT_UNIT,
+          costPrice: p.costPrice || 0, salePrice: p.salePrice || 0, refPrice: p.refPrice || 0, isWholesale: on
+        });
+        Admin.logProductEvent('edit', Object.assign({}, p, { isWholesale: on }), { by: BY, reason: label, stock: p.stock });
+        res.changed++;
+      } catch (e) { res.failed.push({ code: codes[i], name: p.name, msg: e.message }); }
+    }
+  } else {
+    res = Admin.applyBulkField(codes, 'isWholesale', on, { by: BY });
+  }
+  $('bulkResult').innerHTML = bulkResultHTML(res, label);
+  renderAllAdmin();
+  toast('已' + (on ? '设为批发' : '取消批发') + '：' + res.changed + ' 个商品', 3200);
+}
 
 function openProductDlg(code) {
   editCode = code || '';

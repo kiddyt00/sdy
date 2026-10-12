@@ -182,6 +182,8 @@ const Mall = (() => {
       status: 'pending'
     };
     const orders = getOrders();
+    // 订单号唯一：本地单号是毫秒时间戳，同一毫秒内连下两单会撞号，之后按 id 找单会找错单
+    while (orders.some(o => o.id === order.id)) order.id = 'M' + (Number(order.id.slice(1)) + 1);
     orders.unshift(order);
     saveOrders(orders);
     clearCart();

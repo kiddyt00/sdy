@@ -311,6 +311,157 @@ const Admin = (() => {
     };
   }
 
+  /* ---------------- 批量改价 / 批量操作（任务池第 5 项，决策 D20） ----------------
+   * 约定：批量改价 = 对选中的商品逐款套用同一条规则，**必须过比价防线**
+   *      （与单款建档共用 `pricing.checkRetailPrice`，批发商品按配置豁免）；
+   *      超线不静默写入：标红并给出「防线顶格价」（参考价 × 0.95），店主可一键采用；
+   *      每一款改动都写一条商品事件流水（product_edit，reason 记下规则原文），可追溯到人与时间；
+   *      批量只改售价 / 分类 / 批发标记，**绝不动库存**（与 D16「编辑不改库存」同源）。
+   */
+  const BULK_MODES = [['pct', '按比例 %'], ['delta', '按金额 ±元'], ['set', '统一设为元']];
+  const BULK_ROUNDS = [[0.01, '不取整（到分）'], [0.1, '到 1 角'], [0.5, '到 5 角'], [1, '到 1 元']];
+  const BULK_FIELDS = { category: '分类', isWholesale: '批发标记' };
+
+  // 四舍五入到步长（step = 0.01 即到分）
+  function roundStep(n, step) {
+    const s = Number(step) || 0.01;
+    return round2(Math.round((Number(n) || 0) / s) * s);
+  }
+
+  // 单款新售价（纯函数）：rule = {mode:'pct'|'delta'|'set', value, step}
+  function bulkNewPrice(p, rule) {
+    const r = rule || {};
+    const base = Number(p && p.salePrice) || 0;
+    const v = Number(r.value) || 0;
+    let n;
+    if (r.mode === 'pct') n = base * (1 + v / 100);
+    else if (r.mode === 'delta') n = base + v;
+    else if (r.mode === 'set') n = v;
+    else throw new Error('未知的调整方式：' + r.mode);
+    return roundStep(n, r.step);
+  }
+
+  // 规则的人话描述（写进流水 reason，日后能查出「哪次批量改的」）
+  function ruleLabel(rule) {
+    const r = rule || {};
+    if (r.mode !== 'pct' && r.mode !== 'delta' && r.mode !== 'set') return '批量改价';
+    const v = Number(r.value) || 0;
+    const step = Number(r.step) || 0.01;
+    const tail = step > 0.01 ? ('，取整到 ' + step + ' 元') : '';
+    if (r.mode === 'pct') return '批量改价：' + (v >= 0 ? '+' : '') + v + '%' + tail;
+    if (r.mode === 'delta') return '批量改价：' + (v >= 0 ? '+' : '') + v + ' 元' + tail;
+    return '批量改价：统一 ' + v + ' 元' + tail;
+  }
+
+  // 预览（纯函数，不写数据）：逐款算新价并过防线
+  // status：change 可改 / same 价格未变 / capped 超防线（给出顶格价）/ blocked 非法（如 ≤ 0）
+  function bulkPlan(list, rule, opts) {
+    const o = opts || {};
+    const useCaps = o.useCaps || {};
+    return (list || []).map(p => {
+      const row = {
+        code: p.code, name: p.name, unit: p.unit || DEFAULT_UNIT, isWholesale: !!(p.isWholesale || p.wholesale),
+        oldPrice: round2(Number(p.salePrice) || 0), newPrice: 0, delta: 0,
+        status: 'change', msg: '', cap: 0
+      };
+      try { row.newPrice = bulkNewPrice(p, rule); }
+      catch (e) { row.status = 'blocked'; row.msg = e.message; return row; }
+
+      if (!(row.newPrice > 0)) {
+        row.status = 'blocked'; row.msg = '新售价必须大于 0';
+      } else if (row.newPrice === row.oldPrice) {
+        row.status = 'same'; row.msg = '价格未变';
+      } else {
+        const chk = PricingCore.checkRetailPrice(Object.assign({}, p, { salePrice: row.newPrice }));
+        if (chk.ok) {
+          row.msg = chk.skip ? (row.isWholesale ? '批发商品，跳过比价检查（+ 仍会记流水）' : '缺牵牛花参考价，跳过比价检查') : '合规';
+        } else {
+          row.cap = round2((Number(p.refPrice) || 0) * 0.95);
+          if (row.cap > 0 && row.cap !== row.oldPrice && useCaps[p.code]) {
+            row.newPrice = row.cap; row.msg = '已按防线顶格 ' + row.cap.toFixed(2);
+          } else if (row.cap > 0 && row.cap !== row.oldPrice) {
+            row.status = 'capped'; row.msg = chk.msg;
+          } else {
+            row.status = 'blocked'; row.newPrice = 0; row.msg = '超防线且没有可用的合规价（缺参考价或顶格价与现价相同）';
+          }
+        }
+      }
+      row.delta = round2(row.newPrice - row.oldPrice);
+      return row;
+    });
+  }
+
+  function bulkSummary(rows) {
+    const s = { total: 0, change: 0, same: 0, capped: 0, blocked: 0, up: 0, down: 0 };
+    (rows || []).forEach(r => {
+      s.total++;
+      s[r.status] = (s[r.status] || 0) + 1;
+      if (r.status === 'change') { if (r.delta > 0) s.up++; else if (r.delta < 0) s.down++; }
+    });
+    return s;
+  }
+
+  // 落盘（本地镜像路径）：只写 status=change 的行，逐款 try/catch，不因一款失败中断整批。
+  // 注意：写入时**重新读当前商品**（预览用的是快照），避免上一批写完后用旧对象把分类等字段覆盖回去；
+  // 库存、分类、批发标记等未被批量规则涉及的字段一律保持原值（D16：编辑不改库存）。
+  function applyBulkPlan(rows, opts) {
+    const o = opts || {};
+    const out = { changed: 0, skipped: 0, noop: 0, failed: [], rows: [] };
+    const reason = o.reason || ruleLabel(o.rule);
+    (rows || []).forEach(row => {
+      if (row.status !== 'change') { out.skipped++; return; }
+      let p = null;
+      try { p = MallCore.getProduct(row.code); } catch (e) { p = null; }
+      if (!p) { out.failed.push({ code: row.code, name: row.name, msg: '商品不存在' }); return; }
+      const before = round2(Number(p.salePrice) || 0);
+      if (before === round2(row.newPrice)) { out.skipped++; out.noop++; return; }  // 预览快照过期：现价已等于目标价，跳过不写流水
+      try {
+        saveProduct(Object.assign({}, p, { salePrice: row.newPrice }), { by: o.by, reason: reason });
+        out.changed++;
+        out.rows.push({ code: row.code, name: p.name, before: before, after: round2(row.newPrice) });
+      } catch (e) {
+        out.failed.push({ code: row.code, name: row.name, msg: e.message });
+      }
+    });
+    return out;
+  }
+
+  // 批量改分类 / 批发标记（同样逐款重读 + 写流水；分类名做非空与长度校验）
+  function applyBulkField(codes, field, value, opts) {
+    if (!BULK_FIELDS[field]) throw new Error('不支持的批量字段：' + field);
+    if (field === 'category') {
+      const v = String(value == null ? '' : value).trim();
+      if (!v) throw new Error('分类不能为空');
+      if (v.length > 12) throw new Error('分类名不要超过 12 个字');
+      value = v;
+    } else {
+      value = !!value;
+    }
+    const out = { changed: 0, failed: [] };
+    (codes || []).forEach(code => {
+      let p = null;
+      try { p = MallCore.getProduct(code); } catch (e) { p = null; }
+      if (!p) { out.failed.push({ code: code, msg: '商品不存在' }); return; }
+      // 取消批发 = 把商品交回比价防线：售价已经超线的必须先改价，绝不静默改价
+      if (field === 'isWholesale' && value === false) {
+        const chk = PricingCore.checkRetailPrice(Object.assign({}, p, { isWholesale: false, wholesale: false }));
+        if (!chk.ok) { out.failed.push({ code: code, name: p.name, msg: '取消批发后' + chk.msg }); return; }
+      }
+      try {
+        const patch = {};
+        patch[field] = value;
+        saveProduct(Object.assign({}, p, patch), {
+          by: (opts || {}).by,
+          reason: '批量改' + BULK_FIELDS[field] + '：' + (field === 'isWholesale' ? (value ? '设为批发' : '取消批发') : value)
+        });
+        out.changed++;
+      } catch (e) {
+        out.failed.push({ code: code, name: p.name, msg: e.message });
+      }
+    });
+    return out;
+  }
+
   /* ---------------- 小票 / 配送单（任务池第 2 项） ----------------
    * 约定：小票是订单的**只读投影** —— 只读订单与门店抬头，不改订单、不改库存、不改价格
    *      （与 D8「扫码只读」同源）；金额一律两位小数，件数按 qty 求和。
@@ -568,6 +719,16 @@ const Admin = (() => {
     categories: categories,
     productStats: productStats,
     draftFrom: draftFrom,
+    BULK_MODES: BULK_MODES,
+    BULK_ROUNDS: BULK_ROUNDS,
+    BULK_FIELDS: BULK_FIELDS,
+    roundStep: roundStep,
+    bulkNewPrice: bulkNewPrice,
+    ruleLabel: ruleLabel,
+    bulkPlan: bulkPlan,
+    bulkSummary: bulkSummary,
+    applyBulkPlan: applyBulkPlan,
+    applyBulkField: applyBulkField,
     getCouriers: getCouriers,
     setCouriers: setCouriers,
     getStockLog: getStockLog,

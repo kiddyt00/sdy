@@ -458,6 +458,70 @@ const online = {
     ok(els.afTitle.textContent === '新增地址' && els.afContact.value === '' && els.afPhone.value === PHONE, 'resetAddrForm 清空表单并保留手机号');
   }
 
+  /* ---------- 管理端 · 批量改价 / 批量操作（D20） ---------- */
+  section('⑨ admin.html · 批量改价 / 批量操作（D20）');
+  {
+    const env = await bootPage('admin.html', offline);
+    const ctx = env.ctx;
+    const el = id => ctx.document.getElementById(id);
+    ctx.switchTab('products');
+    ok(el('bulkPreview').innerHTML.indexOf('还没有勾选商品') >= 0, '未勾选时预览区给空状态');
+    ok(env.els.bulkFilterCount.textContent === '6', '面板显示当前筛选商品数：' + env.els.bulkFilterCount.textContent);
+
+    Admin.saveProduct({ code:'BB1', name:'批量甲', category:'饮料', unit:'瓶', costPrice:6, salePrice:9, refPrice:10, isWholesale:false, stock:12 });
+    Admin.saveProduct({ code:'BB2', name:'批量乙', category:'饮料', unit:'瓶', costPrice:14, salePrice:20, refPrice:10, isWholesale:true, stock:3 });
+    env.els.prodQ.value = '批量';
+    ctx.renderProducts();
+    ok(env.els.prodTable.innerHTML.indexOf('批量甲') >= 0 && env.els.prodTable.innerHTML.indexOf('可口可乐') < 0, '按关键词筛选出待批量商品');
+    ok(env.els.bulkFilterCount.textContent === '2', '筛选计数同步为 2');
+
+    ctx.bulkSelectAll();
+    ok(env.els.prodAll.checked === true, '「勾选当前筛选」后表头全选态为真');
+    ok((env.els.prodTable.innerHTML.match(/checked onchange/g) || []).length === 2, '表格里 2 行 checkbox 都被勾上');
+    ok(env.els.bulkSelHint.textContent.indexOf('已勾选 2 个') >= 0, '面板提示：' + env.els.bulkSelHint.textContent);
+
+    env.els.bulkMode.value = 'pct'; env.els.bulkValue.value = '20'; env.els.bulkStep.value = '0.01';
+    ctx.renderBulkPreview();
+    ok(env.els.bulkPreview.innerHTML.indexOf('超防线') >= 0, '预览标出超防线商品（BB1 10.80 > 9.50）');
+    ok(env.els.bulkPreview.innerHTML.indexOf('批发') >= 0, '预览标出批发商品（跳过比价检查）');
+    ok(env.els.bulkSelHint.textContent.indexOf('可改 1') >= 0 && env.els.bulkSelHint.textContent.indexOf('超防线 1') >= 0, '面板汇总：可改 1 / 超防线 1');
+
+    ctx.useBulkCaps();
+    ok(env.els.bulkSelHint.textContent.indexOf('可改 2') >= 0, '「按防线顶格」后可改变 2 个');
+    ok(env.els.bulkPreview.innerHTML.indexOf('9.50') >= 0, '预览出现顶格价 9.50');
+
+    const logBefore = Admin.getStockLog().length;
+    await ctx.applyBulk();
+    ok(Mall.getProduct('BB1').salePrice === 9.5 && Mall.getProduct('BB2').salePrice === 24, '批量改价落库：9.50 / 24.00');
+    ok(Mall.getProduct('BB1').stock === 12 && Mall.getProduct('BB2').stock === 3, '批量改价一律不动库存（D16）');
+    ok(Admin.getStockLog().length === logBefore + 2, '每款写一条商品流水');
+    ok(env.els.bulkResult.innerHTML.indexOf('成功 2 个') >= 0, '结果区显示成功数');
+    ok(env.els.toast.className.indexOf('show') >= 0, '完成后弹 toast');
+
+    el('bulkCat').value = ' 冲调 ';
+    await ctx.applyBulkCat();
+    ok(Mall.getProduct('BB1').category === '冲调' && Mall.getProduct('BB2').category === '冲调', '批量改分类落库（并 trim）');
+    ok(env.els.bulkResult.innerHTML.indexOf('批量改分类：冲调') >= 0, '结果区带改分类标签');
+    ok(Mall.getProduct('BB1').salePrice === 9.5, '改分类不动售价');
+
+    el('bulkWhole').value = '1';
+    await ctx.applyBulkWhole();
+    ok(Mall.getProduct('BB1').isWholesale === true && Mall.getProduct('BB2').isWholesale === true, '批量设为批发生效');
+    el('bulkWhole').value = '0';
+    await ctx.applyBulkWhole();
+    ok(Mall.getProduct('BB1').isWholesale === false, '批量取消批发：合规那款生效');
+    ok(Mall.getProduct('BB2').isWholesale === true, '取消批发后被比价防线拦住（BB2 售 24.00 > 顶格 9.50）');
+    ok(el('bulkResult').innerHTML.indexOf('取消批发后') >= 0, '结果区说明被拦原因');
+    ok(Mall.getProduct('BB2').salePrice === 24 && Mall.getProduct('BB1').salePrice === 9.5, '被拦的款价格分毫未动');
+
+    ctx.bulkClear();
+    ok(env.els.bulkSelHint.textContent.indexOf('先在上表勾选') >= 0, '清空勾选后回到未选状态');
+    ok(env.els.bulkResult.innerHTML === '', '清空勾选同时清空上一批结果');
+    env.els.prodQ.value = '';
+    ctx.renderProducts();
+    ok(env.els.bulkFilterCount.textContent === '8', '清空关键词后计数回到全部 8 个商品');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

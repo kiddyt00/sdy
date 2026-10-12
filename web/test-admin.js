@@ -346,6 +346,79 @@ section('⑧ 销售报表 / 日报（D19）');
   ok(Admin.reportText(empty, { store: { name: '家庭超市' }, now: NOW }).indexOf('热销') < 0, '零单日报不打印热销段');
 }
 
+// ============ ⑨ 批量改价 / 批量操作（任务池第 5 项，D20） ============
+section('⑨ 批量改价 / 批量操作（D20）');
+fresh();
+{
+  Admin.saveProduct({ code:'B1', name:'批量测试1', category:'饮料', unit:'瓶', costPrice:6, salePrice:9, refPrice:10, isWholesale:false, stock:12 }, { by:'老板' });
+  Admin.saveProduct({ code:'B2', name:'批量测试2', category:'饮料', unit:'瓶', costPrice:14, salePrice:20, refPrice:10, isWholesale:true, stock:3 }, { by:'老板' });
+  Admin.saveProduct({ code:'B3', name:'批量测试3', category:'未分类', unit:'件', costPrice:5, salePrice:7, refPrice:0, isWholesale:false, stock:30 }, { by:'老板' });
+  Admin.saveProduct({ code:'B4', name:'批量测试4', category:'纸品', unit:'提', costPrice:3, salePrice:5, refPrice:100, isWholesale:false, stock:8 }, { by:'老板' });
+  const shop = ['B1','B2','B3','B4'].map(c => Mall.getProduct(c));
+  ok(shop.length === 4 && shop.every(Boolean) && shop[0].salePrice === 9, '造 4 款商品（超防线 / 批发 / 缺参考价 / 高参考价）');
+
+  ok(Admin.roundStep(3.33, 0.5) === 3.5 && Admin.roundStep(3.24, 0.1) === 3.2 && Admin.roundStep(7.4, 1) === 7, 'roundStep 按步长四舍五入');
+  ok(Admin.bulkNewPrice({ salePrice:9 }, { mode:'pct', value:20, step:0.01 }) === 10.8, '按比例 +20%：9.00 → 10.80');
+  ok(Admin.bulkNewPrice({ salePrice:9 }, { mode:'delta', value:1, step:0.01 }) === 10, '按金额 +1：9.00 → 10.00');
+  ok(Admin.bulkNewPrice({ salePrice:9 }, { mode:'set', value:8.88, step:0.5 }) === 9, '统一设为 8.88 取整到 5 角 → 9.00');
+  throws(() => Admin.bulkNewPrice({ salePrice:9 }, { mode:'nope', value:1 }), '未知调整方式抛错');
+  ok(Admin.ruleLabel({ mode:'pct', value:10, step:1 }) === '批量改价：+10%，取整到 1 元', '规则写成「人话」进流水 reason');
+  ok(Admin.ruleLabel({ mode:'nope' }) === '批量改价', '未知规则回落「批量改价」');
+  ok(Admin.BULK_MODES.length === 3 && Admin.BULK_ROUNDS.length === 4, '三种调整方式 / 四档取整');
+
+  const rule20 = { mode:'pct', value:20, step:0.01 };
+  const rows = Admin.bulkPlan(shop, rule20);
+  ok(rows.length === 4 && rows[0].status === 'capped' && rows[0].cap === 9.5, 'B1 10.80 超防线 9.50 → capped 并给出顶格价');
+  ok(rows[1].status === 'change' && rows[1].newPrice === 24 && rows[1].msg.indexOf('批发') >= 0, 'B2 批发商品跳过比价检查 → 可改 24.00');
+  ok(rows[2].status === 'change' && rows[2].newPrice === 8.4 && rows[2].msg.indexOf('缺') >= 0, 'B3 缺牵牛花参考价 → 跳过检查可改 8.40');
+  ok(rows[3].status === 'change' && rows[3].newPrice === 6, 'B4 参考价高 → 6.00 合规');
+  ok(rows[0].delta === 1.8 && rows[3].delta === 1, '预览给出涨跌差值');
+  const s20 = Admin.bulkSummary(rows);
+  ok(s20.total === 4 && s20.change === 3 && s20.capped === 1 && s20.up === 3, 'summary：4 款 / 可改 3 / 超防线 1 / 全为涨价');
+
+  const caps = Admin.bulkPlan(shop, rule20, { useCaps: { B1: 1 } });
+  ok(caps[0].status === 'change' && caps[0].newPrice === 9.5 && caps[0].msg.indexOf('顶格') >= 0, '按防线顶格：B1 改用 9.50 并标「顶格」');
+  ok(Admin.bulkPlan(shop, rule20, { useCaps: { B2: 1 } })[0].status === 'capped', 'useCaps 只对超线行起作用');
+  ok(Admin.bulkPlan(shop, { mode:'pct', value:0, step:0.01 }).every(r => r.status === 'same'), '价格未变 → same（不写流水）');
+  ok(Admin.bulkPlan(shop, { mode:'set', value:0, step:0.01 })[0].status === 'blocked', '新价 0 → blocked');
+  ok(Admin.bulkPlan([{ code:'X', name:'X', salePrice:1, refPrice:1 }], { mode:'delta', value:-5, step:0.01 })[0].status === 'blocked', '新价为负 → blocked');
+
+  const logBefore = Admin.getStockLog().length;
+  const res = Admin.applyBulkPlan(rows, { rule: rule20, by: '老板' });
+  ok(res.changed === 3 && res.rows.length === 3 && res.failed.length === 0, '只写入 change 行（B2 批发 / B3 缺参考价 / B4 合规）；超防线的 B1 不写');
+  ok(Mall.getProduct('B2').salePrice === 24 && Mall.getProduct('B3').salePrice === 8.4, '新售价已落库');
+  ok(Mall.getProduct('B1').salePrice === 9, '超防线那款价格没被动');
+  ok(Mall.getProduct('B2').stock === 3 && Mall.getProduct('B3').stock === 30, '库存一律不动（D16）');
+  ok(Mall.getProduct('B1').category === '饮料' && Mall.getProduct('B4').category === '纸品', '规则未涉及的字段保持原值');
+  const ev = Admin.getStockLog().filter(e => e.type === 'product_edit' && e.reason === '批量改价：+20%');
+  ok(ev.length === 3 && ev[0].delta === 0 && ev[0].by === '老板', '每款写一条 product_edit 流水，reason 记规则原文');
+  ok(Admin.getStockLog().length === logBefore + 3, '流水只增 3 条（超防线那款不写）');
+  const res2 = Admin.applyBulkPlan(rows, { rule: rule20, by: '老板' });
+  ok(res2.changed === 0 && res2.noop === 3, '同一批再应用一次：现价已等于目标价 → 跳过且不写流水');
+  ok(Admin.getStockLog().length === logBefore + 3, '重复应用不再增流水');
+
+  const stale = Admin.bulkPlan([{ code:'B2', name:'批量测试2', salePrice:24, refPrice:10, isWholesale:true, category:'饮料' }], { mode:'delta', value:1, step:0.01 });
+  Admin.applyBulkField(['B2'], 'category', '酒水', { by:'老板' });
+  const res3 = Admin.applyBulkPlan(stale, { rule:{ mode:'delta', value:1, step:0.01 }, by:'老板' });
+  ok(res3.changed === 1 && Mall.getProduct('B2').salePrice === 25, '过期快照仍能按目标价改价');
+  ok(Mall.getProduct('B2').category === '酒水', '写入时重读当前商品，不把旧分类覆盖回去');
+
+  const r4 = Admin.applyBulkField(['B1','B3','NOPE'], 'category', ' 冲调 ', { by:'老板' });
+  ok(r4.changed === 2 && r4.failed.length === 1 && r4.failed[0].code === 'NOPE', '批量改分类：成功 2 / 不存在的 1（不中断整批）');
+  ok(Mall.getProduct('B1').category === '冲调' && Mall.getProduct('B3').category === '冲调', '分类名 trim 后落库');
+  ok(Mall.getProduct('B1').stock === 12, '批量改分类不动库存');
+  throws(() => Admin.applyBulkField(['B1'], 'category', '   '), '空分类被拦');
+  throws(() => Admin.applyBulkField(['B1'], 'img', 'x'), '不支持的批量字段抛错');
+  const r5 = Admin.applyBulkField(['B1','B4'], 'isWholesale', true, { by:'老板' });
+  ok(r5.changed === 2 && Mall.getProduct('B1').isWholesale === true, '批量设为批发生效');
+  const r6 = Admin.applyBulkField(['B1'], 'isWholesale', false, { by:'老板' });
+  ok(r6.changed === 1 && !Mall.getProduct('B1').isWholesale, '批量取消批发生效');
+  ok(Admin.getStockLog().filter(e => e.reason === '批量改批发标记：取消批发').length === 1, '批发标记改动也写流水');
+  const r7 = Admin.applyBulkField(['B2'], 'isWholesale', false, { by:'老板' });
+  ok(r7.changed === 0 && r7.failed.length === 1 && r7.failed[0].msg.indexOf('取消批发后') === 0, '售价超防线时取消批发被拦（' + r7.failed[0].msg.slice(0, 22) + '…）');
+  ok(Mall.getProduct('B2').isWholesale === true, '被拦的批发标记保持原样（绝不静默改价）');
+}
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);
