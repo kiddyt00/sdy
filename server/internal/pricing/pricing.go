@@ -78,6 +78,41 @@ func CheckRetailPrice(salePrice, refPrice float64, wholesale bool, cfg Config) R
 	return Result{OK: true, Cap: capPrice}
 }
 
+// 顾客等级（任务池⑦，D24）：同一件商品按顾客等级显示不同价。
+// 等级按手机号归档（无账号体系，手机号即身份，延续 D18）。
+const (
+	TierRetail    = "retail"    // 零售（默认）
+	TierWholesale = "wholesale" // 批发
+	TierVIP       = "vip"       // 白名单
+)
+
+// ValidTier 校验等级取值；空串按零售处理（缺字段视为旧行为，延续 D23）。
+func ValidTier(t string) bool {
+	return t == "" || t == TierRetail || t == TierWholesale || t == TierVIP
+}
+
+// NormalizeTier 把空串归一成零售，避免各处各写一遍判定。
+func NormalizeTier(t string) string {
+	if t == "" {
+		return TierRetail
+	}
+	return t
+}
+
+// IsWholesaleTier 非零售等级（批发 / 白名单）：取批发价，且不参与零售比价防线。
+func IsWholesaleTier(t string) bool {
+	return t == TierWholesale || t == TierVIP
+}
+
+// EffectivePrice 按顾客等级取有效价：非零售等级且批发价大于 0 时用批发价，否则用零售价。
+// 服务端与前端调同一个函数语义（web/pricing.js 的 effectivePrice），保证页面显示与订单入库同价。
+func EffectivePrice(tier string, salePrice, wholesalePrice float64) float64 {
+	if IsWholesaleTier(tier) && wholesalePrice > 0 {
+		return round2(wholesalePrice)
+	}
+	return round2(salePrice)
+}
+
 // Item 参与巡检的商品。
 type Item struct {
 	Code        string  `json:"code"`

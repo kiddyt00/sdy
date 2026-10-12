@@ -111,7 +111,21 @@ const Admin = (() => {
   }
 
   // ---------------- 顾客管理（私域雏形） ----------------
-  // 由订单聚合：同手机号合并；叠加备注/标签
+  // 由订单聚合：同手机号合并；叠加备注/标签/等级。
+  // 等级（任务池⑦ / D24）＝顾客维度定价口径：retail 零售（默认）/ wholesale 批发 / vip 白名单。
+  // 手机号就是身份（延续 D18，不做账号体系）；在线时等级真源在后端 customer.tier，
+  // 这里把它同步进本地档案（mall_customers[phone].tier），页面渲染两条路都不变。
+  const TIERS = [
+    { v: 'retail', label: '零售' },
+    { v: 'wholesale', label: '批发' },
+    { v: 'vip', label: '白名单' }
+  ];
+  function tierLabel(tier) {
+    const hit = TIERS.find(x => x.v === tier);
+    return hit ? hit.label : '零售';
+  }
+  function validTier(tier) { return TIERS.some(x => x.v === tier); }
+
   function getCustomers() {
     const orders = MallCore.getOrders();
     const map = {};
@@ -134,10 +148,49 @@ const Admin = (() => {
     const list = Object.keys(map).map(k => {
       const c = map[k];
       const n = notes[c.phone] || {};
-      return Object.assign({}, c, { note: n.note || '', tag: n.tag || '' });
+      return Object.assign({}, c, { note: n.note || '', tag: n.tag || '', tier: n.tier || 'retail' });
+    });
+    // 只登记了等级、还没下过单的顾客（批发客户常是先登记手机号再拿货）也要出现在档案里
+    Object.keys(notes).forEach(ph => {
+      if (!ph || map[ph]) return;
+      const n = notes[ph] || {};
+      if (!n.tier || n.tier === 'retail') return;
+      list.push({
+        name: n.name || '', phone: ph, address: '', orderCount: 0, totalSpent: 0,
+        firstOrderAt: 0, lastOrderAt: 0, note: n.note || '', tag: n.tag || '', tier: n.tier
+      });
     });
     list.sort((a, b) => b.lastOrderAt - a.lastOrderAt);
     return list;
+  }
+  // 在线：把后端顾客等级拉回本地档案（页面照旧读本地）
+  async function refreshCustomers() {
+    if (typeof SdyApi === 'undefined' || !SdyApi.on()) return getCustomers();
+    const items = await SdyApi.listCustomers();
+    const notes = MallCore._load(KEYS.customerNotes, {}) || {};
+    (items || []).forEach(c => {
+      const ph = String(c.phone || '').trim();
+      if (!ph) return;
+      if (!notes[ph]) notes[ph] = {};
+      notes[ph].tier = validTier(c.tier) ? c.tier : 'retail';
+      if (c.name && !notes[ph].name) notes[ph].name = c.name;
+    });
+    MallCore._save(KEYS.customerNotes, notes);
+    return getCustomers();
+  }
+  // 设等级：在线走后端（真源），成功后同步本地；离线只改本地
+  async function setTier(phone, name, tier) {
+    const ph = String(phone == null ? '' : phone).trim();
+    if (!ph) throw new Error('手机号不能为空');
+    const t = String(tier || '').trim() || 'retail';
+    if (!validTier(t)) throw new Error('顾客等级只能是 retail / wholesale / vip');
+    if (typeof SdyApi !== 'undefined' && SdyApi.on()) await SdyApi.setCustomerTier(ph, name || '', t);
+    const notes = MallCore._load(KEYS.customerNotes, {}) || {};
+    if (!notes[ph]) notes[ph] = {};
+    notes[ph].tier = t;
+    if (name) notes[ph].name = String(name).trim();
+    MallCore._save(KEYS.customerNotes, notes);
+    return notes[ph];
   }
   function setCustomerNote(phone, note, tag) {
     const notes = MallCore._load(KEYS.customerNotes, {}) || {};
@@ -179,6 +232,11 @@ const Admin = (() => {
     if (salePrice <= 0) throw new Error('售价必须大于 0');
     const costPrice = num(src.costPrice, '进价');
     const refPrice = num(src.refPrice, '牵牛花参考价');
+    // 批发价（任务池⑦ / D24）：0＝未设（批发客户也按零售价）；填了就不能高于零售价
+    const wholesalePrice = num(src.wholesalePrice, '批发价');
+    if (wholesalePrice > 0 && wholesalePrice > salePrice) {
+      throw new Error('批发价 ' + wholesalePrice + ' 不能高于零售价 ' + salePrice);
+    }
     const stock = num(src.stock, '初始库存');
     if (Math.abs(stock - Math.round(stock)) > 1e-9) throw new Error('初始库存要填整数（散装按最小单位计）');
 
@@ -190,10 +248,12 @@ const Admin = (() => {
       img: String(src.img || '').trim(),
       unit: String(src.unit || '').trim() || DEFAULT_UNIT,
       costPrice: costPrice, salePrice: salePrice, refPrice: refPrice,
+      wholesalePrice: wholesalePrice,
       stock: Math.round(stock),
       isWholesale: !!(src.isWholesale || src.wholesale)
     };
     // 价格防线：复用 pricing.js（与后端 Go pricing.CheckRetailPrice 同一份规则）
+    // 防线只管零售价；批发价是给特定顾客等级的价，不参与比价（D24 ⑤）
     const chk = PricingCore.checkRetailPrice(product);
     if (!chk.ok) throw new Error(chk.msg);
     return product;
@@ -747,7 +807,12 @@ const Admin = (() => {
     buildReport: buildReport,
     reportText: reportText,
     getCustomers: getCustomers,
-    setCustomerNote: setCustomerNote
+    setCustomerNote: setCustomerNote,
+    TIERS: TIERS,
+    tierLabel: tierLabel,
+    validTier: validTier,
+    refreshCustomers: refreshCustomers,
+    setTier: setTier
   };
 })();
 

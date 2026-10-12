@@ -73,6 +73,25 @@ section('⑤ pricingCheck 全量扫描');
 }
 ok(Pricing.pricingCheck([]).total === 0 && Pricing.pricingCheck([]).violations.length === 0, '空列表 total=0 violations=0');
 
+// ============ ⑥ 顾客等级与有效价（任务池⑦ / D24） ============
+// 与 Go 侧 internal/pricing 的 TestEffectivePrice 用同一组用例，保证双端口径一致。
+section('⑥ 顾客等级与有效价（非零售且批发价>0 → 批发价，一律 round2）');
+ok(Pricing.effectivePrice('retail', 60, 52) === 60, '零售等级 → 零售价 60');
+ok(Pricing.effectivePrice('', 60, 52) === 60, '缺等级（空串）视为零售 → 60');
+ok(Pricing.effectivePrice('wholesale', 60, 52) === 52, '批发等级 + 有批发价 → 52');
+ok(Pricing.effectivePrice('vip', 60, 52) === 52, '白名单同批发口径 → 52');
+ok(Pricing.effectivePrice('wholesale', 60, 0) === 60, '批发价 0（未设）→ 回落到零售价 60');
+ok(Pricing.effectivePrice('wholesale', 60.005, 0) === 60.01, '零售价一律 round2 → 60.01');
+ok(Pricing.effectivePrice('wholesale', 60, 52.005) === 52.01, '批发价一律 round2 → 52.01');
+ok(Pricing.normalizeTier('') === 'retail' && Pricing.normalizeTier('vip') === 'vip', 'normalizeTier：空串归一成零售');
+ok(Pricing.validTier('') && Pricing.validTier('retail') && Pricing.validTier('wholesale') && Pricing.validTier('vip'), '已知等级都合法（含空串）');
+ok(!Pricing.validTier('gold'), '未知等级 gold 不合法');
+ok(Pricing.isWholesaleTier('wholesale') && Pricing.isWholesaleTier('vip') && !Pricing.isWholesaleTier('retail'), 'isWholesaleTier 判定正确');
+ok(Pricing.tierLabel('wholesale') === '批发' && Pricing.tierLabel('') === '零售' && Pricing.tierLabel('vip') === '白名单', 'tierLabel 文案：零售 / 批发 / 白名单');
+// 批发价不参与零售比价防线：批发等级取到的批发价低于零售价，天然合规；但零售价本身仍要过防线
+ok(Pricing.checkRetailPrice({ salePrice: 60, refPrice: 60 }).ok === false, '零售价 60 > 防线 57（60×0.95）→ 仍拦');
+ok(Pricing.effectivePrice('wholesale', 60, 52) < 57, '批发价 52 在防线之内（批发客户不受零售防线限制）');
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

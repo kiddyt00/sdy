@@ -93,3 +93,37 @@ func TestPricingCheck(t *testing.T) {
 		t.Error("空列表应无违规")
 	}
 }
+
+// 任务池⑦ / D24：等级 → 有效价的取价口径。
+func TestEffectivePrice(t *testing.T) {
+	cases := []struct {
+		tier        string
+		sale, whole float64
+		want        float64
+	}{
+		{TierRetail, 60, 52, 60},
+		{"", 60, 52, 60}, // 缺字段视为零售（老库 / 老前端）
+		{TierWholesale, 60, 52, 52},
+		{TierVIP, 60, 52, 52}, // 白名单同批发口径
+		{TierWholesale, 60, 0, 60},
+		{TierWholesale, 60.005, 0, 60.01},  // 一律 round2，与订单入库同口径
+		{TierWholesale, 60, 52.005, 52.01}, // 批发价同样 round2
+	}
+	for _, c := range cases {
+		if got := EffectivePrice(c.tier, c.sale, c.whole); got != c.want {
+			t.Errorf("EffectivePrice(%q,%v,%v) = %v，期望 %v", c.tier, c.sale, c.whole, got, c.want)
+		}
+	}
+	if !ValidTier("") || !ValidTier(TierRetail) || !ValidTier(TierWholesale) || !ValidTier(TierVIP) {
+		t.Error("已知等级都应合法（含空串）")
+	}
+	if ValidTier("gold") {
+		t.Error("未知等级应不合法")
+	}
+	if NormalizeTier("") != TierRetail || NormalizeTier(TierVIP) != TierVIP {
+		t.Error("NormalizeTier 应把空串归一成零售")
+	}
+	if IsWholesaleTier(TierRetail) || !IsWholesaleTier(TierWholesale) || !IsWholesaleTier(TierVIP) {
+		t.Error("IsWholesaleTier 判定不对")
+	}
+}

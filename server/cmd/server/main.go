@@ -99,6 +99,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		switch r.Method {
 		case http.MethodGet:
 			// onSale=1 只回上架商品（顾客端商城用，D23）；不带参数回全量（管理端用）。
+			// phone 带上时按该顾客等级给有效价 price（D24）；不带 phone 一律零售价。
 			var (
 				list []store.Product
 				err  error
@@ -112,25 +113,39 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
+			// 价格口径的唯一真源在服务端：页面只读 price，不自己拿批发价换算（D12/D24）。
+			phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+			tier := pricing.TierRetail
+			if phone != "" {
+				if tier, err = st.GetCustomerTier(phone); err != nil {
+					writeErr(w, err)
+					return
+				}
+				for i := range list {
+					list[i].Tier = tier
+					list[i].Price = pricing.EffectivePrice(tier, list[i].SalePrice, list[i].WholesalePrice)
+				}
+			}
+			writeJSON(w, 200, map[string]any{"items": list, "total": len(list), "tier": tier})
 		case http.MethodPost:
 			// 建档 / 编辑商品档案（任务池①）。
 			// stock 用指针区分「没传」与「传 0」：编辑表单不带库存时不覆盖现有库存
 			// （不变量：编辑档案不改库存，库存只走 /api/products/stock）。
 			// 上下架同理：本接口不认 onSale，改状态只走 /api/products/onsale（D23）。
 			var req struct {
-				Code        string   `json:"code"`
-				Name        string   `json:"name"`
-				Brand       string   `json:"brand"`
-				Spec        string   `json:"spec"`
-				Category    string   `json:"category"`
-				Img         string   `json:"img"`
-				CostPrice   float64  `json:"costPrice"`
-				SalePrice   float64  `json:"salePrice"`
-				RefPrice    float64  `json:"refPrice"`
-				Unit        string   `json:"unit"`
-				Stock       *float64 `json:"stock"`
-				IsWholesale bool     `json:"isWholesale"`
+				Code           string   `json:"code"`
+				Name           string   `json:"name"`
+				Brand          string   `json:"brand"`
+				Spec           string   `json:"spec"`
+				Category       string   `json:"category"`
+				Img            string   `json:"img"`
+				CostPrice      float64  `json:"costPrice"`
+				SalePrice      float64  `json:"salePrice"`
+				WholesalePrice float64  `json:"wholesalePrice"`
+				RefPrice       float64  `json:"refPrice"`
+				Unit           string   `json:"unit"`
+				Stock          *float64 `json:"stock"`
+				IsWholesale    bool     `json:"isWholesale"`
 			}
 			if !decode(w, r, &req) {
 				return
@@ -143,7 +158,8 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			}
 			saved, err := st.UpsertProduct(store.Product{
 				Code: req.Code, Name: req.Name, Brand: req.Brand, Spec: req.Spec, Category: req.Category,
-				Img: req.Img, CostPrice: req.CostPrice, SalePrice: req.SalePrice, RefPrice: req.RefPrice,
+				Img: req.Img, CostPrice: req.CostPrice, SalePrice: req.SalePrice,
+				WholesalePrice: req.WholesalePrice, RefPrice: req.RefPrice,
 				Unit: req.Unit, Stock: stock, IsWholesale: req.IsWholesale,
 				SyncStatus: "pending", // 档案变更 → 待与牵牛花核对（D3 月度对账）
 			})
@@ -330,6 +346,42 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "id": id})
+	})
+
+	// 顾客等级（任务池⑦，D24）：GET 列表 / POST 设定。
+	// 等级只影响之后下单的有效价，历史订单价格是下单当时的快照。
+	mux.HandleFunc("/api/customers", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		list, err := st.ListCustomers()
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
+	})
+
+	mux.HandleFunc("/api/customers/tier", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		var in struct {
+			Phone string `json:"phone"`
+			Name  string `json:"name"`
+			Tier  string `json:"tier"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		saved, err := st.SetCustomerTier(in.Phone, in.Name, in.Tier)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, saved)
 	})
 
 	// 条码解析链（本地优先，扫码只读，不改库存）

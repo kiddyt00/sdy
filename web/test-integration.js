@@ -87,7 +87,32 @@ async function serverStock(code) {
   const pk = await SdyApi.pricingCheck();
   ok(pk.total >= 6 && pk.over === 0, '比价巡检 total=' + pk.total + ' over=' + pk.over);
 
-  section('⑦ 离线降级路径（错误地址）');
+  section('⑦ 批发价与顾客等级（D24，真后端算价）');
+  const PH = '13800002222';
+  const prod = Mall.getProduct(CODE);
+  const base = { code: prod.code, name: prod.name, brand: prod.brand, spec: prod.spec, category: prod.category,
+    img: prod.img || '', costPrice: prod.costPrice, salePrice: prod.salePrice, refPrice: prod.refPrice,
+    unit: prod.unit, isWholesale: false };
+  await SdyApi.upsertProduct(Object.assign({}, base, { wholesalePrice: 2.2 }));
+  await SdyApi.setCustomerTier(PH, '联调批发', 'wholesale');
+  const rw = await SdyApi.setMyPhone(PH);
+  ok(rw.tier === 'wholesale', '设手机号后服务端回等级 wholesale');
+  ok(Math.abs(Mall.getProduct(CODE).price - 2.2) < 1e-6, '带手机号取价：服务端下发批发价 ' + Mall.getProduct(CODE).price);
+  Mall.clearCart();
+  Mall.addToCart(CODE, 2);
+  const o3 = await SdyApi.createOrder({ deliveryType: 'pickup', customer: { name: '联调批发', phone: PH } });
+  ok(Math.abs(o3.subtotal - 4.4) < 1e-6 && Math.abs(o3.items[0].price - 2.2) < 1e-6, '批发客户下单按批发价算：2.2×2 = 4.4（前端传价不参与）');
+  const rr = await SdyApi.setCustomerTier(PH, '联调批发', 'retail');
+  const rl = await SdyApi.setMyPhone(PH);
+  ok(rr.tier === 'retail' && rl.tier === 'retail' && Math.abs(Mall.getProduct(CODE).price - 2.5) < 1e-6, '改回零售 → 取价回 2.5');
+  ok(Math.abs(o3.subtotal - 4.4) < 1e-6, '历史订单价格不变（下单当时快照）');
+  ok((await SdyApi.listCustomers()).some(c => c.phone === PH), '顾客档案里能查到该手机号');
+  // 清理演示数据：批发价清零 + 忘掉本机手机号
+  await SdyApi.upsertProduct(Object.assign({}, base, { wholesalePrice: 0 }));
+  Mall.setMyPhone('');
+  ok(Math.abs(Mall.getProduct(CODE).price - 2.5) < 1e-6, '清理后可乐回到零售价 2.5');
+
+  section('⑧ 离线降级路径（错误地址）');
   SdyApi._resetForTest();
   const st2 = await SdyApi.boot({ base: 'http://127.0.0.1:1', mall: Mall, timeoutMs: 600 });
   ok(st2.online === false, '连不上时自动退回本地演示模式');

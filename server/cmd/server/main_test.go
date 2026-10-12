@@ -395,3 +395,59 @@ func TestProductOnSaleHTTPFlow(t *testing.T) {
 		t.Errorf("GET /api/products/onsale 应 405，实际 %d", code)
 	}
 }
+
+// 任务池⑦ / D24：顾客等级 HTTP 全流程 —— 设等级 → 带 phone 取批发价 → 下单按批发价入库。
+func TestCustomerTierHTTPFlow(t *testing.T) {
+	ts := newTestServer(t)
+
+	if code, body := do(t, ts, http.MethodPost, "/api/products",
+		`{"code":"7101","name":"整箱可乐","salePrice":60,"wholesalePrice":52,"stock":10,"unit":"箱","category":"饮料"}`); code != 200 {
+		t.Fatalf("建档失败: %d %s", code, body)
+	}
+
+	// 不带 phone / 陌生手机号：都是零售价
+	code, body := do(t, ts, http.MethodGet, "/api/products?onSale=1", "")
+	if code != 200 || !strings.Contains(body, `"tier":"retail"`) || !strings.Contains(body, `"price":60`) {
+		t.Fatalf("不带 phone 应回零售价: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/products?onSale=1&phone=13900000000", ""); code != 200 || !strings.Contains(body, `"tier":"retail"`) {
+		t.Fatalf("陌生手机号应回零售价: %d %s", code, body)
+	}
+
+	// 设成批发等级后，带 phone 拉列表就拿到批发价（价格口径由服务端算）
+	if code, body = do(t, ts, http.MethodPost, "/api/customers/tier",
+		`{"phone":"13800001111","name":"王老板","tier":"wholesale"}`); code != 200 || !strings.Contains(body, `"tier":"wholesale"`) {
+		t.Fatalf("设等级失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/products?onSale=1&phone=13800001111", ""); code != 200 ||
+		!strings.Contains(body, `"tier":"wholesale"`) || !strings.Contains(body, `"price":52`) {
+		t.Fatalf("批发顾客应拿批发价: %d %s", code, body)
+	}
+
+	// 顾客列表可查
+	if code, body = do(t, ts, http.MethodGet, "/api/customers", ""); code != 200 || !strings.Contains(body, `"phone":"13800001111"`) {
+		t.Fatalf("顾客列表失败: %d %s", code, body)
+	}
+
+	// 下单按批发价入库（前端传价不参与计算）
+	code, body = do(t, ts, http.MethodPost, "/api/orders",
+		`{"customerName":"王老板","phone":"13800001111","deliveryType":"pickup","items":[{"code":"7101","qty":2}]}`)
+	if code != 201 {
+		t.Fatalf("下单失败: %d %s", code, body)
+	}
+	if !strings.Contains(body, `"price":52`) || !strings.Contains(body, `"subtotal":104`) {
+		t.Fatalf("订单应按批发价入库: %s", body)
+	}
+
+	// 边界：非法等级 400（错误文案原样透出）、方法不支持 405
+	if code, body = do(t, ts, http.MethodPost, "/api/customers/tier", `{"phone":"13800002222","tier":"gold"}`); code != 400 ||
+		!strings.Contains(body, "参数不合法") {
+		t.Errorf("非法等级应 400 参数不合法，实际 %d %s", code, body)
+	}
+	if code, _ = do(t, ts, http.MethodGet, "/api/customers/tier", ""); code != 405 {
+		t.Errorf("GET /api/customers/tier 应 405，实际 %d", code)
+	}
+	if code, _ = do(t, ts, http.MethodPost, "/api/customers", `{}`); code != 405 {
+		t.Errorf("POST /api/customers 应 405，实际 %d", code)
+	}
+}

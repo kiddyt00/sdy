@@ -25,18 +25,26 @@ var (
 
 // Product 商品档案层（还包含经营数据：进价、售价、库存、比价参考价）。
 type Product struct {
-	Code        string  `json:"code"`
-	Name        string  `json:"name"`
-	Brand       string  `json:"brand,omitempty"`
-	Spec        string  `json:"spec,omitempty"`
-	Category    string  `json:"category,omitempty"`
-	Img         string  `json:"img,omitempty"`
-	CostPrice   float64 `json:"costPrice"`
-	SalePrice   float64 `json:"salePrice"`
-	RefPrice    float64 `json:"refPrice,omitempty"` // 牵牛花参考价（比价防线基线）
-	Unit        string  `json:"unit,omitempty"`
-	Stock       float64 `json:"stock"`
-	IsWholesale bool    `json:"isWholesale,omitempty"`
+	Code      string  `json:"code"`
+	Name      string  `json:"name"`
+	Brand     string  `json:"brand,omitempty"`
+	Spec      string  `json:"spec,omitempty"`
+	Category  string  `json:"category,omitempty"`
+	Img       string  `json:"img,omitempty"`
+	CostPrice float64 `json:"costPrice"`
+	SalePrice float64 `json:"salePrice"`
+	// WholesalePrice 批发价（任务池⑦，D24）：0 表示未设批发价（批发客户也按零售价）。
+	// 顾客等级非零售且本值大于 0 时，有效价取本值，且不参与零售比价防线。
+	WholesalePrice float64 `json:"wholesalePrice,omitempty"`
+	RefPrice       float64 `json:"refPrice,omitempty"` // 牵牛花参考价（比价防线基线）
+	Unit           string  `json:"unit,omitempty"`
+	Stock          float64 `json:"stock"`
+	IsWholesale    bool    `json:"isWholesale,omitempty"`
+	// Price 有效价（服务端按顾客等级算好的「这件商品这个顾客买多少钱」）。
+	// 始终下发不带 omitempty：页面一律读 price，价格口径只有服务端一个真源（D12）。
+	// 零售场景下 price == salePrice。
+	Price float64 `json:"price"`
+	Tier  string  `json:"tier,omitempty"` // 该次请求所用顾客等级（retail/wholesale/vip）
 	// OnSale 上架状态（任务池⑥，D23）：下架只在顾客端生效——商品不再出现在商城、
 	// 不能加购下单；档案、库存、历史订单与条码字典都不动。始终下发（不 omitempty），
 	// 否则 false 会被前端当成「字段缺失」而误判为上架。
@@ -125,6 +133,7 @@ var schemaStmts = []string{
 		img TEXT NOT NULL DEFAULT '',
 		cost_price REAL NOT NULL DEFAULT 0,
 		sale_price REAL NOT NULL DEFAULT 0,
+		wholesale_price REAL NOT NULL DEFAULT 0,
 		ref_price REAL NOT NULL DEFAULT 0,
 		unit TEXT NOT NULL DEFAULT '',
 		stock REAL NOT NULL DEFAULT 0,
@@ -148,6 +157,7 @@ var schemaStmts = []string{
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		phone TEXT NOT NULL UNIQUE,
 		name TEXT NOT NULL DEFAULT '',
+		tier TEXT NOT NULL DEFAULT 'retail',
 		tags TEXT NOT NULL DEFAULT '',
 		note TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT ''
@@ -220,6 +230,16 @@ func Open(path string, cfg pricing.Config) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// 任务池⑦（D24）：商品批发价 + 顾客等级，同样幂等补列，老库不清库。
+	for _, c := range []struct{ table, column, decl string }{
+		{"product", "wholesale_price", "REAL NOT NULL DEFAULT 0"},
+		{"customer", "tier", "TEXT NOT NULL DEFAULT 'retail'"},
+	} {
+		if err := ensureColumn(db, c.table, c.column, c.decl); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
@@ -275,10 +295,11 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 	if p.Name == "" {
 		return Product{}, fmt.Errorf("%w: 商品名称不能为空", ErrBadInput)
 	}
-	if p.CostPrice < 0 || p.SalePrice < 0 || p.RefPrice < 0 {
+	if p.CostPrice < 0 || p.SalePrice < 0 || p.RefPrice < 0 || p.WholesalePrice < 0 {
 		return Product{}, fmt.Errorf("%w: 价格不能为负数", ErrBadInput)
 	}
-	if math.IsNaN(p.CostPrice) || math.IsNaN(p.SalePrice) || math.IsNaN(p.RefPrice) || math.IsNaN(p.Stock) {
+	if math.IsNaN(p.CostPrice) || math.IsNaN(p.SalePrice) || math.IsNaN(p.RefPrice) ||
+		math.IsNaN(p.WholesalePrice) || math.IsNaN(p.Stock) {
 		return Product{}, fmt.Errorf("%w: 价格/库存必须是数字", ErrBadInput)
 	}
 	if p.Stock < 0 {
@@ -302,15 +323,18 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 	p.UpdatedAt = nowStr()
 	// 注意：写入语句刻意不包含 on_sale（D23，与库存同理）——编辑商品档案不改变上下架状态，
 	// 新建商品默认上架，上下架只走 SetProductsOnSale / POST /api/products/onsale。
+	// 批发价（D24）随档案一起覆盖：调用方必须把 wholesalePrice 一并传（0 表示未设批发价），
+	// 与 img 同理——漏传会把已设的批发价清零（规则 19⑤）。
 	_, err := s.db.Exec(`INSERT INTO product
-		(code,name,brand,spec,category,img,cost_price,sale_price,ref_price,unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
+		(code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
 		ON CONFLICT(code) DO UPDATE SET
 			name=excluded.name, brand=excluded.brand, spec=excluded.spec, category=excluded.category,
 			img=excluded.img, cost_price=excluded.cost_price, sale_price=excluded.sale_price,
+			wholesale_price=excluded.wholesale_price,
 			ref_price=excluded.ref_price, unit=excluded.unit, stock=excluded.stock,
 			is_wholesale=excluded.is_wholesale, sync_status=excluded.sync_status, updated_at=excluded.updated_at`,
-		p.Code, p.Name, p.Brand, p.Spec, p.Category, p.Img, p.CostPrice, p.SalePrice,
+		p.Code, p.Name, p.Brand, p.Spec, p.Category, p.Img, p.CostPrice, p.SalePrice, p.WholesalePrice,
 		p.RefPrice, p.Unit, p.Stock, boolInt(p.IsWholesale), p.SyncStatus, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return Product{}, fmt.Errorf("写入商品失败: %w", err)
@@ -324,7 +348,7 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 
 // GetProduct 按条码取商品。
 func (s *Store) GetProduct(code string) (Product, error) {
-	row := s.db.QueryRow(`SELECT code,name,brand,spec,category,img,cost_price,sale_price,ref_price,
+	row := s.db.QueryRow(`SELECT code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,
 		unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at FROM product WHERE code=?`, code)
 	p, err := scanProduct(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -345,7 +369,7 @@ func (s *Store) ListOnSaleProducts(keyword, category string) ([]Product, error) 
 }
 
 func (s *Store) listProducts(keyword, category string, onSaleOnly bool) ([]Product, error) {
-	q := `SELECT code,name,brand,spec,category,img,cost_price,sale_price,ref_price,
+	q := `SELECT code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,
 		unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at FROM product`
 	var conds []string
 	var args []any
@@ -474,12 +498,15 @@ func scanProduct(sc interface{ Scan(...any) error }) (Product, error) {
 	var p Product
 	var wholesale, onSale int
 	err := sc.Scan(&p.Code, &p.Name, &p.Brand, &p.Spec, &p.Category, &p.Img, &p.CostPrice,
-		&p.SalePrice, &p.RefPrice, &p.Unit, &p.Stock, &wholesale, &onSale, &p.SyncStatus, &p.CreatedAt, &p.UpdatedAt)
+		&p.SalePrice, &p.WholesalePrice, &p.RefPrice, &p.Unit, &p.Stock, &wholesale, &onSale,
+		&p.SyncStatus, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return Product{}, err
 	}
 	p.IsWholesale = wholesale != 0
 	p.OnSale = onSale != 0
+	// 有效价默认等于零售价；带上 phone 的请求会由 HTTP 层按顾客等级改写（D24）。
+	p.Price = p.SalePrice
 	return p, nil
 }
 
@@ -583,6 +610,15 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 	}
 	defer tx.Rollback()
 
+	// 顾客等级决定这一单用零售价还是批发价（D24）。手机号即身份（延续 D18），
+	// 没有档案就是零售；等级改动只影响之后的单，旧单价格是下单当时的快照。
+	tier := pricing.TierRetail
+	if err := tx.QueryRow(`SELECT tier FROM customer WHERE phone=?`, in.Phone).Scan(&tier); err != nil &&
+		!errors.Is(err, sql.ErrNoRows) {
+		return Order{}, err
+	}
+	tier = pricing.NormalizeTier(tier)
+
 	items := make([]OrderItem, 0, len(in.Items))
 	var subtotal float64
 	for _, it := range in.Items {
@@ -590,10 +626,10 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 			return Order{}, fmt.Errorf("%w: 数量必须大于 0", ErrBadInput)
 		}
 		var name string
-		var price, stock float64
+		var price, wholesale, stock float64
 		var onSale int
-		err := tx.QueryRow(`SELECT name, sale_price, stock, on_sale FROM product WHERE code=?`, it.Code).
-			Scan(&name, &price, &stock, &onSale)
+		err := tx.QueryRow(`SELECT name, sale_price, wholesale_price, stock, on_sale FROM product WHERE code=?`, it.Code).
+			Scan(&name, &price, &wholesale, &stock, &onSale)
 		if errors.Is(err, sql.ErrNoRows) {
 			return Order{}, fmt.Errorf("%w: 商品 %s", ErrNotFound, it.Code)
 		}
@@ -611,8 +647,10 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 			it.Qty, nowStr(), it.Code); err != nil {
 			return Order{}, err
 		}
-		items = append(items, OrderItem{Code: it.Code, Name: name, Price: price, Qty: it.Qty})
-		subtotal += price * it.Qty
+		// 价格以服务端算的为准，不信任前端传来的价（D12/D24）。
+		unit := pricing.EffectivePrice(tier, price, wholesale)
+		items = append(items, OrderItem{Code: it.Code, Name: name, Price: unit, Qty: it.Qty})
+		subtotal += unit * it.Qty
 	}
 
 	fee, err := pricing.DeliveryFee(in.DeliveryType, subtotal, s.cfg)
@@ -770,6 +808,94 @@ func (s *Store) TouchCustomer(phone, name string) error {
 	_, err := s.db.Exec(`INSERT INTO customer (phone,name,created_at) VALUES (?,?,?)
 		ON CONFLICT(phone) DO UPDATE SET name=excluded.name`, phone, name, nowStr())
 	return err
+}
+
+// Customer 顾客档案（任务池⑦，D24）。手机号即身份，无账号体系（延续 D18）。
+type Customer struct {
+	Phone string `json:"phone"`
+	Name  string `json:"name,omitempty"`
+	// Tier 等级：retail（零售，默认）/ wholesale（批发）/ vip（白名单）。
+	Tier string `json:"tier"`
+	Tags string `json:"tags,omitempty"`
+	Note string `json:"note,omitempty"`
+}
+
+// GetCustomerTier 取顾客等级；查无此人返回零售（不报错——绝大多数顾客没有档案）。
+func (s *Store) GetCustomerTier(phone string) (string, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return pricing.TierRetail, nil
+	}
+	var tier string
+	err := s.db.QueryRow(`SELECT tier FROM customer WHERE phone=?`, phone).Scan(&tier)
+	if errors.Is(err, sql.ErrNoRows) {
+		return pricing.TierRetail, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return pricing.NormalizeTier(tier), nil
+}
+
+// SetCustomerTier 设定顾客等级（不存在则建档）。等级是「之后下单」的价格口径，
+// 不会回头改历史订单的价格快照。
+func (s *Store) SetCustomerTier(phone, name, tier string) (Customer, error) {
+	phone = strings.TrimSpace(phone)
+	name = strings.TrimSpace(name)
+	tier = strings.TrimSpace(tier)
+	if phone == "" {
+		return Customer{}, fmt.Errorf("%w: 手机号不能为空", ErrBadInput)
+	}
+	if !pricing.ValidTier(tier) {
+		return Customer{}, fmt.Errorf("%w: 顾客等级只能是 retail / wholesale / vip", ErrBadInput)
+	}
+	tier = pricing.NormalizeTier(tier)
+	// 名字留空时保留原名字（只改等级不该抹掉姓名）。tags/note 不在本接口维护范围。
+	if _, err := s.db.Exec(`INSERT INTO customer (phone,name,tier,created_at) VALUES (?,?,?,?)
+		ON CONFLICT(phone) DO UPDATE SET tier=excluded.tier,
+			name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE customer.name END`,
+		phone, name, tier, nowStr()); err != nil {
+		return Customer{}, fmt.Errorf("写入顾客等级失败: %w", err)
+	}
+	return s.GetCustomer(phone)
+}
+
+// GetCustomer 取顾客档案（含等级）。
+func (s *Store) GetCustomer(phone string) (Customer, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return Customer{}, fmt.Errorf("%w: 手机号不能为空", ErrBadInput)
+	}
+	var c Customer
+	err := s.db.QueryRow(`SELECT phone,name,tier,tags,note FROM customer WHERE phone=?`, phone).
+		Scan(&c.Phone, &c.Name, &c.Tier, &c.Tags, &c.Note)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Customer{}, fmt.Errorf("%w: 顾客 %s", ErrNotFound, phone)
+	}
+	if err != nil {
+		return Customer{}, err
+	}
+	c.Tier = pricing.NormalizeTier(c.Tier)
+	return c, nil
+}
+
+// ListCustomers 列出所有有档案的顾客（按建档时间倒序），管理端等级维护用。
+func (s *Store) ListCustomers() ([]Customer, error) {
+	rows, err := s.db.Query(`SELECT phone,name,tier,tags,note FROM customer ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("查询顾客失败: %w", err)
+	}
+	defer rows.Close()
+	out := []Customer{}
+	for rows.Next() {
+		var c Customer
+		if err := rows.Scan(&c.Phone, &c.Name, &c.Tier, &c.Tags, &c.Note); err != nil {
+			return nil, err
+		}
+		c.Tier = pricing.NormalizeTier(c.Tier)
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // ListAddresses 列出某手机号的收货地址簿，默认地址排最前（D18）。

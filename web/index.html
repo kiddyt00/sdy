@@ -32,6 +32,13 @@
   .chk { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
   .chk input { width: 15px; height: 15px; accent-color: var(--brand); }
   .fld-head { display: flex; align-items: center; justify-content: space-between; }
+  /* 批发价（任务池⑦ / D24）：批发/白名单等级顾客看到批发价，原零售价划掉 */
+  .price.whole { color: #c2410c; }
+  .oldp { color: var(--faint); text-decoration: line-through; font-size: 12px; margin-left: 6px; font-weight: 400; }
+  .wtag {
+    background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa;
+    border-radius: var(--r-pill); padding: 0 6px; font-size: 11px; white-space: nowrap;
+  }
 </style>
 </head>
 <body>
@@ -63,6 +70,7 @@
         <input id="q" placeholder="搜商品名 / 品牌 / 条码" oninput="doSearch()">
       </div>
       <button class="btn" onclick="openScan()">📷 扫码找货</button>
+      <button class="btn" id="btnMyPrice" onclick="openMyPrice()" title="输入手机号，按你的顾客等级显示价格">💰 我的价格</button>
       <button class="btn" onclick="openAddrBook()">📍 地址簿</button>
     </div>
   </div>
@@ -262,6 +270,36 @@ function emojiOf(name) {
 /* ---------------- 首页 ---------------- */
 // 顾客端只看上架商品（D23）：下架商品不出现在分类、搜索结果与首页列表里
 function products() { return Mall.listOnSale(); }
+// 有效价（任务池⑦ / D24）：服务端按顾客等级算好 p.price；离线按本地等级兜底。
+// 批发价低于零售价时，把零售价划掉显示，让批发客户一眼看到便宜了多少。
+function priceHTML(p) {
+  const whole = Mall.isWholesalePrice(p);
+  return '<span class="price' + (whole ? ' whole' : '') + '">' + yuan(Mall.priceOf(p)) + '</span>' +
+    (whole ? '<small class="oldp" title="零售价">' + yuan(p.salePrice) + '</small>' : '');
+}
+// 「我的价格」按钮：手机号就是身份（D24），带上手机号重新取价
+function renderMyPrice() {
+  const btn = $('btnMyPrice'); if (!btn) return;
+  const ph = Mall.getMyPhone();
+  const label = Pricing.tierLabel(Mall.getMyTier());
+  btn.textContent = ph ? ('💰 ' + label + '价') : '💰 我的价格';
+  btn.title = ph ? ('当前按手机号 ' + ph + '（' + label + '）显示价格；点一下可换手机号')
+                 : '输入手机号，按你的顾客等级显示价格（批发 / 白名单客户会看到批发价）';
+}
+async function openMyPrice() {
+  const cur = Mall.getMyPhone();
+  const input = (typeof prompt === 'function')
+    ? prompt('输入手机号，按你的顾客等级显示价格：\n批发 / 白名单客户会看到批发价；留空就按零售价。', cur)
+    : null;
+  if (input == null) return;
+  const phone = String(input).trim();
+  try {
+    const r = await SdyApi.setMyPhone(phone);
+    refreshAll(); renderMyPrice(); renderCheckout();
+    if (!phone) return toast('已切回零售价');
+    toast('已按手机号 ' + phone + ' 的「' + Pricing.tierLabel(r && r.tier) + '价」显示' + (r && r.offline ? '（本地演示）' : ''), 3200);
+  } catch (e) { toast(e.message, 3600); }
+}
 // 商品图：有图用图，没图回退 emoji（本地演示目录没有 img 字段）
 function picHTML(p, cls) {
   return p.img
@@ -294,7 +332,7 @@ function cardHTML(p) {
       '<div class="pname">' + esc(p.name) + '</div>' +
       '<div class="pmeta">' + esc(p.brand || '') + (p.brand ? ' · ' : '') + esc(p.spec || '') + '</div>' +
       '<div class="pfoot">' +
-        '<div><span class="price">' + yuan(p.salePrice) + '</span><small> /' + esc(p.unit || '件') + '</small>' +
+        '<div>' + priceHTML(p) + '<small> /' + esc(p.unit || '件') + '</small>' +
         '<div class="stk' + (out ? ' out' : '') + '">' + (out ? '暂时缺货' : '库存 ' + p.stock) + '</div></div>' +
         (out ? '' : '<button class="add" onclick="event.stopPropagation();quickAdd(\'' + p.code + '\')">＋</button>') +
       '</div>' +
@@ -312,7 +350,7 @@ function openDetail(code) {
   $('dCode').textContent = p.code;
   $('dBrand').textContent = p.brand || '—';
   $('dSpec').textContent = p.spec || '—';
-  $('dPrice').innerHTML = yuan(p.salePrice) + '<small> /' + esc(p.unit || '件') + '</small>';
+  $('dPrice').innerHTML = priceHTML(p) + '<small> /' + esc(p.unit || '件') + '</small>';
   $('dStock').textContent = p.stock <= 0 ? '已售罄，到店问老板' : '库存 ' + p.stock + ' ' + (p.unit || '件');
   $('dQty').textContent = detailQty;
   $('dAdd').className = 'btn btn-primary' + (p.stock <= 0 ? ' dis' : '');
@@ -342,6 +380,7 @@ function renderCart() {
     '<div class="citem">' +
       '<div class="cph">' + picHTML(l, 'cimg') + '</div>' +
       '<div><div class="cn">' + esc(l.name) + '</div><div class="cs">' + yuan(l.price) + ' / ' + esc(l.unit || '件') +
+        (l.wholesale ? ' · <span class="wtag">批发价</span>' : '') +
         (l.onSale === false ? ' · <span style="color:#b91c1c">已下架</span>' : '') +
         (l.qty >= l.stock ? ' · <span style="color:#b91c1c">已达库存上限</span>' : '') + '</div></div>' +
       '<div class="row">' +
@@ -414,7 +453,17 @@ function pickAddr(id) {
 }
 async function onPhoneChange() {
   pickedAddrId = 0;
-  await refreshAddresses(curPhone());
+  const ph = curPhone();
+  // 手机号就是身份（D24）：填了手机号就按他的顾客等级重新取价。
+  // 取价失败不挡下单——服务端下单时仍会按真实等级算价（价格口径真源在服务端）。
+  if (ph && ph !== Mall.getMyPhone()) {
+    try {
+      const r = await SdyApi.setMyPhone(ph);
+      refreshAll(); renderCheckout(); renderMyPrice();
+      toast('已按手机号 ' + ph + ' 的「' + Pricing.tierLabel(r && r.tier) + '价」显示', 3200);
+    } catch (e) { /* 忽略：下单时服务端仍按真实等级算价 */ }
+  }
+  await refreshAddresses(ph);
   renderAddrPick();
 }
 async function openAddrBook() {
@@ -645,7 +694,7 @@ async function scanNow() {
 
 /* ---------------- 刷新 / 启动 ---------------- */
 function refreshAll() {
-  renderCats(); renderGrid(); renderCartBadge(); renderFilters(); renderOrders();
+  renderCats(); renderGrid(); renderCartBadge(); renderFilters(); renderOrders(); renderMyPrice();
   const cs = $('cartSheet');
   if (cs.className.indexOf('show') >= 0) renderCart();
 }

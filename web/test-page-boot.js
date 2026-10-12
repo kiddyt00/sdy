@@ -593,6 +593,72 @@ const online = {
     ok(Mall.loadCatalog().every(p => p.onSale !== false), '批量上架：全部恢复在售');
   }
 
+  /* ---------- 任务池⑦：批发价与顾客等级（D24） ---------- */
+  section('⑪ 批发价与顾客等级（任务池⑦ / D24）');
+  {
+    // 顾客端（离线演示）：批发等级 → 看到批发价，原零售价划线；按钮标出身份
+    const env = await bootPage('index.html', { fetch: offline.fetch, prompt: () => '13800001111' });
+    const ctx = env.ctx;
+    ok(!!env.els.btnMyPrice, '顾客端有「我的价格」入口');
+    ok(env.els.btnMyPrice.textContent.indexOf('我的价格') >= 0, '默认未填手机号 → 「我的价格」');
+    Mall.updateProduct('6901234567892', { wholesalePrice: 2.2 });
+    Mall.setMyPhone('13800001111');
+    Mall._save('mall_customers', { '13800001111': { tier: 'wholesale' } });
+    ctx.renderGrid();
+    ok(env.els.grid.innerHTML.indexOf('2.20') >= 0, '批发等级顾客看到批发价 2.20');
+    ok(env.els.grid.innerHTML.indexOf('class="oldp"') >= 0, '原零售价划线显示');
+    ctx.renderMyPrice();
+    ok(env.els.btnMyPrice.textContent.indexOf('批发') >= 0, '「我的价格」按钮标出批发身份：' + env.els.btnMyPrice.textContent);
+    Mall.addToCart('6901234567892', 2);
+    ctx.renderCart();
+    ok(env.els.cartLines.innerHTML.indexOf('批发价') >= 0, '购物车行标「批发价」');
+    ok(env.els.cartSubtotal.textContent.indexOf('4.40') >= 0, '购物车小计按有效价（2.20×2）');
+    // 点「我的价格」输入手机号 → 本地演示也能按等级显示
+    await ctx.openMyPrice();
+    ok(env.els.btnMyPrice.textContent.indexOf('批发') >= 0 && env.els.btnMyPrice.title.indexOf('13800001111') >= 0, '输入手机号后按钮显示我的等级与手机号');
+    ok(env.els.toast.textContent.indexOf('批发价') >= 0 || env.els.toast.textContent.indexOf('批发') >= 0, '给出价格口径提示：' + env.els.toast.textContent.slice(0, 40));
+    Mall.setMyPhone('');
+    ctx.renderGrid();
+    ok(env.els.grid.innerHTML.indexOf('class="oldp"') < 0, '切回零售价后不再划线');
+
+    // 管理端：批发价字段 + 顾客等级登记 / 改等级
+    const aenv = await bootPage('admin.html', { fetch: offline.fetch, prompt: () => null });
+    const actx = aenv.ctx;
+    actx.openProductDlg('6901234567892');
+    ok(!!aenv.els.pfWholesale, '建档表单有「批发价」字段');
+    aenv.els.pfWholesale.value = ' 2.2 ';
+    await actx.submitProduct();
+    ok(Mall.getProduct('6901234567892').wholesalePrice === 2.2, '表单保存批发价（自动去空格转数字）');
+    actx.renderProducts();
+    ok(aenv.els.prodTable.innerHTML.indexOf('批 ¥2.20') >= 0, '商品表标出批发价');
+    // 批发价高于零售价 → 拦住（不静默改价）
+    actx.openProductDlg('6901234567892');
+    aenv.els.pfWholesale.value = '99';
+    await actx.submitProduct();
+    ok(Mall.getProduct('6901234567892').wholesalePrice === 2.2, '批发价高于零售价被拦住，原值不变');
+    ok(aenv.els.toast.textContent.indexOf('批发价') >= 0, '给出拦截文案：' + aenv.els.toast.textContent.slice(0, 40));
+
+    // 顾客页：登记一个没下过单的批发客户 → 卡片带「批发价」徽标
+    aenv.els.newCustPhone = fakeEl('newCustPhone');
+    aenv.els.newCustName = fakeEl('newCustName');
+    aenv.els.newCustTier = fakeEl('newCustTier');
+    aenv.els.newCustPhone.value = '13800001111';
+    aenv.els.newCustName.value = '王老板';
+    aenv.els.newCustTier.value = 'wholesale';
+    await actx.addCustomer();
+    const cust = Admin.getCustomers().find(c => c.phone === '13800001111');
+    ok(!!cust && cust.tier === 'wholesale', '登记未下单的顾客也能设等级');
+    ok(aenv.els.custList.innerHTML.indexOf('批发价') >= 0 && aenv.els.custList.innerHTML.indexOf('王老板') >= 0, '顾客卡片显示「批发价」徽标与姓名');
+    ok(aenv.els.newCustPhone.value === '', '登记后清空输入框');
+    // 改等级 → vip（价格只影响之后的单）
+    aenv.els['tier_13800001111'] = fakeEl('tier_13800001111');
+    aenv.els['tier_13800001111'].value = 'vip';
+    await actx.saveTier('13800001111');
+    ok(Admin.getCustomers().find(c => c.phone === '13800001111').tier === 'vip', '改等级为白名单生效');
+    ok(aenv.els.custList.innerHTML.indexOf('白名单价') >= 0, '卡片徽标跟着变成「白名单价」');
+    ok(aenv.els.toast.textContent.indexOf('白名单') >= 0, '提示「下次下单按新等级算价」：' + aenv.els.toast.textContent.slice(0, 40));
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

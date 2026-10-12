@@ -683,3 +683,131 @@ func TestOnSaleColumnMigration(t *testing.T) {
 		t.Fatalf("补列后老数据应视为上架，实际 %+v", p)
 	}
 }
+
+// 任务池⑦ / D24：批发价随档案存取，顾客等级决定下单有效价。
+func TestCustomerTierWholesalePrice(t *testing.T) {
+	st := newTestStore(t)
+	// 6901 设了批发价，6902 没设（0 表示批发客户也按零售价）
+	for _, p := range []Product{
+		{Code: "6901", Name: "可乐", Category: "饮料", Unit: "箱", SalePrice: 60, WholesalePrice: 52, Stock: 10},
+		{Code: "6902", Name: "农夫", Category: "饮料", Unit: "箱", SalePrice: 48, Stock: 10},
+	} {
+		if _, err := st.UpsertProduct(p); err != nil {
+			t.Fatalf("写入商品失败: %v", err)
+		}
+	}
+	if p, _ := st.GetProduct("6901"); p.WholesalePrice != 52 {
+		t.Fatalf("批发价应随档案存下，实际 %v", p.WholesalePrice)
+	}
+
+	// 没有档案的顾客 = 零售（不报错）
+	if tier, err := st.GetCustomerTier("13900000000"); err != nil || tier != pricing.TierRetail {
+		t.Fatalf("陌生手机号应为零售，实际 %q err=%v", tier, err)
+	}
+
+	if c, err := st.SetCustomerTier("13800001111", "王老板", pricing.TierWholesale); err != nil || c.Tier != pricing.TierWholesale {
+		t.Fatalf("设批发等级失败: %+v err=%v", c, err)
+	}
+
+	// 批发顾客下单：有批发价走批发价，没设批发价仍走零售价
+	o, err := st.CreateOrder(NewOrderInput{
+		CustomerName: "王老板", Phone: "13800001111", DeliveryType: "pickup",
+		Items: []NewOrderInputItem{{Code: "6901", Qty: 2}, {Code: "6902", Qty: 1}},
+	})
+	if err != nil {
+		t.Fatalf("批发顾客下单失败: %v", err)
+	}
+	if o.Items[0].Price != 52 || o.Items[1].Price != 48 {
+		t.Fatalf("批发顾客价格不对: %+v", o.Items)
+	}
+	if o.Subtotal != 152 { // 52×2 + 48
+		t.Fatalf("小计应为 152，实际 %v", o.Subtotal)
+	}
+
+	// 零售顾客：一律零售价
+	o2, err := st.CreateOrder(NewOrderInput{
+		CustomerName: "路人", Phone: "13900000000", DeliveryType: "pickup",
+		Items: []NewOrderInputItem{{Code: "6901", Qty: 1}},
+	})
+	if err != nil {
+		t.Fatalf("零售顾客下单失败: %v", err)
+	}
+	if o2.Items[0].Price != 60 {
+		t.Fatalf("零售顾客应走零售价，实际 %v", o2.Items[0].Price)
+	}
+
+	// 改等级：只影响之后的单，旧单价格是下单当时的快照；只改等级不抹姓名
+	if c, err := st.SetCustomerTier("13800001111", "", pricing.TierRetail); err != nil || c.Name != "王老板" {
+		t.Fatalf("改回零售失败（姓名应保留）: %+v err=%v", c, err)
+	}
+	o3, err := st.CreateOrder(NewOrderInput{
+		CustomerName: "王老板", Phone: "13800001111", DeliveryType: "pickup",
+		Items: []NewOrderInputItem{{Code: "6901", Qty: 1}},
+	})
+	if err != nil {
+		t.Fatalf("改等级后下单失败: %v", err)
+	}
+	if o3.Items[0].Price != 60 {
+		t.Fatalf("改回零售后应按零售价，实际 %v", o3.Items[0].Price)
+	}
+	if old, err := st.GetOrder(o.ID); err != nil || old.Items[0].Price != 52 {
+		t.Fatalf("历史订单价格不该被改等级改写: %+v err=%v", old.Items, err)
+	}
+
+	// 白名单与批发同一价格口径
+	if c, err := st.SetCustomerTier("13700002222", "李姐", pricing.TierVIP); err != nil || c.Tier != pricing.TierVIP {
+		t.Fatalf("设白名单失败: %+v err=%v", c, err)
+	}
+	if p, _ := st.GetProduct("6901"); pricing.EffectivePrice(pricing.TierVIP, p.SalePrice, p.WholesalePrice) != 52 {
+		t.Fatalf("白名单应取批发价")
+	}
+
+	// 边界：非法等级 / 空手机号 / 负批发价
+	if _, err := st.SetCustomerTier("13700003333", "", "gold"); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("非法等级应报 ErrBadInput，实际 %v", err)
+	}
+	if _, err := st.SetCustomerTier("", "", pricing.TierRetail); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("空手机号应报 ErrBadInput，实际 %v", err)
+	}
+	if _, err := st.UpsertProduct(Product{Code: "6903", Name: "负批发价", SalePrice: 10, WholesalePrice: -1, Stock: 1}); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("负批发价应报 ErrBadInput，实际 %v", err)
+	}
+	// 顾客列表：两单下单时自动建档 + 白名单共 3 人
+	if list, err := st.ListCustomers(); err != nil || len(list) != 3 {
+		t.Fatalf("顾客列表应有 3 人，实际 %d err=%v", len(list), err)
+	}
+}
+
+// 老库升级：product.wholesale_price 与 customer.tier 缺失时也能补上且幂等（D24）。
+func TestTierColumnMigration(t *testing.T) {
+	st := newTestStore(t)
+	seed(t, st)
+
+	if _, err := st.DB().Exec(`ALTER TABLE product DROP COLUMN wholesale_price`); err != nil {
+		t.Fatalf("模拟老库删列失败（需要 SQLite ≥ 3.35）: %v", err)
+	}
+	if _, err := st.DB().Exec(`ALTER TABLE customer DROP COLUMN tier`); err != nil {
+		t.Fatalf("模拟老库删列失败（需要 SQLite ≥ 3.35）: %v", err)
+	}
+	for i := 0; i < 2; i++ { // 跑两次，验证幂等
+		if err := ensureColumn(st.DB(), "product", "wholesale_price", "REAL NOT NULL DEFAULT 0"); err != nil {
+			t.Fatalf("第 %d 次补批发价列失败: %v", i+1, err)
+		}
+		if err := ensureColumn(st.DB(), "customer", "tier", "TEXT NOT NULL DEFAULT 'retail'"); err != nil {
+			t.Fatalf("第 %d 次补等级列失败: %v", i+1, err)
+		}
+	}
+	p, err := st.GetProduct("6901")
+	if err != nil {
+		t.Fatalf("补列后取商品失败: %v", err)
+	}
+	if p.WholesalePrice != 0 {
+		t.Fatalf("老库补列后批发价应为 0（视为未设），实际 %v", p.WholesalePrice)
+	}
+	if _, err := st.SetCustomerTier("13800001111", "王阿姨", pricing.TierWholesale); err != nil {
+		t.Fatalf("补列后设等级失败: %v", err)
+	}
+	if tier, _ := st.GetCustomerTier("13800001111"); tier != pricing.TierWholesale {
+		t.Fatalf("补列后等级应生效，实际 %q", tier)
+	}
+}

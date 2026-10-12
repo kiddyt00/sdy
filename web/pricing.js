@@ -59,7 +59,41 @@ const Pricing = (() => {
     return { total: list.length, violations: violations };
   }
 
-  return { DEFAULT_CONFIG, deliveryFee, checkRetailPrice, pricingCheck };
+  // ---------------- 顾客等级与批发价（任务池⑦ / D24） ----------------
+  // 与服务端 server/internal/pricing/pricing.go 同一口径：
+  //   等级 retail(默认) / wholesale(批发) / vip(白名单，同批发价)；手机号即身份，无账号体系。
+  //   有效价：非零售等级且批发价 > 0 → 批发价，否则零售价；一律 round2（与订单入库同口径）。
+  const TIER_RETAIL = 'retail';
+  const TIER_WHOLESALE = 'wholesale';
+  const TIER_VIP = 'vip';
+  const TIER_LABELS = { retail: '零售', wholesale: '批发', vip: '白名单' };
+
+  function round2(n) { return Math.round((+(n) || 0) * 100) / 100; }
+
+  // 空串合法（老数据 / 老前端不带字段＝零售）；未知等级不合法，由服务端拒绝
+  function validTier(tier) {
+    if (tier == null || tier === '') return true;
+    return tier === TIER_RETAIL || tier === TIER_WHOLESALE || tier === TIER_VIP;
+  }
+  function normalizeTier(tier) {
+    return (tier === TIER_WHOLESALE || tier === TIER_VIP) ? tier : TIER_RETAIL;
+  }
+  function isWholesaleTier(tier) {
+    return tier === TIER_WHOLESALE || tier === TIER_VIP;
+  }
+  function tierLabel(tier) { return TIER_LABELS[normalizeTier(tier)] || '零售'; }
+
+  // 有效价：页面展示 / 本地降级下单都用它，口径与服务端一致
+  function effectivePrice(tier, salePrice, wholesalePrice) {
+    if (isWholesaleTier(tier) && +(wholesalePrice || 0) > 0) return round2(wholesalePrice);
+    return round2(salePrice);
+  }
+
+  return {
+    DEFAULT_CONFIG, deliveryFee, checkRetailPrice, pricingCheck,
+    TIER_RETAIL, TIER_WHOLESALE, TIER_VIP,
+    round2, validTier, normalizeTier, isWholesaleTier, tierLabel, effectivePrice
+  };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Pricing;

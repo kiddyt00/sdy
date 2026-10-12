@@ -8,6 +8,8 @@
 做什么：
     1) upsert 14 款商品：覆盖「正常价 / 批发 / 缺参考价 / 低库存 / 缺货」五种状态，
        并给演示款挂上仓库自带的 SVG 商品图（web/assets/demo/*.svg）；
+       其中 7 款顺带写上批发价（WHOLESALE 表），演示「按顾客等级看价」；
+    1.5) 登记 2 位顾客等级（王阿姨=批发 / 李叔=白名单），手机号即身份（D24）；
     2) 补 3 条收货地址簿（已存在同手机号同地址则跳过）；
     3) 库里没有订单时（或加 --force-orders）造 6 张订单并把状态推到
        已完成 / 待自提(ready) / 配送中 / 待备货 / 已取消，用于验证报表与流转。
@@ -49,6 +51,25 @@ IMAGES = {
     "旺旺雪饼": "assets/demo/wangwang.svg",
     "旺旺雪饼 84g（缺货）": "assets/demo/wangwang.svg",
 }
+
+# 批发价（任务池⑦ / D24）：0 或不在表里 = 没设批发价（批发客户也按零售价）
+# 整箱/整提/酒水这类「成箱拿货」的商品最适合设批发价，演示时一眼能看出差别。
+WHOLESALE = {
+    "可口可乐": 2.2,
+    "农夫山泉": 1.6,
+    "青岛啤酒": 5.4,
+    "红牛维生素功能饮料": 5.4,
+    "五粮春": 78.0,
+    "心相印抽纸 10 包装": 32.0,
+    "金龙鱼调和油": 29.0,
+}
+
+# 顾客等级（D24）：手机号即身份，零售 / 批发 / 白名单（价格口径真源在服务端）
+#   (phone, name, tier)
+CUSTOMER_TIERS = [
+    ("13800001111", "王阿姨", "wholesale"),
+    ("13900002222", "李叔", "vip"),
+]
 
 # (phone, contact, address, isDefault)
 ADDRESSES = [
@@ -98,6 +119,7 @@ def main():
             "code": code, "name": name, "brand": brand, "spec": spec, "category": cat,
             "unit": unit, "costPrice": cost, "salePrice": sale, "refPrice": ref,
             "stock": stock, "isWholesale": whole, "img": IMAGES.get(name, ""),
+            "wholesalePrice": WHOLESALE.get(name, 0),   # 不带就会被后端的 excluded.wholesale_price 清零
         })
         if 200 <= st < 300:
             ok += 1
@@ -110,7 +132,26 @@ def main():
     by_name = {}
     for p in products:
         by_name.setdefault(p["name"], p)
-    print("   库里现有商品：%d 款" % len(products))
+    print("   库里现有商品：%d 款（带批发价 %d 款）"
+          % (len(products), len([p for p in products if (p.get("wholesalePrice") or 0) > 0])))
+
+    # 1.5) 顾客等级（D24）：登记 2 位批发/白名单客户，方便演示「按等级看价」
+    tiers = 0
+    for (phone, name, tier) in CUSTOMER_TIERS:
+        st, body = call(base, "POST", "/api/customers/tier",
+                        {"phone": phone, "name": name, "tier": tier})
+        if 200 <= st < 300:
+            tiers += 1
+        else:
+            print("  ⚠️ 顾客等级 %s(%s) 失败：%s" % (name, phone, body.get("error")))
+    ids = {}
+    for (phone, name, tier) in CUSTOMER_TIERS:
+        st, one = call(base, "GET", "/api/customers")
+        for c in (one.get("items") or []):
+            if c.get("phone") == phone:
+                ids[phone] = c
+    print("✅ 顾客等级已设置：%d 位（%s）"
+          % (tiers, "、".join("%s=%s" % (p, (ids.get(p) or {}).get("tier", "?")) for (p, _n, _t) in CUSTOMER_TIERS)))
 
     # 2) 地址簿
     added = 0
@@ -173,6 +214,10 @@ def main():
     print("   商品 %d 款 / 订单 %d 张（其中取消 %d）" % (len(products), len(orders), len(orders) - len(live)))
     print("   营业额 ¥%.2f / 商品金额 ¥%.2f / 配送费 ¥%.2f / 售出 %g 件" % (rev, goods, fee, qty))
     print("   客单价 ¥%.2f" % (rev / len(live) if live else 0))
+    st, custs = call(base, "GET", "/api/customers")
+    cust_items = custs.get("items", []) if isinstance(custs, dict) else []
+    print("   顾客 %d 位（批发 / 白名单 %d 位）" % (len(cust_items), len([c for c in cust_items if c.get("tier") in ("wholesale", "vip")])))
+    print("   带批发价商品 %d 款" % len([p for p in products if (p.get("wholesalePrice") or 0) > 0]))
     for o in orders:
         print("   %-22s %-10s ¥%-7.2f %s" % (o["id"], o["status"], o.get("total", 0), o.get("customerName", "")))
     return 0

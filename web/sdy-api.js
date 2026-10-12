@@ -150,6 +150,8 @@ const SdyApi = (() => {
       img: p.img || '',
       costPrice: p.costPrice || 0,
       salePrice: p.salePrice || 0,
+      wholesalePrice: p.wholesalePrice || 0,   // 批发价（任务池⑦ / D24）：0＝未设
+      price: (typeof p.price === 'number' && isFinite(p.price)) ? p.price : (p.salePrice || 0), // 服务端算好的有效价（真源）
       refPrice: p.refPrice || 0,
       unit: p.unit || '件',
       stock: p.stock || 0,
@@ -186,16 +188,19 @@ const SdyApi = (() => {
   }
 
   // ---------------- 镜像：后端 → localStorage（页面原有渲染无需改动） ----------------
-  async function sync() {
+  // phone 缺省时用本地记住的「我的手机号」——带上它，服务端才会按顾客等级下发有效价（D24）。
+  async function sync(phone) {
     if (mode_ !== 'server') return null;
     const m = M();
-    const pr = await req('GET', '/api/products');
+    const p = (phone == null) ? (m.getMyPhone ? m.getMyPhone() : '') : String(phone || '').trim();
+    const pr = await req('GET', '/api/products' + (p ? '?phone=' + encodeURIComponent(p) : ''));
     const products = (pr && pr.items ? pr.items : []).map(fromServerProduct);
     m.saveCatalog(products);
+    if (p && m.setMyPhone) m.setMyPhone(p, (pr && pr.tier) || '');
     const or = await req('GET', '/api/orders');
     const orders = (or && or.items ? or.items : []).map(o => fromServerOrder(o, products));
     m._save(m.KEYS.orders, orders);
-    return { products: products, orders: orders };
+    return { products: products, orders: orders, tier: (pr && pr.tier) || '' };
   }
 
   function mirroredOrder(id) {
@@ -216,6 +221,7 @@ const SdyApi = (() => {
       deliveryType: opts && opts.deliveryType,
       items: sum.lines.map(l => ({ code: l.code, qty: l.qty }))
     });
+    if (c.phone && m.setMyPhone) m.setMyPhone(c.phone);   // 记住手机号：下次同步就按我的等级取价（D24）
     await sync();
     m.clearCart();
     return o && o.id ? (mirroredOrder(o.id) || o) : o;
@@ -313,6 +319,31 @@ const SdyApi = (() => {
     return res;
   }
 
+  // ---------------- 我的价格 / 顾客等级（任务池⑦ / D24） ----------------
+  // 顾客端没有账号体系：手机号就是身份。带上手机号重新同步一次，服务端按等级算好
+  // price 下发；页面只读 price，本地不算价（价格口径的真源在服务端——同 D12）。
+  async function setMyPhone(phone) {
+    const m = M();
+    const p = String(phone == null ? '' : phone).trim();
+    m.setMyPhone(p);
+    if (mode_ !== 'server') return { phone: p, tier: m.getMyTier(), offline: true };
+    const res = await sync(p);
+    return { phone: p, tier: (res && res.tier) || 'retail' };
+  }
+  function getMyPhone() { return M().getMyPhone ? M().getMyPhone() : ''; }
+  function getMyTier() { return M().getMyTier ? M().getMyTier() : 'retail'; }
+
+  // 顾客档案（管理端用）：列顾客与设等级；离线时管理端直接读写本地档案，这里返回 null。
+  async function listCustomers() {
+    if (mode_ !== 'server') return null;
+    const res = await req('GET', '/api/customers');
+    return (res && res.items ? res.items : []);
+  }
+  async function setCustomerTier(phone, name, tier) {
+    if (mode_ !== 'server') return null;
+    return req('POST', '/api/customers/tier', { phone: phone, name: name || '', tier: tier });
+  }
+
   // ---------------- 收货地址簿（D18） ----------------
   // 在线时以后端为准，每次操作后把整册镜像回 localStorage（离线仍能一键带出默认地址）；
   // 离线时直接用 Mall 的本地地址簿（同一套默认地址语义），页面代码无需分叉。
@@ -385,6 +416,11 @@ const SdyApi = (() => {
     updateProduct: updateProduct,
     deleteProduct: deleteProduct,
     setOnSale: setOnSale,
+    setMyPhone: setMyPhone,
+    getMyPhone: getMyPhone,
+    getMyTier: getMyTier,
+    listCustomers: listCustomers,
+    setCustomerTier: setCustomerTier,
     listAddresses: listAddresses,
     defaultAddress: defaultAddress,
     saveAddress: saveAddress,

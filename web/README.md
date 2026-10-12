@@ -8,14 +8,14 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `web/index.html` | 顾客端页面（666 行）：首页/分类/搜索/扫码找货/商品详情/**商品图**/购物车/结算（常用地址一键带出）/我的订单/收货地址簿；**下架商品不出现在列表、加购与详情都被拦住**（D23）；UI 层只调用 `Mall` 与 `SdyApi`，不自己算价 |
-| `web/admin.html` | 管理端页面（1370 行）：经营总览 KPI / **销售报表与日报** / 订单处理（含**小票打印**）/ 库存与流水 / **商品档案（建档·编辑·删除·商品图·缩略图列·单个上下架）+ 批量改价 / 批量改分类 / 批量改批发标记 / 批量上下架** / 价格防护 / 顾客档案 / 系统与工具 |
+| `web/index.html` | 顾客端页面（715 行）：首页/分类/搜索/扫码找货/商品详情/**商品图**/购物车/结算（常用地址一键带出）/我的订单/收货地址簿/**「💰 我的价格」**（填手机号按顾客等级显示价格，批发价把原价划线、购物车行标「批发价」）；**下架商品不出现在列表、加购与详情都被拦住**（D23）；UI 层只调用 `Mall` 与 `SdyApi`，**不自己算价**（有效价由服务端下发，见 D24） |
+| `web/admin.html` | 管理端页面（1423 行）：经营总览 KPI / **销售报表与日报** / 订单处理（含**小票打印**）/ 库存与流水 / **商品档案（建档·编辑·删除·商品图·缩略图列·单个上下架·批发价字段）+ 批量改价 / 批量改分类 / 批量改批发标记 / 批量上下架** / 价格防护 / **顾客档案与等级（登记顾客、一键改零售/批发/白名单）** / 系统与工具 |
 | `web/assets/theme.css` | 共享设计系统（423 行）：设计令牌 + 组件类 + 三档响应式（断点 1080 / 900 / 640px） |
 | `web/assets/demo/*.svg` | 5 张仓库自带演示商品图（可口可乐/青岛啤酒/红牛/五粮春/旺旺雪饼，~610B/张，渐变底 + 白字 SVG），随静态目录部署，**不依赖外网图床** |
-| `web/mall.js` | 领域逻辑（363 行，全局 `Mall`）：商品、购物车、订单（**单号保证不重复**）、配送规则、**收货地址簿**、**上下架过滤（`isOnSale` / `listOnSale`）**、localStorage 读写 |
-| `web/mall-admin.js` | 后台逻辑（754 行，全局 `Admin`）：库存流水/入库/盘点、**商品档案 CRUD 与校验（含商品图、编辑不改库存与上下架）**、**批量改价 / 批量改分类 / 批量改批发标记（`bulkPlan` / `applyBulkPlan` / `applyBulkField`）**、配送员派单、顾客档案聚合、**小票模型（`buildReceipt`）与门店抬头**、**销售报表与日报模型（`buildReport` / `reportText`）** |
-| `web/pricing.js` | 价格与配送费规则（65 行，全局 `Pricing`）：价格防护、运费计算 |
-| `web/sdy-api.js` | 后端连通层（400 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示；**`setOnSale(codes, on)` 批量上下架** |
+| `web/mall.js` | 领域逻辑（427 行，全局 `Mall`）：商品、购物车、订单（**单号保证不重复**）、配送规则、**收货地址簿**、**上下架过滤（`isOnSale` / `listOnSale`）**、**我的手机号与等级（`getMyPhone` / `setMyPhone` / `getMyTier`，localStorage `mall_my_phone`）与有效价 `priceOf(p)`**、localStorage 读写 |
+| `web/mall-admin.js` | 后台逻辑（819 行，全局 `Admin`）：库存流水/入库/盘点、**商品档案 CRUD 与校验（含商品图、批发价、编辑不改库存与上下架）**、**批量改价 / 批量改分类 / 批量改批发标记（`bulkPlan` / `applyBulkPlan` / `applyBulkField`）**、配送员派单、**顾客档案与等级聚合（`getCustomers` / `refreshCustomers` / `setTier` / `TIERS`）**、**小票模型（`buildReceipt`）与门店抬头**、**销售报表与日报模型（`buildReport` / `reportText`）** |
+| `web/pricing.js` | 价格与配送费规则（99 行，全局 `Pricing`）：价格防护、运费计算、**顾客等级（`normalizeTier` / `validTier` / `tierLabel` / `isWholesaleTier`）与有效价 `effectivePrice(tier, salePrice, wholesalePrice)`** |
+| `web/sdy-api.js` | 后端连通层（436 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示；**`setOnSale(codes, on)` 批量上下架**、**`setMyPhone(phone)` / `listCustomers()` / `setCustomerTier(phone, name, tier)`，`sync()` 自动带上「我的手机号」按等级取价（D24）** |
 | `web/test-*.js` | 6 套测试（见下），纯 Node 运行，无需浏览器 |
 
 页面之间只靠相对路径互链（`index.html` ↔ `admin.html`，管理端系统页再链到 `../barcode-demo/`、`../sync-demo/`）。
@@ -84,11 +84,11 @@ node web/test-integration.js   # 17 项（需后端在线）
 | 测试 | 实测结果 | 覆盖什么 | 需要后端 |
 | --- | --- | --- | --- |
 | `web/test-mall.js` | 通过 88 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机、**同一毫秒连下两单单号不重复**、**收货地址簿（默认地址语义、按手机号隔离、删默认顶替）**、**上下架过滤（`isOnSale` / `listOnSale` / 加购与下单拦截、缺字段视为上架）** | 否 |
-| `web/test-pricing.js` | 通过 28 项 / 失败 0 项 | 配送费规则、价格防线、批发与无参考价豁免 | 否 |
+| `web/test-pricing.js` | 通过 42 项 / 失败 0 项 | 配送费规则、价格防线、批发与无参考价豁免、**顾客等级与有效价（`effectivePrice` / `normalizeTier` / `validTier` / `isWholesaleTier` / `tierLabel`，与 Go 侧 `TestEffectivePrice` 同一组用例，D24）** | 否 |
 | `web/test-admin.js` | 通过 188 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额）、**商品档案归一化/校验/价格防线/三档删除约束**、**小票模型与门店抬头**、**销售报表六档区间/聚合/环比/日报文本**、**批量改价计划（各状态/顶格/汇总）、批量应用（保库存·写流水·未变跳过·单条失败不中断）、批量改字段校验**、**商品图去空格与空串回落、编辑不改上下架/库存、批量改分类不动图片与上下架（D23）** | 否 |
-| `web/test-sdy-api.js` | 通过 68 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品、**地址簿在线/离线双路径（写成功自动重拉、失败不污染镜像）**、**`setOnSale` 在线/离线双路径** | 否（注入假 fetch） |
-| `web/test-page-boot.js` | 通过 174 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体**、**批量面板勾选·全选·预览·在线与离线应用·清空**、**小票写入打印区与批量分页（不真打印）**、**结算页地址带出与地址簿弹窗全流程**、**销售报表切页/区间切换/柱状图/复制与打印**、**商品图渲染与回退 emoji、下架商品顾客端拦截、管理端缩略图/图片字段/单个与批量上下架/分类改名合并（D23）** | 否 |
-| `web/test-integration.js` | 17 项（需后端在线；探测不到会自动跳过并 `exit 0`） | 真 fetch → 真后端：下单扣库存、运费、状态流转、非法流转 409、取消回补、比价巡检 | **是** |
+| `web/test-sdy-api.js` | 通过 94 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品、**地址簿在线/离线双路径（写成功自动重拉、失败不污染镜像）**、**`setOnSale` 在线/离线双路径**、**我的价格与顾客等级（离线 `Mall.priceOf` 按等级算价、在线 `sync()` 带 `?phone=` 且服务端下发价优先、`setMyPhone` / `listCustomers` / `setCustomerTier`，D24）** | 否（注入假 fetch） |
+| `web/test-page-boot.js` | 通过 195 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体**、**批量面板勾选·全选·预览·在线与离线应用·清空**、**小票写入打印区与批量分页（不真打印）**、**结算页地址带出与地址簿弹窗全流程**、**销售报表切页/区间切换/柱状图/复制与打印**、**商品图渲染与回退 emoji、下架商品顾客端拦截、管理端缩略图/图片字段/单个与批量上下架/分类改名合并（D23）**、**「我的价格」弹窗与批发价划线/购物车「批发价」标、管理端批发价字段（高于零售价被拦）、顾客登记与改等级（D24）** | 否 |
+| `web/test-integration.js` | 24 项（需后端在线；探测不到会自动跳过并 `exit 0`） | 真 fetch → 真后端：下单扣库存、运费、状态流转、非法流转 409、取消回补、比价巡检、**按顾客等级取价（`setCustomerTier` 后下单，服务端算价、前端传价不参与；改回等级只影响新单）** | **是** |
 
 联调测试的地址取 `SDY_API_BASE`（不设则默认 `http://127.0.0.1:8093`）：
 
@@ -181,9 +181,20 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 - **在线离线同一套语义**：`server` 模式走 `SdyApi` 写后端（后端再跑一遍 `pricing.CheckRetailPrice`），`local` 模式走 `Admin.applyBulkPlan` / `Admin.applyBulkField`，两边规则与文案一致。
 
 
+**批发价与顾客等级（任务池⑦ / D24）**
+
+- **手机号即身份，仍然没有账号体系**：顾客在上次结算时填的手机号会被记住（`localStorage.mall_my_phone`，`Mall.getMyPhone()` / `setMyPhone()`），等级（`retail` 默认 / `wholesale` / `vip`）由服务端按手机号判定并随商品列表一起下发（`localStorage.mall_my_tier` 只是镜像）。**列表页价格**由服务端算好（`GET /api/products?phone=`），**下单价**由 `CreateOrder` 用同一个函数再算一次——前端算的价只用于本地演示与界面显示，**永远不参与结算**（D12 单一真源）。
+- **有效价只有一条公式**：`Pricing.effectivePrice(tier, salePrice, wholesalePrice)` = 非零售等级**且**批发价 > 0 ? 批发价 : 零售价，结果一律 `round2`。所以 `wholesale_price = 0` 就是「这货不批发」，批发客户看到的仍是零售价；`vip`（白名单）与 `wholesale` **同口径**取批发价。
+- **「💰 我的价格」**：顾客端顶部胶囊旁边，点开填手机号即按等级显示价格——批发价旁边把原价划线（`.oldp`）、购物车行标「批发价」（`.wtag`）、购物车里显示「省了多少」（`cartSummary` 返回 `listPrice` / `wholesale`）。清空手机号即恢复零售价；退出只影响本机显示，**不动任何已下的单**。
+- **改等级只影响之后的单**：订单里的价格是下单当时的快照，之后把顾客从批发改回零售（或反过来）都不会回头动历史订单——与「订单地址是快照」「小票只读投影」同一条原则。
+- **批发价不参与零售比价防线**：比价只约束零售价（`Pricing.checkRetailPrice` 的 `isWholesale` 豁免），批发价另算；管理端建档/编辑时若批发价高于零售价会被直接拦下（`批发价 99 不能高于零售价 2.5`）。
+- **管理端两处**：① 商品建档/编辑弹窗新增「批发价（元）」字段（留空即未设），商品表在售价旁显示「批 ¥x.xx」；② 顾客视图可登记顾客（手机号 + 姓名 + 等级）并一键改等级（`Admin.TIERS` / `refreshCustomers` / `setTier`），存在 `POST /api/customers/tier`，离线时落 `localStorage.mall_customers`。
+- **上线口径照旧**：`wholesale_price` 与 `customer.tier` 都走 `ensureColumn` 幂等迁移，老库直接升级、不用清库；**`wholesale_price = excluded.wholesale_price` 和 `img` 一样是覆盖式**——任何 `SdyApi.upsertProduct({...})` 调用方都必须带上 `wholesalePrice`（`deploy/seed-demo.py` 的 `WHOLESALE` 表就是这么挂上去的），否则批量改价 / 改分类会把已设的批发价清零。
+
+
 **约定与坑**
 
-- **localStorage 键**：`bd_products`（商品库，与扫码台、对账工具**同源共用**）、`mall_cart`（购物车）、`mall_orders`（订单）、`mall_customer`（上次填写的收货信息）、`mall_addresses`（收货地址簿镜像）、`mall_couriers`（配送员名单）、`mall_stockLog`（库存流水，上限 500 条）、`mall_customers`（顾客备注）、`mall_store`（小票抬头：店名/电话/地址/票尾）、`sdy_api_base`（后端地址）。
+- **localStorage 键**：`bd_products`（商品库，与扫码台、对账工具**同源共用**）、`mall_cart`（购物车）、`mall_orders`（订单）、`mall_customer`（上次填写的收货信息）、`mall_addresses`（收货地址簿镜像）、`mall_couriers`（配送员名单）、`mall_stockLog`（库存流水，上限 500 条）、`mall_customers`（顾客备注 + 顾客等级镜像）、`mall_my_phone` / `mall_my_tier`（我的手机号与等级，D24）、`mall_store`（小票抬头：店名/电话/地址/票尾）、`sdy_api_base`（后端地址）。
 - **跨模块共用**：商城、扫码台、对账工作台必须用**同一个端口（同一源）**打开，才看到同一份 `bd_products`。
 - **历史坑（已修，勿回退）**：`mall.js` 在浏览器里声明了顶层 `const Mall`，`mall-admin.js` 若再声明一个 `Mall` 会直接 `SyntaxError: Identifier 'Mall' has already been declared`，导致整个后台脚本静默失效。所以后台注入时用的是 `MallCore` 这个名字，别改回去。
 - **假 DOM 测试的坑**：`web/test-page-boot.js` 里的 `env.els.X` **只在页面脚本调用过 `getElementById('X')` 之后才存在**——测试要用到的元素，要么先驱动页面走到会碰它的那一步，要么自己 `env.els.X = fakeEl('X')`；页面脚本用到的浏览器弹窗（`confirm` / `prompt`，分类改名就用 `prompt`）必须在沙箱里注入，`makeEnv` 已给 `prompt` 默认 `() => null`，需要返回值时按测试传参。
@@ -195,7 +206,7 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 
 - [`../README.md`](../README.md) — 仓库总览、里程碑状态、测试矩阵
 - [`../开发计划.html`](../开发计划.html) — 路线图与当前重心
-- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账 D1–D23（含库存页形态、扫码只读、商品档案写接口、小票约定、收货地址簿、销售报表口径、批量操作边界、商品上下架口径等）
+- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账 D1–D24（含库存页形态、扫码只读、商品档案写接口、小票约定、收货地址簿、销售报表口径、批量操作边界、商品上下架口径、批发价与顾客等级口径等）
 - [`../独立小程序商城可行性分析与架构方案.html`](../独立小程序商城可行性分析与架构方案.html) — 架构与实现现状
 - [`../server/README.md`](../server/README.md) — 后端接口、环境变量、测试
 - [`../barcode-demo/README.md`](../barcode-demo/README.md) — 扫码台与双库解析链

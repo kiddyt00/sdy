@@ -336,7 +336,22 @@
             <input id="custQ" placeholder="搜姓名 / 手机 / 标签" oninput="renderCust()">
           </div>
         </div>
-        <div class="panel-body"><div id="custList"></div></div>
+        <div class="panel-body">
+          <div class="row" style="gap:8px;align-items:flex-end;margin-bottom:12px">
+            <div class="field grow" style="max-width:180px"><label>手机号（顾客身份）</label><input class="input" id="newCustPhone" placeholder="11 位手机号"></div>
+            <div class="field grow" style="max-width:160px"><label>姓名 / 店名（选填）</label><input class="input" id="newCustName" placeholder="张老板"></div>
+            <div class="field grow" style="max-width:130px"><label>等级</label>
+              <select class="sel" id="newCustTier">
+                <option value="wholesale">批发价</option>
+                <option value="vip">白名单价</option>
+                <option value="retail">零售价</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" onclick="addCustomer()">登记顾客等级</button>
+          </div>
+          <div class="muted" style="font-size:12px;margin-bottom:12px">顾客端没有账号体系：<b>手机号就是身份</b>（D24）。等级为「批发 / 白名单」的顾客，在顾客端会看到该商品的批发价（没填批发价就还是零售价）。</div>
+          <div id="custList"></div>
+        </div>
       </div>
     </section>
 
@@ -408,15 +423,19 @@
       <div class="field grow"><label>售价</label><input class="input" id="pfSale" placeholder="0.00" oninput="checkProductForm()"></div>
       <div class="field grow"><label>牵牛花参考价（选填）</label><input class="input" id="pfRef" placeholder="填了才有比价防线" oninput="checkProductForm()"></div>
     </div>
+    <div class="row mt">
+      <div class="field grow"><label>批发价（选填·按顾客等级生效）</label><input class="input" id="pfWholesale" placeholder="留空＝批发客户也按零售价" oninput="checkProductForm()"></div>
+      <div class="field grow"><label>批发商品（商品维度）</label>
+        <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="pfWhole" onchange="checkProductForm()"> 本品改价跳过比价防线</label>
+      </div>
+    </div>
     <div class="row mt" id="pfStockRow">
       <div class="field grow"><label>初始库存（建档后请到库存页调整）</label><input class="input" id="pfStock" placeholder="不填按 0，记一条入库流水"></div>
-      <div class="field grow"><label>批发商品</label>
-        <label class="row" style="gap:8px;font-size:13px"><input type="checkbox" id="pfWhole" onchange="checkProductForm()"> 批发价，跳过比价防线</label>
-      </div>
     </div>
     <div class="mt" id="pfMsg"></div>
     <p class="muted mt" style="font-size:12px;line-height:1.8">
-      价格防线：零售价 ≤ 参考价 −5%，超了会被平台比价处罚；建档只登记商品，<b>不用于调整库存</b>（D8 手动）。
+      价格防线：零售价 ≤ 参考价 −5%，超了会被平台比价处罚；建档只登记商品，<b>不用于调整库存</b>（D8 手动）。<br>
+      批发价：只有顾客档案里等级为「批发 / 白名单」的手机号才按批发价算（D24），留空就按零售价。
     </p>
   </div>
   <div class="modal-foot">
@@ -893,7 +912,8 @@ function renderProducts() {
           '</div></div></td>' +
           '<td>' + esc(p.category || Admin.DEFAULT_CATEGORY) + '<div class="muted" style="font-size:11.5px">' + esc(p.unit || Admin.DEFAULT_UNIT) + '</div></td>' +
           '<td class="num">' + yuan(p.costPrice) + '</td>' +
-          '<td class="num"><b>' + yuan(p.salePrice) + '</b></td>' +
+          '<td class="num"><b>' + yuan(p.salePrice) + '</b>' +
+            (p.wholesalePrice > 0 ? '<div class="muted" style="font-size:11.5px" title="批发 / 白名单等级顾客看到的价格">批 ' + yuan(p.wholesalePrice) + '</div>' : '') + '</td>' +
           '<td class="num">' + (p.refPrice ? yuan(p.refPrice) : '—') + '</td>' +
           '<td class="num">' + p.stock + '</td>' +
           '<td>' + guard + '</td>' +
@@ -1195,6 +1215,7 @@ function openProductDlg(code) {
   $('pfCost').value = d.costPrice || '';
   $('pfSale').value = d.salePrice || '';
   $('pfRef').value = d.refPrice || '';
+  $('pfWholesale').value = d.wholesalePrice || '';
   $('pfImg').value = d.img || '';
   $('pfWhole').checked = !!d.isWholesale;
   $('pfStockRow').style.display = editCode ? 'none' : '';           // 编辑不改库存（不变量①）
@@ -1212,6 +1233,7 @@ function formValues() {
     category: $('pfCat').value, unit: $('pfUnit').value,
     img: $('pfImg').value,
     costPrice: $('pfCost').value, salePrice: $('pfSale').value, refPrice: $('pfRef').value,
+    wholesalePrice: $('pfWholesale').value,
     stock: editCode ? 0 : $('pfStock').value,                        // 编辑态不带库存
     isWholesale: $('pfWhole').checked
   };
@@ -1237,7 +1259,8 @@ async function submitProduct() {
       const payload = {
         code: p.code, name: p.name, brand: p.brand, spec: p.spec, category: p.category, unit: p.unit,
         img: p.img || '',
-        costPrice: p.costPrice, salePrice: p.salePrice, refPrice: p.refPrice, isWholesale: p.isWholesale
+        costPrice: p.costPrice, salePrice: p.salePrice, refPrice: p.refPrice, isWholesale: p.isWholesale,
+        wholesalePrice: p.wholesalePrice || 0,                        // 批发价（D24）：不带就会被清零
       };
       if (!wasEdit) payload.stock = p.stock;                        // 初始库存只在新建立写
       await SdyApi.upsertProduct(payload);
@@ -1278,22 +1301,51 @@ function renderCust() {
   const list = Admin.getCustomers().filter(c => !kw || ((c.name || '') + (c.phone || '') + (c.tag || '')).toLowerCase().includes(kw));
   $('custList').innerHTML = list.length ? list.map(c => {
     const tags = ['', '熟客', '新客', '普通', '批发'];
+    const who = '<div><span class="cn">' + esc(c.name || '（未留名）') + '</span> <span class="cp">' + esc(c.phone) + '</span>' +
+      (c.tier && c.tier !== 'retail' ? ' <span class="badge st-delivering">' + esc(Admin.tierLabel(c.tier)) + '价</span>' : '') +
+      '<div class="muted" style="font-size:12px;margin-top:4px">' + esc(c.address || '（未留地址）') + '</div></div>';
+    // 等级（任务池⑦ / D24）：选了立刻生效，只影响之后的单，历史订单价格不动
+    const tierSel = c.phone
+      ? '<select class="sel" id="tier_' + esc(c.phone) + '" onchange="saveTier(\'' + esc(c.phone) + '\')">' +
+          Admin.TIERS.map(t => '<option value="' + t.v + '"' + ((c.tier || 'retail') === t.v ? ' selected' : '') + '>' + t.label + '价</option>').join('') +
+        '</select>'
+      : '<span class="muted" style="font-size:12px">无手机号，不能设等级</span>';
     return '<div class="custcard">' +
-      '<div class="ch"><div><span class="cn">' + esc(c.name) + '</span> <span class="cp">' + esc(c.phone) + '</span>' +
-        '<div class="muted" style="font-size:12px;margin-top:4px">' + esc(c.address || '（未留地址）') + '</div></div>' +
-        '<select class="sel" id="tag_' + esc(c.phone) + '">' +
-          tags.map(t => '<option value="' + t + '"' + ((c.tag || '') === t ? ' selected' : '') + '>' + (t || '（无标签）') + '</option>').join('') +
-        '</select></div>' +
+      '<div class="ch">' + who + tierSel + '</div>' +
       '<div class="cstats">下单 <b>' + (c.orderCount || 0) + '</b> 次 · 累计 <b>' + yuan(c.totalSpent) + '</b> · 最近 ' + (c.lastOrderAt ? when(c.lastOrderAt) : '—') + '</div>' +
-      '<div class="opline"><input class="inp grow" id="note_' + esc(c.phone) + '" value="' + esc(c.note || '') + '" placeholder="备注：3 号楼 502 / 常订整箱可乐">' +
+      '<div class="opline"><select class="sel" id="tag_' + esc(c.phone) + '" style="max-width:120px">' +
+          tags.map(t => '<option value="' + t + '"' + ((c.tag || '') === t ? ' selected' : '') + '>' + (t || '（无标签）') + '</option>').join('') +
+        '</select><input class="inp grow" id="note_' + esc(c.phone) + '" value="' + esc(c.note || '') + '" placeholder="备注：3 号楼 502 / 常订整箱可乐">' +
         '<button class="btn btn-xs" onclick="saveNote(\'' + esc(c.phone) + '\')">保存</button></div>' +
     '</div>';
-  }).join('') : '<div class="empty"><span class="big">👥</span>还没有顾客记录（下单后自动沉淀）</div>';
+  }).join('') : '<div class="empty"><span class="big">👥</span>还没有顾客记录（登记等级或下单后自动沉淀）</div>';
 }
 function saveNote(phone) {
   Admin.setCustomerNote(phone, $('note_' + phone).value.trim(), $('tag_' + phone).value);
   toast('顾客档案已保存');
   renderCust();
+}
+// 设顾客等级（D24）：在线写后端、离线写本地档案；价格由服务端按等级算
+async function saveTier(phone) {
+  const sel = $('tier_' + phone);
+  const tier = sel ? sel.value : 'retail';
+  try {
+    await Admin.setTier(phone, '', tier);
+  } catch (e) { return toast('设等级失败：' + e.message, 4200); }
+  renderCust(); renderDash();
+  toast('顾客等级已改为「' + Admin.tierLabel(tier) + '价」——下次下单按新等级算价');
+}
+// 登记一个还没下过单的顾客（批发客户常是先登记手机号再拿货）
+async function addCustomer() {
+  const phone = (($('newCustPhone') && $('newCustPhone').value) || '').trim();
+  const name = (($('newCustName') && $('newCustName').value) || '').trim();
+  const tier = ($('newCustTier') && $('newCustTier').value) || 'wholesale';
+  if (!phone) return toast('请填手机号', 3000);
+  try { await Admin.setTier(phone, name, tier); }
+  catch (e) { return toast('登记失败：' + e.message, 4200); }
+  $('newCustPhone').value = ''; $('newCustName').value = '';
+  renderCust();
+  toast('已登记「' + Admin.tierLabel(tier) + '价」顾客：' + phone + (name ? '（' + name + '）' : ''));
 }
 
 /* ---------------- 系统 ---------------- */
@@ -1354,6 +1406,7 @@ async function initApi() {
     badge.className = 'pill-mode ' + (st.online ? 'on' : 'off');
     if (st.online) {
       try { await SdyApi.sync(); } catch (e) { }
+      try { await Admin.refreshCustomers(); } catch (e) { }   // 顾客等级（D24）：后端真源同步进本地档案
       try {
         const h = await SdyApi.health();
         if (h && h.circuitOpen) toast('⚠️ 条码云端查询已熔断（今日额度耗尽或连续失败），扫码台只查本地库', 4200);

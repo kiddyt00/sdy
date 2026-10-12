@@ -15,7 +15,10 @@
 const Mall = (() => {
 
   // ---------------- 常量与存储 ----------------
-  const KEYS = { products: 'bd_products', cart: 'mall_cart', orders: 'mall_orders', addresses: 'mall_addresses' };
+  const KEYS = {
+    products: 'bd_products', cart: 'mall_cart', orders: 'mall_orders', addresses: 'mall_addresses',
+    myPhone: 'mall_my_phone', myTier: 'mall_my_tier'   // 我的手机号与等级（任务池⑦ / D24）
+  };
   const DELIVERY_RULES = { pickupFee: 0, minFree: 30, fee: 3 }; // 配送满 30 免、否则 3 元（占位）
   const STATUS_FLOW = {                    // 订单状态机：合法迁移表
     pending:    ['delivering', 'ready'],   // 待备货 → 配送中 | 待自提
@@ -80,6 +83,56 @@ const Mall = (() => {
     return Object.assign({}, p);
   }
 
+  // ---------------- 顾客等级与有效价（任务池⑦ / D24） ----------------
+  // 口径与服务端 server/internal/pricing/pricing.go 完全一致：
+  //   等级 retail(默认)/wholesale/vip；非零售等级且批发价 > 0 → 批发价，否则零售价；
+  //   一律 round2。价格口径的真源在服务端——服务端在商品上算好 price 下发，
+  //   这里优先用 p.price；拿不到（离线演示 / 直开 HTML）才按本地等级自己算。
+  function round2(n) { return Math.round((+(n) || 0) * 100) / 100; }
+  function isWholesaleTier(tier) { return tier === 'wholesale' || tier === 'vip'; }
+
+  function getMyPhone() {
+    const v = loadLS(KEYS.myPhone, '');
+    return typeof v === 'string' ? v : '';
+  }
+  // 等级来源：① 在线同步时服务端告知的（mall_my_tier）
+  //          ② 离线演示时管理端在本地顾客档案里设过的（mall_customers）
+  function getMyTier() {
+    const stored = loadLS(KEYS.myTier, '');
+    if (stored === 'retail' || isWholesaleTier(stored)) return stored;
+    const phone = getMyPhone();
+    if (phone) {
+      const cs = loadLS('mall_customers', null);
+      let hit = null;
+      if (Array.isArray(cs)) hit = cs.find(c => String(c.phone || '').trim() === phone) || null;
+      else if (cs && typeof cs === 'object') hit = cs[phone] || null;
+      if (hit && isWholesaleTier(hit.tier)) return hit.tier;
+    }
+    return 'retail';
+  }
+  // 记住「我的手机号」（下单成功后自动记住，下次进来就按我的等级显示价格）
+  function setMyPhone(phone, tier) {
+    const p = String(phone == null ? '' : phone).trim();
+    const prev = getMyPhone();
+    saveLS(KEYS.myPhone, p);
+    if (tier === 'retail' || isWholesaleTier(tier)) saveLS(KEYS.myTier, tier);
+    else if (!p || p !== prev) saveLS(KEYS.myTier, '');   // 换了手机号才清掉旧等级
+    return p;
+  }
+  // 有效价：页面展示、购物车小计、离线下单都用它
+  function priceOf(p) {
+    if (!p) return 0;
+    if (typeof p.price === 'number' && isFinite(p.price)) return round2(p.price);
+    const w = +p.wholesalePrice || 0;
+    if (isWholesaleTier(getMyTier()) && w > 0) return round2(w);
+    return round2(p.salePrice);
+  }
+  // 是否按批发价（用于页面标「批发价」与划线原价）
+  function isWholesalePrice(p) {
+    const sale = round2(p && p.salePrice);
+    return priceOf(p) < sale;
+  }
+
   // ---------------- 购物车 ----------------
   function getCart() {
     const c = loadLS(KEYS.cart, []);
@@ -130,9 +183,14 @@ const Mall = (() => {
     let count = 0, subtotal = 0;
     const lines = cart.map(i => {
       const p = getProduct(i.code) || { code: i.code, name: '未知商品', spec: '', salePrice: 0, unit: '件' };
+      const price = priceOf(p);                       // 有效价（任务池⑦ / D24）
       count += i.qty;
-      subtotal += +(p.salePrice * i.qty).toFixed(2);
-      return { code: i.code, name: p.name, spec: p.spec, unit: p.unit, price: p.salePrice, qty: i.qty, stock: p.stock, img: p.img || '', onSale: isOnSale(p) };
+      subtotal += +(price * i.qty).toFixed(2);
+      return {
+        code: i.code, name: p.name, spec: p.spec, unit: p.unit, price: price,
+        listPrice: round2(p.salePrice), wholesale: price < round2(p.salePrice),
+        qty: i.qty, stock: p.stock, img: p.img || '', onSale: isOnSale(p)
+      };
     });
     return { count: count, subtotal: Math.round(subtotal * 100) / 100, lines: lines };
   }
@@ -194,6 +252,7 @@ const Mall = (() => {
     orders.unshift(order);
     saveOrders(orders);
     clearCart();
+    setMyPhone(customer.phone);   // 记住手机号：下次进来按我的等级显示价格（D24）
     return order;
   }
 
@@ -337,6 +396,11 @@ const Mall = (() => {
     isOnSale: isOnSale,
     listOnSale: listOnSale,
     updateProduct: updateProduct,
+    getMyPhone: getMyPhone,
+    setMyPhone: setMyPhone,
+    getMyTier: getMyTier,
+    priceOf: priceOf,
+    isWholesalePrice: isWholesalePrice,
     getCart: getCart,
     addToCart: addToCart,
     setQty: setQty,

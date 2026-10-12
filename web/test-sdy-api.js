@@ -39,8 +39,8 @@ function mkFetch(routes) {
 }
 
 const SERVER_PRODUCTS = [
-  { code: '6901234567892', name: '可口可乐', brand: '可口可乐', spec: '330ml 罐装', category: '饮料', salePrice: 2.5, costPrice: 1.8, refPrice: 3, unit: '罐', stock: 118, syncStatus: 'synced', createdAt: '2026-10-10T08:00:00Z' },
-  { code: '6902083881234', name: '农夫山泉', brand: '农夫山泉', spec: '550ml', category: '饮料', salePrice: 1.8, costPrice: 1.1, unit: '瓶', stock: 200, syncStatus: 'pending', createdAt: '2026-10-10T08:00:00Z' }
+  { code: '6901234567892', name: '可口可乐', brand: '可口可乐', spec: '330ml 罐装', category: '饮料', salePrice: 2.5, wholesalePrice: 2.2, price: 2.5, costPrice: 1.8, refPrice: 3, unit: '罐', stock: 118, syncStatus: 'synced', createdAt: '2026-10-10T08:00:00Z' },
+  { code: '6902083881234', name: '农夫山泉', brand: '农夫山泉', spec: '550ml', category: '饮料', salePrice: 1.8, wholesalePrice: 0, price: 1.8, costPrice: 1.1, unit: '瓶', stock: 200, syncStatus: 'pending', createdAt: '2026-10-10T08:00:00Z' }
 ];
 const SERVER_ORDERS = [
   { id: 'M1791619813104136149', customerName: '张三', phone: '13800000000', address: '1 号楼 101', deliveryType: 'pickup', subtotal: 5, deliveryFee: 0, total: 5, status: 'pending', items: [{ code: '6901234567892', name: '可口可乐', price: 2.5, qty: 2 }], createdAt: '2026-10-10T08:05:00Z' }
@@ -49,7 +49,8 @@ const SERVER_ORDERS = [
 function serverRoutes(extra) {
   return [
     { method: 'GET', path: '/healthz', body: { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true } },
-    { method: 'GET', path: '/api/products', body: { items: SERVER_PRODUCTS, total: 2 } },
+    // 商品：带 ?phone= 时服务端会按顾客等级算好 price（D24），这里统一用正则匹配
+    { method: 'GET', re: /^\/api\/products(\?|$)/, body: { items: SERVER_PRODUCTS, total: 2, tier: 'retail' } },
     { method: 'GET', path: '/api/orders', body: { items: SERVER_ORDERS, total: 1 } }
   ].concat(extra || []);
 }
@@ -108,7 +109,7 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     let orders = SERVER_ORDERS.slice();
     const f = mkFetch([
       { method: 'GET', path: '/healthz', body: { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true } },
-      { method: 'GET', path: '/api/products', body: { items: SERVER_PRODUCTS, total: 2 } },
+      { method: 'GET', re: /^\/api\/products(\?|$)/, body: { items: SERVER_PRODUCTS, total: 2, tier: 'retail' } },
       { method: 'GET', path: '/api/orders', body: () => ({ items: orders, total: orders.length }) },
       { method: 'POST', path: '/api/orders', status: 201, body: (c) => {
           const o = { id: 'M999', customerName: c.body.customerName, phone: c.body.phone, address: c.body.address || '', deliveryType: c.body.deliveryType, subtotal: 4.3, deliveryFee: 3, total: 7.3, status: 'pending', items: [{ code: '6901234567892', name: '可口可乐', price: 2.5, qty: 1 }, { code: '6902083881234', name: '农夫山泉', price: 1.8, qty: 1 }], createdAt: '2026-10-10T09:00:00Z' };
@@ -309,6 +310,96 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     const back = await SdyApi.setOnSale(['6901234567892'], true);
     ok(back.count === 1 && Mall.getProduct('6901234567892').onSale === true, '在线：重新上架生效');
   }
+  /* ============ ⑧ 批发价与顾客等级（D24） ============ */
+  section('⑧ 我的价格 / 顾客等级（任务池⑦ / D24）');
+  {
+    // 纯函数口径（与后端 Go pricing.EffectivePrice 一致）
+    ok(Mall.priceOf({ salePrice: 60, wholesalePrice: 52 }) === 60, '零售等级 → 售价');
+    Mall.setMyPhone('13800001111');
+    ok(Mall.getMyPhone() === '13800001111' && Mall.getMyTier() === 'retail', '记住手机号，默认零售');
+    ok(Mall.priceOf({ salePrice: 60, wholesalePrice: 52 }) === 60, '有手机号但等级还是零售 → 售价');
+    Mall._save('mall_customers', { '13800001111': { tier: 'wholesale' } });
+    ok(Mall.getMyTier() === 'wholesale', '离线演示：本地顾客档案里的等级生效');
+    ok(Mall.priceOf({ salePrice: 60, wholesalePrice: 52 }) === 52, '批发等级 + 有批发价 → 批发价');
+    ok(Mall.priceOf({ salePrice: 60, wholesalePrice: 0 }) === 60, '批发等级但没填批发价 → 售价（回落）');
+    ok(Mall.priceOf({ salePrice: 60, wholesalePrice: 52, price: 45 }) === 45, '服务端下发的 price 优先（价格真源在服务端）');
+    ok(Mall.isWholesalePrice({ salePrice: 60, wholesalePrice: 52 }) === true, '批发价低于零售价 → 标批发价');
+    ok(Mall.isWholesalePrice({ salePrice: 60, wholesalePrice: 0 }) === false, '没便宜 → 不标批发价');
+    // 购物车小计与下单都按有效价（离线演示：本地商品档案没有服务端 price 字段）
+    Mall._save(Mall.KEYS.products, [
+      { code: '6901234567892', name: '可口可乐', spec: '330ml 罐装', category: '饮料', salePrice: 2.5, wholesalePrice: 2.2, unit: '罐', stock: 10, onSale: true },
+      { code: '6902083881234', name: '农夫山泉', spec: '550ml', category: '饮料', salePrice: 1.8, wholesalePrice: 0, unit: '瓶', stock: 10, onSale: true }
+    ]);
+    Mall.clearCart();
+    Mall.addToCart('6901234567892', 2);
+    Mall.addToCart('6902083881234', 1);
+    const s = Mall.cartSummary();
+    ok(s.subtotal === 6.2, '购物车小计按有效价（2.2×2 + 1.8，离线按本地批发价）');
+    const line = s.lines.find(l => l.code === '6901234567892');
+    ok(line.price === 2.2 && line.listPrice === 2.5 && line.wholesale === true, '购物车行带 price/listPrice/wholesale');
+    Mall.setMyPhone('');
+    ok(Mall.getMyPhone() === '' && Mall.getMyTier() === 'retail', '清空手机号 → 回零售');
+  }
+  {
+    // 离线：管理端设等级只写本地；在线才打后端
+    fresh();
+    const f0 = mkFetch([]);
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f0, mall: Mall, timeoutMs: 50 });
+    const r = await SdyApi.setMyPhone('13800002222');
+    ok(SdyApi.mode() === 'local' && r.offline === true && r.tier === 'retail', '离线设手机号：返回 offline/retail');
+    ok(await SdyApi.listCustomers() === null, '离线：listCustomers 返回 null（管理端读本地档案）');
+    ok(await SdyApi.setCustomerTier('13800002222', '甲', 'vip') === null, '离线：setCustomerTier 返回 null');
+  }
+  {
+    // 在线：带手机号重新取价，服务端按等级下发 price；顾客档案走后端
+    fresh();
+    let items = SERVER_PRODUCTS.map(p => Object.assign({}, p));
+    // 注意：自定义 /api/products 路由必须排在通用路由之前（mkFetch 取第一个匹配），
+    // 否则 serverRoutes 里的通用商品路由会先命中，tier 永远是 retail。
+    const f = mkFetch([
+      { method: 'GET', path: '/healthz', body: { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true } },
+      { method: 'GET', re: /^\/api\/products(\?|$)/, body: (c) => {
+          const whole = /phone=13800001111/.test(c.path);
+          const list = items.map(p => Object.assign({}, p, {
+            price: whole ? (p.wholesalePrice > 0 ? p.wholesalePrice : p.salePrice) : p.salePrice,
+            tier: whole ? 'wholesale' : 'retail'
+          }));
+          return { items: list, total: list.length, tier: whole ? 'wholesale' : 'retail' };
+        } },
+      { method: 'GET', path: '/api/orders', body: { items: [], total: 0 } },
+      { method: 'GET', path: '/api/customers', body: { total: 1, items: [
+        { phone: '13800001111', name: '王老板', tier: 'wholesale', tags: '', note: '' }
+      ] } },
+      { method: 'POST', path: '/api/customers/tier', body: (c) => ({ phone: c.body.phone, name: c.body.name, tier: c.body.tier, tags: '', note: '' }) },
+      { method: 'POST', path: '/api/orders', status: 201, body: (c) => ({
+          id: 'M888', customerName: c.body.customerName, phone: c.body.phone, address: c.body.address || '',
+          deliveryType: c.body.deliveryType, subtotal: 2.2, deliveryFee: 0, total: 2.2, status: 'pending',
+          items: [{ code: '6901234567892', name: '可口可乐', price: 2.2, qty: 1 }], createdAt: '2026-10-12T09:00:00Z'
+        }) }
+    ]);
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
+    ok(Mall.getProduct('6901234567892').price === 2.5, '不带手机号：服务端下发零售价 2.5');
+    const r = await SdyApi.setMyPhone('13800001111');
+    ok(r.tier === 'wholesale' && r.phone === '13800001111', '在线设手机号 → 服务端回 tier=wholesale');
+    const last = f.calls.filter(c => /^\/api\/products/.test(c.path)).pop();
+    ok(last.path === '/api/products?phone=13800001111', '在线：带手机号重新拉商品（?phone=）');
+    ok(Mall.getProduct('6901234567892').price === 2.2, '在线：镜像里的价格按批发等级刷新为 2.2');
+    ok(Mall.getProduct('6902083881234').price === 1.8, '在线：没填批发价的商品仍是零售价 1.8');
+    ok(Mall.getMyTier() === 'wholesale' && Mall.getMyPhone() === '13800001111', '等级与手机号记住到本地');
+    const cs = await SdyApi.listCustomers();
+    ok(cs.length === 1 && cs[0].phone === '13800001111' && cs[0].tier === 'wholesale', '在线：GET /api/customers 拿到顾客档案与等级');
+    const saved = await SdyApi.setCustomerTier('13800001111', '王老板', 'vip');
+    const post = f.calls.filter(c => c.method === 'POST' && c.path === '/api/customers/tier')[0];
+    ok(!!post && post.body.phone === '13800001111' && post.body.tier === 'vip' && post.body.name === '王老板', '在线：POST /api/customers/tier 请求体正确');
+    ok(saved && saved.tier === 'vip', '在线：透出后端保存结果');
+    // 下单后自动记住手机号（下次进来就按我的等级显示价格）
+    Mall.setMyPhone('');
+    Mall.addToCart('6901234567892', 1);
+    const o = await SdyApi.createOrder({ deliveryType: 'pickup', customer: { name: '王老板', phone: '13800001111' } });
+    ok(!!o, '在线下单成功');
+    ok(Mall.getMyPhone() === '13800001111', '下单后记住手机号（下次自动按等级取价）');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);
