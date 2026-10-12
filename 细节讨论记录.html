@@ -59,7 +59,7 @@
   <tr><td>客服体系</td><td><span class="tag todo">未开始</span></td><td>原生客服消息 + 留言工单 + FAQ</td></tr>
   <tr><td>配送与自提</td><td><span class="tag todo">未开始</span></td><td>4 家配送聚合比价路由、自提核销</td></tr>
   <tr><td>财务对账与开票</td><td><span class="tag todo">未开始</span></td><td>零售/批发对账、批发电子发票预留</td></tr>
-  <tr><td>后台与数据</td><td><span class="tag doing">进行中</span></td><td>看板化后台、报表、SKU 主数据；第 11 轮完成商品档案（SKU 主数据），第 14 轮完成销售报表 / 日报（D19），第 15 轮完成批量改价 / 批量操作（D20），后续见 <code>开发计划.html</code> 任务池 6–8 项</td></tr>
+  <tr><td>后台与数据</td><td><span class="tag doing">进行中</span></td><td>看板化后台、报表、SKU 主数据；第 11 轮完成商品档案（SKU 主数据），第 14 轮完成销售报表 / 日报（D19），第 15 轮完成批量改价 / 批量操作（D20），第 16 轮把项目部署到生产服务器并对外可访问（IP 直连入口，D21），后续见 <code>开发计划.html</code> 任务池 6–8 项</td></tr>
 </table>
 
 <h2>二、轮次记录</h2>
@@ -340,6 +340,18 @@
   </ul>
 </div>
 
+<div class="callout green">
+  <strong>第 16 轮（2026-10-12）生产部署上线：先让老板打开界面看效果（用户要求「先在生产服务器上部署一下」）</strong>
+  <p>功能攒了一堆，但老板只能听描述、看不到真东西，没法提「这里别扭」这类最值钱的反馈。本轮把项目部署到生产服务器并<b>对外可访问</b>（决策 <b>D21</b>）。</p>
+  <ul>
+    <li><strong>先上「IP 直连」通道</strong>：备案域名还没到位，于是在主机 Nginx 上加一个只认本机 IP 的 HTTP 入口（<code>deploy/host-nginx-ip.conf</code>，<code>server_name</code> 只写 IP）：打开 <code>http://&lt;服务器IP&gt;/</code> 是顾客端、<code>/admin.html</code> 是管理端，<code>/api/</code> 由 Nginx 反代到蓝绿池。因为 Nginx 按 Host 精确匹配，未知 Host 仍落同机 beian 的 <code>default_server</code>，<b>yiguan / beian 等既有站点完全不受影响</b>（安装前后把同机几个域名逐个验过）。域名 + 备案到位后换成 <code>deploy/host-nginx.conf</code> 上 HTTPS 即可。</li>
+    <li><strong>两个真踩到的坑（已回写脚本）</strong>：① 容器以 <code>uid 10001(app)</code> 运行，宿主 <code>data/</code> 归 root 时 SQLite 报 <code>unable to open database file: out of memory (14)</code> 且容器反复重启 → <code>deploy.sh</code> 现在会 <code>chown -R 10001:10001 data</code>；② 本地仓库文件权限偏紧（600），rsync 带过去后容器读不到 → <code>/admin.html</code> 403、<code>/</code> 退化成 Go 目录列表（605B）→ <code>deploy.sh</code> 现在会 <code>chmod -R a+rX web</code>，并注明同步时带 <code>--chmod=D755,F644</code>。</li>
+    <li><strong>灌了演示数据</strong>：14 款商品（覆盖批发、缺参考价、低库存、缺货四种情况）、6 张订单（已完成 / 配送中 / 待自提 / 待备货 / 已取消 五态齐全，取消那张顺带验了库存回补）、3 条地址簿——KPI、看板、订单流转、小票、库存流水、报表、批量改价打开就是活的。演示数据只用于看界面，正式开张前清库重建即可。</li>
+    <li><strong>验证</strong>：从本机用真 Chrome（CDP）打<b>公网地址</b>冒烟——顾客端 14 款商品可正常浏览加购；管理端八个视图全部渲染（订单 6 张、库存 14 行、顾客 4 条、报表 <b>5 单 ¥199.00 / 客单价 ¥39.80 / 取消 1 单 / 售出 35 件</b>、低库存提示「红牛剩 1 罐 / 旺旺雪饼剩 0 包」），<b>0 异常 / 0 <code>console.error</code> / 0 横向溢出</b>；截图见 <code>.preview/prod-customer.png</code> 与 <code>.preview/prod-admin.png</code>。</li>
+    <li><strong>凭据纪律</strong>：服务器 IP / root 口令仍只存本地 <code>.server_cred.md</code>（已 gitignore）；新增的 Nginx 模板用 <code>__SDY_HOST__</code> 占位符，仓库里一句真 IP 都没有，提交前照例做 secret 扫描。</li>
+  </ul>
+</div>
+
 <h2>三、已定决策汇总</h2>
 <table>
   <tr><th>决策</th><th>来源</th><th>对主方案的影响</th></tr>
@@ -358,6 +370,7 @@
   <tr><td><b>收货地址簿（D18）</b>：地址按<b>手机号</b>归档在 <code>customer_address</code> 表（<code>phone</code> 索引，无账号体系），顾客端结算「常用地址点一下带出」+「📍 地址簿」管理弹窗（增 / 改 / 设默认 / 删）；默认语义三条——<b>首条自动默认</b>、<b>设为默认则摘掉同号其它条</b>、<b>删掉默认后由剩下最早一条顶替</b>；<b>编辑不传 <code>isDefault</code> 时原默认标记保留</b>；下单写入<b>只增不改</b>——内容与已选地址完全一致时不重复写，改了内容则存成新的一条，<b>绝不覆盖已有地址</b>；<b>订单地址是下单当时的快照</b>，改地址簿不影响历史订单。离线时本地 <code>localStorage.mall_addresses</code> 与后端同一套默认语义（两套实现各有单测钉住）</td><td>第 13 轮（做任务池第 3 项「顾客端收货地址簿」时定下）</td><td>熟客二次下单从「重填地址」变成「点一下」；不引入顾客账号体系（手机号即身份）；历史订单与配送单的口径不被地址簿改动污染；后端不存「顾客档案」的地址副本，避免两处真源</td></tr>
   <tr><td><b>销售报表口径（D19）</b>：报表<b>只统计非取消订单</b>；营业额按<b>下单口径</b>（含未完成）并另拆「已完成 / 进行中」——家庭店要看「今天做了多少生意」，未交付的钱也要单独可见；商品金额取各单 <code>subtotal</code>（不含配送费），客单价 = 营业额 ÷ 单量；六档区间（今天/昨天/近 7 天/近 30 天/本月/全部）按<b>本机时区自然日</b>切分、含首尾、<b>零单日也占一格</b>（柱状图横轴连续）；环比对<b>等长的上一个区间</b>，「全部」不比、前一期为 0 显示「—」；实现是<b>纯前端纯函数</b> <code>Admin.buildReport</code> / <code>Admin.reportText</code>（只读投影），<b>不加后端接口</b>、离线也能出报表；日报可一键复制（clipboard → textarea 兜底）或按 72mm 纯前端打印</td><td>第 14 轮（用户要求「继续开发」，做任务池第 4 项「销售报表 / 日报」时定下）</td><td>报表不进后端、不建新表，订单表始终是唯一真源，数字可由明细重算；「下单口径 + 已交付/未交付拆分」避免了「营业额只算已完成」与「算上取消单」两种口径误解；零单日占格让「哪天没开张」一眼可见；同比/环比只跟等长区间比，不编造百分比</td></tr>
   <tr><td><b>批量操作边界（D20）</b>：批量面板只改<b>售价 / 分类 / 批发标记</b>三样，<b>库存一律不动</b>（延续 D16）；<b>批量上下架随任务池第 6 项</b>做（商品表需先加上下架字段）；批量改价<b>逐款过比价防线</b>，超线默认跳过并在预览里标红，可「按防线顶格」按 <code>round2(参考价 × 0.95)</code> 落价；批发与缺参考价商品跳过比价检查但仍改价并记流水；写库前<b>逐款重读当前商品</b>、只覆盖目标字段（不用页面旧快照），当前价已等于目标价则跳过不写流水；每款改动各记一条商品流水（原因写明规则，如「批量改价：+10%」）</td><td>第 15 轮（用户要求「继续开发」，做任务池第 5 项「批量改价 / 批量操作」时定下）</td><td>批量操作不能变成绕过比价防线的后门，也不能因为批量改写把别人刚改的字段/库存冲掉；「逐款重读 + 只覆盖目标字段」是后续所有批量功能的硬约束；批量上下架明确留给需要改表的第 6 项，避免半成品字段</td></tr>
+  <tr><td><b>生产部署口径（D21）</b>：<b>先上「IP 直连」HTTP 入口</b>（<code>deploy/host-nginx-ip.conf</code> 的 <code>server_name</code> 只写本机 IP），域名 + 备案到位后再切 <code>deploy/host-nginx.conf</code> 的域名 + TLS——因为 Nginx 按 Host 精确匹配，未知 Host 仍落同机 beian 的 <code>default_server</code>，<b>不影响同机既有站点</b>；容器以 <code>uid 10001(app)</code> 运行，宿主 <code>data/</code> 必须 <code>chown 10001</code>（否则 SQLite 报 <code>unable to open database file: out of memory (14)</code>）、<code>web/</code> 必须对 others 可读（本地 600 权限会让容器 403 / 退化成目录列表），本机同步一律带 <code>--chmod=D755,F644</code>；<code>api-a</code>/<code>api-b</code> 共享 <code>/data/sdy.db</code>（SQLite WAL + <code>busy_timeout(5000)</code>），日常更新走 <code>deploy/rolling-update.sh</code> 先 B 后 A 不停服；生产库里的演示数据（14 商品 / 6 订单 / 3 地址）只用于「打开界面看效果」，正式开张前清库重建；<b>服务器 IP 与 root 口令只存本地 <code>.server_cred.md</code>，公开仓库用 <code>__SDY_HOST__</code> 占位</b></td><td>第 16 轮（用户要求「先在生产服务器上部署一下，这样我就能直观的看到界面，通过界面进行优化了」时定下）</td><td>老板的「直观看到界面」比域名完备更早需要，所以先用 IP + HTTP 抢时间、不阻塞看效果；用 Host 精确匹配把新站点与同机老站点彻底隔开，避免动别人线上服务；把两个权限坑写进脚本，是为了下次换机/重装不再重复踩；演示数据与真实经营数据分开对待，避免污染以后的对账</td></tr>
   <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
 </table>
 

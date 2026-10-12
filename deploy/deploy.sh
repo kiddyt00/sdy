@@ -29,6 +29,11 @@ if [ ! -f .env ]; then
 fi
 
 mkdir -p data web
+# 容器内以 uid 10001(app) 运行：
+#   data 必须是 10001 可写，否则 SQLite 报「unable to open database file: out of memory (14)」
+#   web  必须对 others 可读（本地仓库常见 600 权限），否则容器读不到静态文件 → 403 / 目录列表
+chown -R 10001:10001 data 2>/dev/null || true
+chmod -R a+rX web 2>/dev/null || true
 echo "🔨 构建并启动容器..."
 docker compose up -d --build
 
@@ -44,5 +49,11 @@ curl -fsS http://127.0.0.1:8094/healthz >/dev/null 2>&1 && echo "✅ api-b 健�
 
 echo ""
 echo "部署完成。主机 Nginx 上线（首次）："
-echo "  cp deploy/host-nginx.conf /etc/nginx/conf.d/<你的域名>.conf  # 先填 SDY_DOMAIN"
+echo "  cp deploy/host-nginx.conf /etc/nginx/conf.d/<你的域名>.conf  # 先填 SDY_DOMAIN（域名 + TLS）"
+echo "  # 域名备案前想先用 IP 看界面："
+echo "  sed 's/__SDY_HOST__/<本机公网IP>/' deploy/host-nginx-ip.conf > /etc/nginx/conf.d/sdy-ip.conf  # 仅 HTTP 80"
 echo "  nginx -t && systemctl reload nginx"
+echo ""
+echo "从本机同步代码到服务器时请带权限参数（否则容器读不到静态文件）："
+echo "  rsync -az --chmod=D755,F644 --exclude .git --exclude .venv --exclude .tools \\"
+echo "        --exclude .preview --exclude '.env' --exclude '*.docx' ./ root@<服务器>:/root/sdy/"
