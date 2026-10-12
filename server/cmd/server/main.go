@@ -98,7 +98,16 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 	mux.HandleFunc("/api/products", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			list, err := st.ListProducts(r.URL.Query().Get("keyword"), r.URL.Query().Get("category"))
+			// onSale=1 只回上架商品（顾客端商城用，D23）；不带参数回全量（管理端用）。
+			var (
+				list []store.Product
+				err  error
+			)
+			if r.URL.Query().Get("onSale") == "1" {
+				list, err = st.ListOnSaleProducts(r.URL.Query().Get("keyword"), r.URL.Query().Get("category"))
+			} else {
+				list, err = st.ListProducts(r.URL.Query().Get("keyword"), r.URL.Query().Get("category"))
+			}
 			if err != nil {
 				writeErr(w, err)
 				return
@@ -108,6 +117,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			// 建档 / 编辑商品档案（任务池①）。
 			// stock 用指针区分「没传」与「传 0」：编辑表单不带库存时不覆盖现有库存
 			// （不变量：编辑档案不改库存，库存只走 /api/products/stock）。
+			// 上下架同理：本接口不认 onSale，改状态只走 /api/products/onsale（D23）。
 			var req struct {
 				Code        string   `json:"code"`
 				Name        string   `json:"name"`
@@ -165,6 +175,29 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, p)
+	})
+
+	// 批量上下架（任务池⑥，D23）：POST /api/products/onsale {codes:[...], onSale:true|false}
+	mux.HandleFunc("/api/products/onsale", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		var in struct {
+			Codes  []string `json:"codes"`
+			OnSale bool     `json:"onSale"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		changed, err := st.SetProductsOnSale(in.Codes, in.OnSale)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{
+			"ok": true, "onSale": in.OnSale, "changed": changed, "count": len(changed),
+		})
 	})
 
 	// 商品档案删除（D16）：DELETE /api/products/{code}

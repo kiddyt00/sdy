@@ -419,6 +419,28 @@ fresh();
   ok(Mall.getProduct('B2').isWholesale === true, '被拦的批发标记保持原样（绝不静默改价）');
 }
 
+// ============ ⑩ 商品图片与上下架（任务池⑥ / D23） ============
+section('⑩ 商品图片与上下架（D23）');
+fresh();
+{
+  const a = Admin.saveProduct({ code: '6903333333333', name: '测试图商品', salePrice: 5, img: ' https://cdn.example.com/a.jpg ' });
+  ok(a.img === 'https://cdn.example.com/a.jpg', '建档：图片地址两端空格裁掉');
+  const b = Admin.saveProduct({ code: '6903333333334', name: '无图商品', salePrice: 5 });
+  ok(b.img === '', '建档：不填图片 → 空串（顾客端回退分类图标）');
+  Mall.updateProduct('6903333333333', { onSale: false });
+  const edited = Admin.saveProduct({ code: '6903333333333', name: '测试图商品（改名）', salePrice: 5.5, img: 'https://cdn.example.com/b.jpg' });
+  ok(edited.name === '测试图商品（改名）' && edited.img === 'https://cdn.example.com/b.jpg', '编辑：改名与换图都生效');
+  ok(edited.onSale === false, '编辑档案不把下架商品偷偷上架（D23）');
+  ok(edited.stock === a.stock, '编辑档案不动库存（不变量①）');
+  const r = Admin.applyBulkField(['6903333333333'], 'category', '日用', { by: '老板' });
+  const after = Mall.getProduct('6903333333333');
+  ok(r.changed === 1 && after.category === '日用', '批量改分类生效');
+  ok(after.img === 'https://cdn.example.com/b.jpg' && after.onSale === false && after.stock === a.stock, '批量改分类不动图片 / 上下架 / 库存');
+  Admin.deleteProduct('6903333333334');
+  Admin.deleteProduct('6903333333333');
+  ok(!Mall.getProduct('6903333333333'), '清理测试商品完成');
+}
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

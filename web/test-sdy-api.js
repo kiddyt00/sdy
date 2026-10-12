@@ -263,6 +263,52 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     ok(msg.indexOf('送货地址不能为空') >= 0, '在线：后端 400 原文透出（' + msg + '）');
     ok(f.calls.filter(c => c.path === '/api/addresses?phone=13800000001').length === 0, '在线：写入失败不再重拉镜像');
   }
+  /* ============ ⑦ 批量上下架（D23） ============ */
+  section('⑦ 批量上下架 setOnSale（任务池⑥ / D23）');
+  {
+    // 离线：直接改镜像，语义与后端一致（重复设置同一状态 = 零变化）
+    fresh();
+    const f0 = mkFetch([]);
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f0, mall: Mall, timeoutMs: 50 });
+    ok(SdyApi.mode() === 'local', '探测失败 → 离线模式');
+    const r1 = await SdyApi.setOnSale(['6901234567892'], false);
+    ok(r1.count === 1 && r1.changed[0] === '6901234567892', '离线：下架 1 件并返回 changed');
+    ok(Mall.getProduct('6901234567892').onSale === false, '离线：镜像 onSale 置 false');
+    const r2 = await SdyApi.setOnSale([' 6901234567892 '], false);
+    ok(r2.count === 0, '离线：重复下架零变化（顺带验证条码去空格）');
+    let msg = '';
+    try { await SdyApi.setOnSale(['no-such-code'], false); } catch (e) { msg = e.message; }
+    ok(msg.indexOf('资源不存在') >= 0, '离线：未知条码报错（' + msg + '）');
+    msg = '';
+    try { await SdyApi.setOnSale([], false); } catch (e) { msg = e.message; }
+    ok(msg.indexOf('请至少选择一个商品') >= 0, '离线：空清单报错（' + msg + '）');
+  }
+  {
+    // 在线：POST /api/products/onsale，成功后重拉商品镜像
+    fresh();
+    let items = SERVER_PRODUCTS.map(p => Object.assign({ onSale: true }, p));
+    const f = mkFetch([
+      { method: 'GET', path: '/healthz', body: { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true } },
+      { method: 'GET', path: '/api/products', body: () => ({ items: items, total: items.length }) },
+      { method: 'GET', path: '/api/orders', body: { items: [], total: 0 } },
+      { method: 'POST', path: '/api/products/onsale', body: (c) => {
+          const hit = p => c.body.codes.indexOf(p.code) >= 0;
+          const changed = items.filter(p => hit(p) && p.onSale !== c.body.onSale).map(p => p.code);
+          items = items.map(p => hit(p) ? Object.assign({}, p, { onSale: c.body.onSale }) : p);
+          return { ok: true, onSale: c.body.onSale, changed: changed, count: changed.length };
+        } }
+    ]);
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
+    ok(Mall.getProduct('6901234567892').onSale === true, '在线：同步把 onSale 带进镜像');
+    const r = await SdyApi.setOnSale(['6901234567892'], false);
+    const post = f.calls.filter(c => c.method === 'POST' && c.path === '/api/products/onsale')[0];
+    ok(!!post && post.body.codes.length === 1 && post.body.onSale === false, '在线：POST /api/products/onsale 请求体正确');
+    ok(r.count === 1 && r.onSale === false, '在线：后端返回 count=1 / onSale=false');
+    ok(Mall.getProduct('6901234567892').onSale === false, '在线：操作后镜像已刷新为下架');
+    ok(f.calls.filter(c => c.path === '/api/products').length >= 2, '在线：写成功后自动重拉一次商品镜像');
+    const back = await SdyApi.setOnSale(['6901234567892'], true);
+    ok(back.count === 1 && Mall.getProduct('6901234567892').onSale === true, '在线：重新上架生效');
+  }
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

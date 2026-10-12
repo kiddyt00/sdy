@@ -154,6 +154,7 @@ const SdyApi = (() => {
       unit: p.unit || '件',
       stock: p.stock || 0,
       isWholesale: !!p.isWholesale,
+      onSale: p.onSale !== false,   // D23：字段缺失视为上架，只有明确 false 才是下架
       syncStatus: p.syncStatus === 'pending' ? '待同步' : '已同步',
       createdAt: ts(p.createdAt),
       updatedAt: ts(p.updatedAt)
@@ -288,6 +289,30 @@ const SdyApi = (() => {
     return res;
   }
 
+  // 批量上下架（任务池⑥ / D23）：后端只动 on_sale，返回真正变化的条码。
+  // 离线降级时直接改镜像，语义保持一致（重复设置同一状态不产生变化）。
+  async function setOnSale(codes, onSale) {
+    const list = (codes || []).map(c => String(c).trim()).filter(Boolean);
+    if (!list.length) throw new Error('参数不合法: 请至少选择一个商品');
+    if (mode_ !== 'server') {
+      const m = M();
+      const all = m.loadCatalog();
+      const changed = [];
+      list.forEach(code => {
+        const p = all.find(x => x.code === code);
+        if (!p) throw new Error('资源不存在: 商品 ' + code);
+        if ((p.onSale !== false) === !!onSale) return;
+        p.onSale = !!onSale;
+        changed.push(code);
+      });
+      m.saveCatalog(all);
+      return { ok: true, onSale: !!onSale, changed: changed, count: changed.length };
+    }
+    const res = await req('POST', '/api/products/onsale', { codes: list, onSale: !!onSale });
+    await sync();
+    return res;
+  }
+
   // ---------------- 收货地址簿（D18） ----------------
   // 在线时以后端为准，每次操作后把整册镜像回 localStorage（离线仍能一键带出默认地址）；
   // 离线时直接用 Mall 的本地地址簿（同一套默认地址语义），页面代码无需分叉。
@@ -359,6 +384,7 @@ const SdyApi = (() => {
     upsertProduct: upsertProduct,
     updateProduct: updateProduct,
     deleteProduct: deleteProduct,
+    setOnSale: setOnSale,
     listAddresses: listAddresses,
     defaultAddress: defaultAddress,
     saveAddress: saveAddress,

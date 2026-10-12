@@ -53,6 +53,16 @@
   .bulk-preview tr.blocked td { background: #fff7ed; }
   .bulk-preview tr.same td { color: var(--muted); }
   .bulk-cb { width: 15px; height: 15px; cursor: pointer; }
+  /* 商品图片与分类管理（任务池⑥） */
+  .pcell { display: flex; align-items: center; gap: 9px; }
+  .pcell .pmeta { min-width: 0; }
+  .thumb-wrap { position: relative; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 9px; background: #f1f5f9; display: block; overflow: hidden; }
+  .thumb-wrap .thumb-ph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 19px; line-height: 1; }
+  .thumb-wrap .thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .thumb-wrap.off { filter: grayscale(1); opacity: .45; }
+  .chip .chip-n { font-size: 11px; opacity: .65; }
+  .chip .chip-x { opacity: .45; padding: 0 1px; font-size: 12px; }
+  .chip .chip-x:hover { opacity: 1; }
   @page { margin: 6mm; }
   @media print {
     body { background: #fff; }
@@ -284,7 +294,12 @@
                 <button class="btn btn-xs" onclick="applyBulkCat()">应用分类</button>
                 <label class="bl">批量批发标记<select class="sel" id="bulkWhole"><option value="1">设为批发</option><option value="0">取消批发</option></select></label>
                 <button class="btn btn-xs" onclick="applyBulkWhole()">应用标记</button>
+                <label class="bl">批量上下架<select class="sel" id="bulkOnSale"><option value="1">上架（顾客端可见）</option><option value="0">下架（顾客端隐藏）</option></select></label>
+                <button class="btn btn-xs" onclick="applyBulkOnSale()">应用上下架</button>
               </div>
+              <p class="hint" style="margin:10px 0 0">
+                上下架只影响<b>顾客端能不能看到 / 能不能下单</b>：档案、库存、价格、条码字典、历史订单全都不动（D23）。
+              </p>
               <div id="bulkResult" class="mt"></div>
             </div>
           </div>
@@ -384,6 +399,9 @@
     <div class="row mt">
       <div class="field grow"><label>分类</label><input class="input" id="pfCat" list="catList" placeholder="饮料 / 酒水 / 纸品…"><datalist id="catList"></datalist></div>
       <div class="field grow"><label>单位</label><input class="input" id="pfUnit" placeholder="瓶 / 罐 / 件 / 包"></div>
+    </div>
+    <div class="row mt">
+      <div class="field grow"><label>商品图片地址（选填）</label><input class="input" id="pfImg" placeholder="https://…/kele.jpg，留空就用分类图标"></div>
     </div>
     <div class="row mt">
       <div class="field grow"><label>进价（选填）</label><input class="input" id="pfCost" placeholder="0.00" oninput="checkProductForm()"></div>
@@ -843,8 +861,16 @@ function renderProducts() {
   ].map(x => '<div class="kpi"><div class="k-label">' + x[0] + '</div><div class="k-value">' + x[1] + '</div><div class="k-foot">' + x[2] + '</div></div>').join('');
 
   const cats = [''].concat(Admin.categories());
-  $('prodCats').innerHTML = cats.map(c =>
-    '<div class="chip' + (prodCat === c ? ' on' : '') + '" onclick="pickCat(\'' + esc(c) + '\')">' + (c || '全部分类') + '</div>').join('');
+  const allList = Admin.listProducts({});
+  const catN = {};
+  allList.forEach(p => { const c = p.category || Admin.DEFAULT_CATEGORY; catN[c] = (catN[c] || 0) + 1; });
+  $('prodCats').innerHTML = cats.map(c => {
+    const n = c ? (catN[c] || 0) : allList.length;
+    return '<div class="chip' + (prodCat === c ? ' on' : '') + '" onclick="pickCat(\'' + esc(c) + '\')" title="' + n + ' 个商品">' +
+      esc(c || '全部分类') + ' <span class="chip-n">' + n + '</span>' +
+      (c ? ' <span class="chip-x" title="改名 / 合并分类" onclick="event.stopPropagation();renameCat(\'' + esc(c) + '\')">✎</span>' : '') +
+      '</div>';
+  }).join('');
   $('prodLowBtn').className = 'btn btn-xs' + (prodLow ? ' btn-primary' : '');
 
   $('prodTable').innerHTML = list.length
@@ -856,11 +882,15 @@ function renderProducts() {
         const guard = !chk.ok
           ? '<span class="badge st-cancelled">超价 ' + Math.abs(chk.diffPct || 0) + '%</span>'
           : (p.refPrice ? '<span class="badge st-done">合规</span>' : '<span class="badge st-pending">缺参考价</span>');
+        const onSale = p.onSale !== false;   // D23：字段缺失视为在售
         return '<tr' + (p.stock <= Admin.LOW_STOCK ? ' style="background:#fffbeb"' : '') + '>' +
           '<td><input type="checkbox" class="bulk-cb"' + (bulkSel[p.code] ? ' checked' : '') +
             ' onchange="bulkToggle(\'' + esc(p.code) + '\', this.checked)"></td>' +
-          '<td><b>' + esc(p.name) + '</b>' + ((p.isWholesale || p.wholesale) ? ' <span class="badge st-info">批发</span>' : '') +
-            '<div class="muted" style="font-size:11.5px">' + esc(p.code) + (p.brand ? ' · ' + esc(p.brand) : '') + (p.spec ? ' · ' + esc(p.spec) : '') + '</div></td>' +
+          '<td><div class="pcell">' + thumbHTML(p) + '<div class="pmeta">' +
+            '<b>' + esc(p.name) + '</b>' + ((p.isWholesale || p.wholesale) ? ' <span class="badge st-info">批发</span>' : '') +
+            (onSale ? '' : ' <span class="badge st-cancelled">已下架</span>') +
+            '<div class="muted" style="font-size:11.5px">' + esc(p.code) + (p.brand ? ' · ' + esc(p.brand) : '') + (p.spec ? ' · ' + esc(p.spec) : '') + '</div>' +
+          '</div></div></td>' +
           '<td>' + esc(p.category || Admin.DEFAULT_CATEGORY) + '<div class="muted" style="font-size:11.5px">' + esc(p.unit || Admin.DEFAULT_UNIT) + '</div></td>' +
           '<td class="num">' + yuan(p.costPrice) + '</td>' +
           '<td class="num"><b>' + yuan(p.salePrice) + '</b></td>' +
@@ -868,6 +898,7 @@ function renderProducts() {
           '<td class="num">' + p.stock + '</td>' +
           '<td>' + guard + '</td>' +
           '<td><button class="btn btn-xs" onclick="openProductDlg(\'' + esc(p.code) + '\')">编辑</button> ' +
+            '<button class="btn btn-xs" onclick="toggleOnSale(\'' + esc(p.code) + '\')">' + (onSale ? '下架' : '上架') + '</button> ' +
             '<button class="btn btn-xs btn-danger" onclick="delProduct(\'' + esc(p.code) + '\')">删除</button></td>' +
         '</tr>';
       }).join('') + '</tbody></table></div>'
@@ -882,6 +913,33 @@ function renderProducts() {
 
 function pickCat(c) { prodCat = c; renderProducts(); }
 function toggleLow() { prodLow = !prodLow; renderProducts(); }
+
+/* ---------------- 商品图片与分类管理（任务池第 6 项，D23） ----------------
+ * 图片只存一个外链地址（不做上传/图床，老板可以把图放自己的相册或对象存储）；
+ * 没填图就退回分类 emoji 占位，界面永远不空一块。
+ */
+const CAT_EMOJI = { '饮料': '🥤', '酒水': '🍺', '纸品': '🧻', '休闲零食': '🍪', '乳饮': '🥛', '粮油': '🌾', '调味': '🧂', '日用': '🧴', '生鲜': '🥬' };
+function emojiOf(p) { return CAT_EMOJI[(p && p.category) || ''] || '📦'; }
+function thumbHTML(p) {
+  const on = p.onSale !== false;
+  // 有图叠图（加载失败自动 remove，露出下面的 emoji），没图就是 emoji
+  const inner = '<span class="thumb-ph">' + emojiOf(p) + '</span>' +
+    (p.img ? '<img class="thumb" src="' + esc(p.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '');
+  return '<span class="thumb-wrap' + (on ? '' : ' off') + '" title="' + (on ? '在售' : '已下架') + '">' + inner + '</span>';
+}
+
+// 单个商品上/下架（D23：只动 on_sale，不改库存/价格/条码字典）
+async function toggleOnSale(code) {
+  const p = Mall.getProduct(code);
+  if (!p) return toast('商品不存在：' + code, 3200);
+  const on = p.onSale === false;             // 当前下架 → 本次上架
+  try {
+    const r = await SdyApi.setOnSale([code], on);
+    Admin.logProductEvent('edit', Object.assign({}, p, { onSale: on }), { by: BY, reason: on ? '上架' : '下架', stock: p.stock });
+    renderProducts();
+    toast('「' + p.name + '」已' + (on ? '上架（顾客端可见）' : '下架（顾客端隐藏）') + (r && r.count === 0 ? '（本来就是该状态）' : ''), 3200);
+  } catch (e) { toast(e.message, 4000); }
+}
 
 /* ---------------- 批量改价 / 批量操作（任务池第 5 项，D20） ----------------
  * 先在商品表格里勾选（或「勾选当前筛选」），再选规则 → 预览（逐款过比价防线）→ 应用。
@@ -996,6 +1054,7 @@ async function applyBulk() {
         await SdyApi.upsertProduct({
           code: p.code, name: p.name, brand: p.brand || '', spec: p.spec || '',
           category: p.category || Admin.DEFAULT_CATEGORY, unit: p.unit || Admin.DEFAULT_UNIT,
+          img: p.img || '',
           costPrice: p.costPrice || 0, salePrice: r.newPrice, refPrice: p.refPrice || 0,
           isWholesale: !!(p.isWholesale || p.wholesale)
         });
@@ -1017,28 +1076,71 @@ async function applyBulkCat() {
   const cat = (($('bulkCat') && $('bulkCat').value) || '').trim();
   if (!cat) return toast('请填写要改成的分类名', 3200);
   if (typeof confirm === 'function' && !confirm('把 ' + codes.length + ' 个商品的分类改成「' + cat + '」？')) return;
+  const label = '批量改分类：' + cat;
+  const res = await applyCatToCodes(codes, cat, label);
+  $('bulkResult').innerHTML = bulkResultHTML(res, label);
+  renderAllAdmin();
+  toast('已改分类：' + res.changed + ' 个商品', 3200);
+}
+
+// 把一批商品改到某个分类（批量面板与「分类改名 ✎」共用同一实现）
+async function applyCatToCodes(codes, cat, label) {
   let res;
   if (online()) {
     res = { changed: 0, failed: [] };
     for (let i = 0; i < codes.length; i++) {
       const p = Mall.getProduct(codes[i]);
       if (!p) { res.failed.push({ code: codes[i], msg: '商品不存在' }); continue; }
+      if ((p.category || Admin.DEFAULT_CATEGORY) === cat) { continue; }   // 已经在这个分类，跳过
       try {
         await SdyApi.upsertProduct({
           code: p.code, name: p.name, brand: p.brand || '', spec: p.spec || '', category: cat,
+          img: p.img || '',
           unit: p.unit || Admin.DEFAULT_UNIT, costPrice: p.costPrice || 0, salePrice: p.salePrice || 0,
           refPrice: p.refPrice || 0, isWholesale: !!(p.isWholesale || p.wholesale)
         });
-        Admin.logProductEvent('edit', Object.assign({}, p, { category: cat }), { by: BY, reason: '批量改分类：' + cat, stock: p.stock });
+        Admin.logProductEvent('edit', Object.assign({}, p, { category: cat }), { by: BY, reason: label, stock: p.stock });
         res.changed++;
       } catch (e) { res.failed.push({ code: codes[i], name: p.name, msg: e.message }); }
     }
   } else {
     res = Admin.applyBulkField(codes, 'category', cat, { by: BY });
   }
-  $('bulkResult').innerHTML = bulkResultHTML(res, '批量改分类：' + cat);
+  return res;
+}
+
+// 分类改名 / 合并（任务池⑥）：把这个分类下的所有商品挪到新名字；填成已有分类即合并
+async function renameCat(from) {
+  const to = ((typeof prompt === 'function' ? prompt('把分类「' + from + '」改名为（填已有分类名就是合并）：', from) : '') || '').trim();
+  if (!to || to === from) return;
+  const codes = Admin.listProducts({ category: from }).map(p => p.code);
+  if (!codes.length) return toast('这个分类下没有商品', 3200);
+  if (typeof confirm === 'function' && !confirm('把「' + from + '」下的 ' + codes.length + ' 个商品改到「' + to + '」？')) return;
+  const label = '分类改名：' + from + ' → ' + to;
+  const res = await applyCatToCodes(codes, to, label);
+  if (prodCat === from) prodCat = to;
   renderAllAdmin();
-  toast('已改分类：' + res.changed + ' 个商品', 3200);
+  toast('已把 ' + res.changed + ' 个商品改到「' + to + '」', 3200);
+}
+
+// 批量上下架（任务池⑥ / D23）：只动 on_sale，库存/价格/分类一律不碰
+async function applyBulkOnSale() {
+  const codes = bulkCodes();
+  if (!codes.length) return toast('请先勾选商品', 3200);
+  const on = (($('bulkOnSale') && $('bulkOnSale').value) || '1') === '1';
+  if (typeof confirm === 'function' && !confirm('把 ' + codes.length + ' 个商品' + (on ? '上架（顾客端可见）' : '下架（顾客端隐藏，档案与库存都保留）') + '？')) return;
+  try {
+    const r = await SdyApi.setOnSale(codes, on);
+    codes.forEach(c => {
+      const p = Mall.getProduct(c);
+      if (p) Admin.logProductEvent('edit', Object.assign({}, p, { onSale: on }), { by: BY, reason: on ? '批量上架' : '批量下架', stock: p.stock });
+    });
+    const changed = (r && r.count != null) ? r.count : codes.length;
+    $('bulkResult').innerHTML = '<div class="muted" style="font-size:12.5px">已' + (on ? '上架' : '下架') + ' <b>' + changed + '</b> 个' +
+      (codes.length - changed > 0 ? '（另外 ' + (codes.length - changed) + ' 个本来就是这个状态）' : '') + '</div>';
+    renderAllAdmin();
+    toast('批量' + (on ? '上架' : '下架') + '完成：' + changed + ' 个商品', 3200);
+  } catch (e) { toast(e.message, 4000); }
 }
 
 async function applyBulkWhole() {
@@ -1062,6 +1164,7 @@ async function applyBulkWhole() {
         await SdyApi.upsertProduct({
           code: p.code, name: p.name, brand: p.brand || '', spec: p.spec || '',
           category: p.category || Admin.DEFAULT_CATEGORY, unit: p.unit || Admin.DEFAULT_UNIT,
+          img: p.img || '',
           costPrice: p.costPrice || 0, salePrice: p.salePrice || 0, refPrice: p.refPrice || 0, isWholesale: on
         });
         Admin.logProductEvent('edit', Object.assign({}, p, { isWholesale: on }), { by: BY, reason: label, stock: p.stock });
@@ -1092,6 +1195,7 @@ function openProductDlg(code) {
   $('pfCost').value = d.costPrice || '';
   $('pfSale').value = d.salePrice || '';
   $('pfRef').value = d.refPrice || '';
+  $('pfImg').value = d.img || '';
   $('pfWhole').checked = !!d.isWholesale;
   $('pfStockRow').style.display = editCode ? 'none' : '';           // 编辑不改库存（不变量①）
   $('pfStock').value = '';
@@ -1106,6 +1210,7 @@ function formValues() {
   return {
     code: $('pfCode').value, name: $('pfName').value, brand: $('pfBrand').value, spec: $('pfSpec').value,
     category: $('pfCat').value, unit: $('pfUnit').value,
+    img: $('pfImg').value,
     costPrice: $('pfCost').value, salePrice: $('pfSale').value, refPrice: $('pfRef').value,
     stock: editCode ? 0 : $('pfStock').value,                        // 编辑态不带库存
     isWholesale: $('pfWhole').checked
@@ -1131,6 +1236,7 @@ async function submitProduct() {
       // 在线：后端是唯一真源（服务端同样校验 + 执行价格防线；不带 stock = 不改库存）
       const payload = {
         code: p.code, name: p.name, brand: p.brand, spec: p.spec, category: p.category, unit: p.unit,
+        img: p.img || '',
         costPrice: p.costPrice, salePrice: p.salePrice, refPrice: p.refPrice, isWholesale: p.isWholesale
       };
       if (!wasEdit) payload.stock = p.stock;                        // 初始库存只在新建立写

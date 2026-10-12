@@ -16,7 +16,8 @@
   }
   .topnav .tn.on { background: #fff; color: var(--ink); border-color: var(--line); font-weight: 500; box-shadow: var(--sh-1); }
   .detail-head { display: flex; gap: 16px; }
-  .detail-head .dph { width: 96px; height: 96px; border-radius: var(--r); background: linear-gradient(140deg,#f8fafc,#eef2f7); display: grid; place-items: center; font-size: 44px; flex: 0 0 96px; }
+  .detail-head .dph { width: 96px; height: 96px; border-radius: var(--r); background: linear-gradient(140deg,#f8fafc,#eef2f7); display: grid; place-items: center; font-size: 44px; flex: 0 0 96px; overflow: hidden; }
+  .detail-head .dph .dimg { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* 收货地址簿（D18） */
   .addr-list { display: flex; flex-direction: column; gap: 8px; }
   .addr-item {
@@ -259,7 +260,14 @@ function emojiOf(name) {
 }
 
 /* ---------------- 首页 ---------------- */
-function products() { return Mall.loadCatalog(); }
+// 顾客端只看上架商品（D23）：下架商品不出现在分类、搜索结果与首页列表里
+function products() { return Mall.listOnSale(); }
+// 商品图：有图用图，没图回退 emoji（本地演示目录没有 img 字段）
+function picHTML(p, cls) {
+  return p.img
+    ? '<img class="' + cls + '" src="' + esc(p.img) + '" alt="' + esc(p.name) + '" loading="lazy" onerror="this.style.display=\'none\'">'
+    : esc(p.emoji || emojiOf(p.name));
+}
 function renderCats() {
   const cats = ['全部'].concat([...new Set(products().map(p => p.category).filter(Boolean))]);
   $('cats').innerHTML = cats.map(c =>
@@ -281,7 +289,7 @@ function renderGrid() {
 function cardHTML(p) {
   const out = p.stock <= 0;
   return '<div class="pcard" onclick="openDetail(\'' + p.code + '\')">' +
-    '<div class="ph">' + esc(p.emoji || emojiOf(p.name)) + (out ? '<div class="oos">已售罄</div>' : '') + '</div>' +
+    '<div class="ph">' + picHTML(p, 'pimg') + (out ? '<div class="oos">已售罄</div>' : '') + '</div>' +
     '<div class="pb">' +
       '<div class="pname">' + esc(p.name) + '</div>' +
       '<div class="pmeta">' + esc(p.brand || '') + (p.brand ? ' · ' : '') + esc(p.spec || '') + '</div>' +
@@ -297,8 +305,9 @@ function cardHTML(p) {
 function openDetail(code) {
   const p = Mall.getProduct(code);
   if (!p) return toast('商品库里没有这个条码：' + code);
+  if (p.onSale === false) return toast('「' + p.name + '」已下架，可以到店里问问老板');
   selCode = code; detailQty = 1;
-  $('dEmoji').textContent = p.emoji || emojiOf(p.name);
+  $('dEmoji').innerHTML = picHTML(p, 'dimg');
   $('dName').textContent = p.name;
   $('dCode').textContent = p.code;
   $('dBrand').textContent = p.brand || '—';
@@ -331,8 +340,9 @@ function renderCart() {
   $('cartHeadCount').textContent = s.count ? '（' + s.count + ' 件）' : '';
   $('cartLines').innerHTML = s.lines.length ? s.lines.map(l =>
     '<div class="citem">' +
-      '<div class="cph">' + esc(emojiOf(l.name)) + '</div>' +
+      '<div class="cph">' + picHTML(l, 'cimg') + '</div>' +
       '<div><div class="cn">' + esc(l.name) + '</div><div class="cs">' + yuan(l.price) + ' / ' + esc(l.unit || '件') +
+        (l.onSale === false ? ' · <span style="color:#b91c1c">已下架</span>' : '') +
         (l.qty >= l.stock ? ' · <span style="color:#b91c1c">已达库存上限</span>' : '') + '</div></div>' +
       '<div class="row">' +
         '<div class="stepper"><button onclick="stepCart(\'' + l.code + '\',-1)">−</button>' +

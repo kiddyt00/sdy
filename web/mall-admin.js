@@ -229,6 +229,7 @@ const Admin = (() => {
     if (before) {
       const saved = Object.assign({}, before, product, {
         stock: before.stock,                        // 编辑不改库存
+        onSale: before.onSale !== false,            // 编辑不改上下架状态（D23）
         createdAt: before.createdAt || Date.now(),
         updatedAt: Date.now(),
         syncStatus: '待同步'

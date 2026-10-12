@@ -222,6 +222,34 @@ Mall._saveAddresses(P1, [{ id: 501, contact: '同步人', address: '云端地址
 ok(Mall.listAddresses(P1).length === 1 && Mall.defaultAddress(P1).contact === '同步人', '_saveAddresses 覆盖本地镜像（在线同步用）');
 ok(Mall.listAddresses(P1)[0].phone === P1, '镜像条目回填 phone');
 
+/* ============ ⑨ 上下架（D23） ============ */
+section('⑨ 上下架（任务池⑥ / D23）');
+fresh();
+{
+  const C = '6901234567892';
+  ok(Mall.isOnSale(Mall.getProduct(C)) === true, '演示目录默认在售');
+  ok(Mall.listOnSale().length === Mall.loadCatalog().length, '没人下架时顾客端列表＝全量');
+  Mall.updateProduct(C, { onSale: false });
+  ok(Mall.isOnSale(Mall.getProduct(C)) === false, '下架后 isOnSale=false');
+  ok(!Mall.listOnSale().some(p => p.code === C), '下架商品不在顾客端列表（首页/分类/搜索都不出）');
+  ok(Mall.loadCatalog().some(p => p.code === C), '管理端全量仍能看到（否则再也上不了架）');
+  throws(() => Mall.addToCart(C, 1), '下架商品不能加购');
+  ok(Mall.isOnSale({ code: 'x' }) === true, '字段缺失视为在售（兼容旧演示数据）');
+  ok(Mall.isOnSale(null) === false, 'null 不算在售');
+  // 加购后商品被下架 → 结算必须拦住，且不能扣库存
+  Mall.updateProduct(C, { onSale: true });
+  Mall.addToCart(C, 2);
+  const before = Mall.getProduct(C).stock;
+  Mall.updateProduct(C, { onSale: false });
+  ok(Mall.cartSummary().lines[0].onSale === false, '购物车行标记「已下架」');
+  throws(() => Mall.createOrder({ deliveryType: 'pickup', customer: { name: '王阿姨', phone: '13900000001' } }), '含下架商品的购物车不能结算');
+  ok(Mall.getProduct(C).stock === before, '拦截发生在扣库存之前');
+  Mall.updateProduct(C, { onSale: true });
+  const o = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '王阿姨', phone: '13900000001' } });
+  ok(o.status === 'pending' && Mall.getProduct(C).stock === before - 2, '重新上架后可以下单并扣库存');
+  ok(Mall.cartSummary().count === 0, '下单后购物车清空');
+}
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

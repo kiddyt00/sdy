@@ -65,6 +65,11 @@ const Mall = (() => {
   function getProduct(code) {
     return loadCatalog().find(p => p.code === String(code).trim());
   }
+  // 上架判定（任务池⑥ / D23）：字段缺失一律视为上架，只有明确 onSale === false 才算下架。
+  // 本地演示目录没有这个字段，不能因为 undefined 就把商品全下架。
+  function isOnSale(p) { return !!p && p.onSale !== false; }
+  // 顾客端可见商品（下架商品不出现在首页/分类/搜索结果里）
+  function listOnSale() { return loadCatalog().filter(isOnSale); }
   // 局部更新商品字段（如 refPrice 牵牛花参考价），返回更新后的商品
   function updateProduct(code, patch) {
     const list = loadCatalog();
@@ -84,6 +89,7 @@ const Mall = (() => {
   function addToCart(code, qty) {
     const p = getProduct(code);
     if (!p) throw new Error('商品不存在');
+    if (!isOnSale(p)) throw new Error('「' + p.name + '」已下架，暂时不能购买');
     const n = Math.max(1, qty || 1);
     if (p.stock <= 0) throw new Error('「' + p.name + '」已售罄');
     if (n > p.stock) throw new Error('「' + p.name + '」库存不足（仅剩 ' + p.stock + ' ' + p.unit + '）');
@@ -126,7 +132,7 @@ const Mall = (() => {
       const p = getProduct(i.code) || { code: i.code, name: '未知商品', spec: '', salePrice: 0, unit: '件' };
       count += i.qty;
       subtotal += +(p.salePrice * i.qty).toFixed(2);
-      return { code: i.code, name: p.name, spec: p.spec, unit: p.unit, price: p.salePrice, qty: i.qty, stock: p.stock };
+      return { code: i.code, name: p.name, spec: p.spec, unit: p.unit, price: p.salePrice, qty: i.qty, stock: p.stock, img: p.img || '', onSale: isOnSale(p) };
     });
     return { count: count, subtotal: Math.round(subtotal * 100) / 100, lines: lines };
   }
@@ -158,8 +164,9 @@ const Mall = (() => {
     if (!sum.count) throw new Error('购物车是空的');
 
     const products = loadCatalog();
-    // 1) 统一校验库存
+    // 1) 统一校验库存（顺手拦住「加购后商品被下架」的情况）
     sum.lines.forEach(l => {
+      if (l.onSale === false) throw new Error('「' + l.name + '」已下架，请从购物车移除后重新结算');
       if (l.qty > l.stock) throw new Error('「' + l.name + '」库存不足（仅剩 ' + l.stock + ' ' + l.unit + '）');
     });
     // 2) 扣减
@@ -327,6 +334,8 @@ const Mall = (() => {
     loadCatalog: loadCatalog,
     saveCatalog: saveCatalog,
     getProduct: getProduct,
+    isOnSale: isOnSale,
+    listOnSale: listOnSale,
     updateProduct: updateProduct,
     getCart: getCart,
     addToCart: addToCart,

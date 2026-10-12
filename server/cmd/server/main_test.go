@@ -332,3 +332,66 @@ func TestAdminCleanURL(t *testing.T) {
 		t.Errorf("/admin/ 应跳到 /admin，实际 %q", loc)
 	}
 }
+
+// 任务池⑥ / D23：上下架走独立接口，编辑档案不改变状态，顾客端只看上架商品。
+func TestProductOnSaleHTTPFlow(t *testing.T) {
+	ts := newTestServer(t)
+
+	// 建档：默认上架，且响应里必须带 onSale（不能省略，否则前端把 false 当缺省）
+	code, body := do(t, ts, http.MethodPost, "/api/products",
+		`{"code":"7101","name":"红牛","salePrice":6,"stock":9,"unit":"罐"}`)
+	if code != 200 || !strings.Contains(body, `"onSale":true`) {
+		t.Fatalf("建档应默认上架并下发 onSale=true，实际 %d %s", code, body)
+	}
+
+	// 下架
+	code, body = do(t, ts, http.MethodPost, "/api/products/onsale", `{"codes":["7101"],"onSale":false}`)
+	if code != 200 || !strings.Contains(body, `"count":1`) || !strings.Contains(body, `"changed":["7101"]`) {
+		t.Fatalf("下架应成功并返回 changed，实际 %d %s", code, body)
+	}
+
+	// 顾客端列表（onSale=1）不含；管理端全量仍含且 onSale=false
+	if _, body = do(t, ts, http.MethodGet, "/api/products?onSale=1", ""); strings.Contains(body, "7101") {
+		t.Errorf("顾客端不应看到下架商品，实际 %s", body)
+	}
+	if _, body = do(t, ts, http.MethodGet, "/api/products", ""); !strings.Contains(body, `"onSale":false`) {
+		t.Errorf("管理端应看到下架商品并带 onSale=false，实际 %s", body)
+	}
+
+	// 编辑档案（改名 + 改价）不应把它恢复上架
+	code, body = do(t, ts, http.MethodPost, "/api/products",
+		`{"code":"7101","name":"红牛（新包装）","salePrice":6.5,"stock":9,"unit":"罐"}`)
+	if code != 200 || !strings.Contains(body, `"onSale":false`) {
+		t.Errorf("编辑档案不应改变上下架状态，实际 %d %s", code, body)
+	}
+
+	// 下架商品下单：409 + 明确文案
+	code, body = do(t, ts, http.MethodPost, "/api/orders",
+		`{"customerName":"王阿姨","phone":"13800001111","deliveryType":"pickup","items":[{"code":"7101","qty":1}]}`)
+	if code != 409 || !strings.Contains(body, "已下架") {
+		t.Fatalf("下架商品下单应 409 且提示已下架，实际 %d %s", code, body)
+	}
+
+	// 重新上架后可以下单
+	if code, body = do(t, ts, http.MethodPost, "/api/products/onsale", `{"codes":["7101"],"onSale":true}`); code != 200 {
+		t.Fatalf("上架失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/orders",
+		`{"customerName":"王阿姨","phone":"13800001111","deliveryType":"pickup","items":[{"code":"7101","qty":1}]}`); code != 201 {
+		t.Fatalf("上架后应能下单，实际 %d %s", code, body)
+	}
+
+	// 边界：空清单 400；未知条码 404；重复下架 count 0
+	if code, _ = do(t, ts, http.MethodPost, "/api/products/onsale", `{"codes":[],"onSale":false}`); code != 400 {
+		t.Errorf("空清单应 400，实际 %d", code)
+	}
+	if code, _ = do(t, ts, http.MethodPost, "/api/products/onsale", `{"codes":["不存在"],"onSale":false}`); code != 404 {
+		t.Errorf("未知条码应 404，实际 %d", code)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/products/onsale", `{"codes":["7101"],"onSale":true}`); code != 200 || !strings.Contains(body, `"count":0`) {
+		t.Errorf("重复上架应为 count 0，实际 %d %s", code, body)
+	}
+	if code, _ = do(t, ts, http.MethodGet, "/api/products/onsale", ""); code != 405 {
+		t.Errorf("GET /api/products/onsale 应 405，实际 %d", code)
+	}
+}

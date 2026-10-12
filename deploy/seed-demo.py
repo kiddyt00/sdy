@@ -6,7 +6,8 @@
     python3 deploy/seed-demo.py http://<生产地址或本机 127.0.0.1:8093> [--force-orders]
 
 做什么：
-    1) upsert 14 款商品：覆盖「正常价 / 批发 / 缺参考价 / 低库存 / 缺货」五种状态；
+    1) upsert 14 款商品：覆盖「正常价 / 批发 / 缺参考价 / 低库存 / 缺货」五种状态，
+       并给演示款挂上仓库自带的 SVG 商品图（web/assets/demo/*.svg）；
     2) 补 3 条收货地址簿（已存在同手机号同地址则跳过）；
     3) 库里没有订单时（或加 --force-orders）造 6 张订单并把状态推到
        已完成 / 待自提(ready) / 配送中 / 待备货 / 已取消，用于验证报表与流转。
@@ -38,6 +39,16 @@ PRODUCTS = [
     ("6901234567001", "五粮春", "五粮春", "500ml", "酒水", "瓶", 76.0, 88.0, 95.0, 6, True),   # 批发
     ("6925303725942", "旺旺雪饼 84g（缺货）", "旺旺", "84g", "休闲零食", "袋", 3.0, 4.5, 4.8, 0, False),
 ]
+
+# 演示商品图（仓库内自带 SVG，随静态目录一起部署，不依赖外网图床）
+IMAGES = {
+    "可口可乐": "assets/demo/kele.svg",
+    "青岛啤酒": "assets/demo/qingdao.svg",
+    "红牛维生素功能饮料": "assets/demo/hongniu.svg",
+    "五粮春": "assets/demo/wuliangchun.svg",
+    "旺旺雪饼": "assets/demo/wangwang.svg",
+    "旺旺雪饼 84g（缺货）": "assets/demo/wangwang.svg",
+}
 
 # (phone, contact, address, isDefault)
 ADDRESSES = [
@@ -86,7 +97,7 @@ def main():
         st, body = call(base, "POST", "/api/products", {
             "code": code, "name": name, "brand": brand, "spec": spec, "category": cat,
             "unit": unit, "costPrice": cost, "salePrice": sale, "refPrice": ref,
-            "stock": stock, "isWholesale": whole,
+            "stock": stock, "isWholesale": whole, "img": IMAGES.get(name, ""),
         })
         if 200 <= st < 300:
             ok += 1

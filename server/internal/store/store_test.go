@@ -571,3 +571,115 @@ func TestAddressBook(t *testing.T) {
 		t.Errorf("删光后应为空，实际 %+v", mine)
 	}
 }
+
+/* --------- 任务池⑥：上下架（D23） --------- */
+
+func TestProductOnSaleSemantics(t *testing.T) {
+	st := newTestStore(t)
+	seed(t, st)
+
+	// 新建商品默认上架
+	p, err := st.GetProduct("6901")
+	if err != nil {
+		t.Fatalf("取商品失败: %v", err)
+	}
+	if !p.OnSale {
+		t.Fatalf("新建商品应默认上架，实际 %+v", p)
+	}
+
+	// 下架：重复条码与空白会被归一化，只算一次
+	changed, err := st.SetProductsOnSale([]string{"6901", " 6901 ", ""}, false)
+	if err != nil {
+		t.Fatalf("下架失败: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != "6901" {
+		t.Fatalf("下架应只改动 6901，实际 %v", changed)
+	}
+	if p, _ = st.GetProduct("6901"); p.OnSale {
+		t.Fatalf("下架后 OnSale 应为 false")
+	}
+
+	// 顾客端列表不含下架商品；管理端全量仍含（否则无法再上架）
+	onSale, err := st.ListOnSaleProducts("", "")
+	if err != nil {
+		t.Fatalf("顾客端列表失败: %v", err)
+	}
+	if len(onSale) != 1 || onSale[0].Code != "6902" {
+		t.Fatalf("顾客端应只剩 6902，实际 %+v", onSale)
+	}
+	all, _ := st.ListProducts("", "")
+	if len(all) != 2 {
+		t.Fatalf("管理端应看到 2 条，实际 %d", len(all))
+	}
+
+	// 幂等：重复下架不写库
+	again, err := st.SetProductsOnSale([]string{"6901"}, false)
+	if err != nil {
+		t.Fatalf("重复下架失败: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("重复下架应无变化，实际 %v", again)
+	}
+
+	// 编辑档案不改变上下架状态（与库存同理）
+	if _, err := st.UpsertProduct(Product{
+		Code: "6901", Name: "可乐（新）", Category: "饮料", Unit: "罐", SalePrice: 2.5, Stock: 120,
+	}); err != nil {
+		t.Fatalf("编辑档案失败: %v", err)
+	}
+	p, _ = st.GetProduct("6901")
+	if p.OnSale {
+		t.Fatalf("编辑档案不应把商品恢复上架")
+	}
+	if p.Name != "可乐（新）" {
+		t.Fatalf("编辑档案应生效，实际 name=%q", p.Name)
+	}
+
+	// 下架商品不能下单，且失败要回滚（库存不动）
+	order := NewOrderInput{CustomerName: "王阿姨", Phone: "13800001111", DeliveryType: "pickup",
+		Items: []NewOrderInputItem{{Code: "6901", Qty: 1}}}
+	if _, err := st.CreateOrder(order); !errors.Is(err, ErrConflict) {
+		t.Fatalf("下架商品下单应报 ErrConflict，实际 %v", err)
+	}
+	if p, _ = st.GetProduct("6901"); p.Stock != 120 {
+		t.Fatalf("下单失败应回滚库存，实际 %v", p.Stock)
+	}
+
+	// 重新上架后可以下单
+	if _, err := st.SetProductsOnSale([]string{"6901"}, true); err != nil {
+		t.Fatalf("上架失败: %v", err)
+	}
+	if _, err := st.CreateOrder(order); err != nil {
+		t.Fatalf("上架后应能下单: %v", err)
+	}
+
+	// 边界：未知条码 / 空清单
+	if _, err := st.SetProductsOnSale([]string{"6901", "不存在"}, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未知条码应报 ErrNotFound，实际 %v", err)
+	}
+	if _, err := st.SetProductsOnSale(nil, false); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("空清单应报 ErrBadInput，实际 %v", err)
+	}
+}
+
+// 老库升级：product 表没有 on_sale 时，Open 的补列逻辑要能补上且幂等。
+func TestOnSaleColumnMigration(t *testing.T) {
+	st := newTestStore(t)
+	seed(t, st)
+
+	if _, err := st.DB().Exec(`ALTER TABLE product DROP COLUMN on_sale`); err != nil {
+		t.Fatalf("模拟老库删列失败（需要 SQLite ≥ 3.35）: %v", err)
+	}
+	for i := 0; i < 2; i++ { // 跑两次，验证幂等
+		if err := ensureColumn(st.DB(), "product", "on_sale", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+			t.Fatalf("第 %d 次补列失败: %v", i+1, err)
+		}
+	}
+	p, err := st.GetProduct("6901")
+	if err != nil {
+		t.Fatalf("补列后取商品失败: %v", err)
+	}
+	if !p.OnSale {
+		t.Fatalf("补列后老数据应视为上架，实际 %+v", p)
+	}
+}

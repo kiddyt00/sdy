@@ -37,9 +37,13 @@ type Product struct {
 	Unit        string  `json:"unit,omitempty"`
 	Stock       float64 `json:"stock"`
 	IsWholesale bool    `json:"isWholesale,omitempty"`
-	SyncStatus  string  `json:"syncStatus,omitempty"` // synced / pending
-	CreatedAt   string  `json:"createdAt,omitempty"`
-	UpdatedAt   string  `json:"updatedAt,omitempty"`
+	// OnSale 上架状态（任务池⑥，D23）：下架只在顾客端生效——商品不再出现在商城、
+	// 不能加购下单；档案、库存、历史订单与条码字典都不动。始终下发（不 omitempty），
+	// 否则 false 会被前端当成「字段缺失」而误判为上架。
+	OnSale     bool   `json:"onSale"`
+	SyncStatus string `json:"syncStatus,omitempty"` // synced / pending
+	CreatedAt  string `json:"createdAt,omitempty"`
+	UpdatedAt  string `json:"updatedAt,omitempty"`
 }
 
 // LibEntry 条码字典层：任何扫码先命中这里；命中即不再调云端（D6）。
@@ -125,6 +129,7 @@ var schemaStmts = []string{
 		unit TEXT NOT NULL DEFAULT '',
 		stock REAL NOT NULL DEFAULT 0,
 		is_wholesale INTEGER NOT NULL DEFAULT 0,
+		on_sale INTEGER NOT NULL DEFAULT 1,
 		sync_status TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL DEFAULT ''
@@ -210,7 +215,44 @@ func Open(path string, cfg pricing.Config) (*Store, error) {
 			return nil, fmt.Errorf("建表失败: %w", err)
 		}
 	}
+	// 老库升级：product.on_sale 是任务池⑥ 新增列，已存在的库要靠 ALTER TABLE 补上。
+	if err := ensureColumn(db, "product", "on_sale", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// ensureColumn 幂等补列（老库升级用）：列已存在则什么都不做。
+// 表名/列名/类型都是代码内常量，不接受外部输入。
+func ensureColumn(db *sql.DB, table, column, decl string) error {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return fmt.Errorf("读取表结构失败: %w", err)
+	}
+	defer rows.Close()
+	has := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("读取表结构失败: %w", err)
+		}
+		if name == column {
+			has = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("读取表结构失败: %w", err)
+	}
+	if has {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + decl); err != nil {
+		return fmt.Errorf("升级表结构失败（%s.%s）: %w", table, column, err)
+	}
+	return nil
 }
 
 // Close 关闭数据库。
@@ -258,9 +300,11 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 		p.CreatedAt = nowStr()
 	}
 	p.UpdatedAt = nowStr()
+	// 注意：写入语句刻意不包含 on_sale（D23，与库存同理）——编辑商品档案不改变上下架状态，
+	// 新建商品默认上架，上下架只走 SetProductsOnSale / POST /api/products/onsale。
 	_, err := s.db.Exec(`INSERT INTO product
-		(code,name,brand,spec,category,img,cost_price,sale_price,ref_price,unit,stock,is_wholesale,sync_status,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(code,name,brand,spec,category,img,cost_price,sale_price,ref_price,unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
 		ON CONFLICT(code) DO UPDATE SET
 			name=excluded.name, brand=excluded.brand, spec=excluded.spec, category=excluded.category,
 			img=excluded.img, cost_price=excluded.cost_price, sale_price=excluded.sale_price,
@@ -281,7 +325,7 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 // GetProduct 按条码取商品。
 func (s *Store) GetProduct(code string) (Product, error) {
 	row := s.db.QueryRow(`SELECT code,name,brand,spec,category,img,cost_price,sale_price,ref_price,
-		unit,stock,is_wholesale,sync_status,created_at,updated_at FROM product WHERE code=?`, code)
+		unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at FROM product WHERE code=?`, code)
 	p, err := scanProduct(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Product{}, fmt.Errorf("%w: 商品 %s", ErrNotFound, code)
@@ -291,10 +335,23 @@ func (s *Store) GetProduct(code string) (Product, error) {
 
 // ListProducts 全量商品（可按分类/关键字过滤）。
 func (s *Store) ListProducts(keyword, category string) ([]Product, error) {
+	return s.listProducts(keyword, category, false)
+}
+
+// ListOnSaleProducts 只返回已上架商品（顾客端商城用，任务池⑥ / D23）。
+// 管理端必须用 ListProducts，否则下架商品会从经营台消失、无法再上架。
+func (s *Store) ListOnSaleProducts(keyword, category string) ([]Product, error) {
+	return s.listProducts(keyword, category, true)
+}
+
+func (s *Store) listProducts(keyword, category string, onSaleOnly bool) ([]Product, error) {
 	q := `SELECT code,name,brand,spec,category,img,cost_price,sale_price,ref_price,
-		unit,stock,is_wholesale,sync_status,created_at,updated_at FROM product`
+		unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at FROM product`
 	var conds []string
 	var args []any
+	if onSaleOnly {
+		conds = append(conds, `on_sale = 1`)
+	}
 	if keyword != "" {
 		conds = append(conds, `(name LIKE ? OR code LIKE ?)`)
 		args = append(args, "%"+keyword+"%", "%"+keyword+"%")
@@ -366,15 +423,63 @@ func (s *Store) DeleteProduct(code string) error {
 	return nil
 }
 
+// SetProductsOnSale 批量上架 / 下架（任务池⑥，D23）。
+// 语义：只动 product.on_sale。档案字段、库存、历史订单、条码字典一律不动；
+// 已经是目标状态的不写库；返回真正发生变化的条码，便于前端如实汇报。
+func (s *Store) SetProductsOnSale(codes []string, on bool) ([]string, error) {
+	clean := make([]string, 0, len(codes))
+	seen := make(map[string]bool, len(codes))
+	for _, c := range codes {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		clean = append(clean, c)
+	}
+	if len(clean) == 0 {
+		return nil, fmt.Errorf("%w: 请至少选择一个商品", ErrBadInput)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	changed := []string{}
+	for _, code := range clean {
+		var cur int
+		err := tx.QueryRow(`SELECT on_sale FROM product WHERE code=?`, code).Scan(&cur)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: 商品 %s", ErrNotFound, code)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if (cur != 0) == on {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE product SET on_sale=?, updated_at=? WHERE code=?`,
+			boolInt(on), nowStr(), code); err != nil {
+			return nil, fmt.Errorf("更新上下架状态失败: %w", err)
+		}
+		changed = append(changed, code)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
 func scanProduct(sc interface{ Scan(...any) error }) (Product, error) {
 	var p Product
-	var wholesale int
+	var wholesale, onSale int
 	err := sc.Scan(&p.Code, &p.Name, &p.Brand, &p.Spec, &p.Category, &p.Img, &p.CostPrice,
-		&p.SalePrice, &p.RefPrice, &p.Unit, &p.Stock, &wholesale, &p.SyncStatus, &p.CreatedAt, &p.UpdatedAt)
+		&p.SalePrice, &p.RefPrice, &p.Unit, &p.Stock, &wholesale, &onSale, &p.SyncStatus, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return Product{}, err
 	}
 	p.IsWholesale = wholesale != 0
+	p.OnSale = onSale != 0
 	return p, nil
 }
 
@@ -486,13 +591,18 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 		}
 		var name string
 		var price, stock float64
-		err := tx.QueryRow(`SELECT name, sale_price, stock FROM product WHERE code=?`, it.Code).
-			Scan(&name, &price, &stock)
+		var onSale int
+		err := tx.QueryRow(`SELECT name, sale_price, stock, on_sale FROM product WHERE code=?`, it.Code).
+			Scan(&name, &price, &stock, &onSale)
 		if errors.Is(err, sql.ErrNoRows) {
 			return Order{}, fmt.Errorf("%w: 商品 %s", ErrNotFound, it.Code)
 		}
 		if err != nil {
 			return Order{}, err
+		}
+		// 下架商品不能下单（D23）：顾客端购物车可能停留在下架之前，服务端兜底拦住。
+		if onSale == 0 {
+			return Order{}, fmt.Errorf("%w: 商品「%s」已下架，请从购物车移除后重新结算", ErrConflict, name)
 		}
 		if stock < it.Qty {
 			return Order{}, fmt.Errorf("%w: %s 仅剩 %v", ErrStockLess, name, stock)

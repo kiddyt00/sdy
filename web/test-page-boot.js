@@ -57,7 +57,7 @@ function makeEnv(opts) {
     console: console, setTimeout: setTimeout, clearTimeout: clearTimeout, AbortController: AbortController,
     document: { getElementById: id => (els[id] || (els[id] = fakeEl(id))), querySelectorAll: () => [] },
     localStorage: localStorage, window: window, fetch: fetchImpl,
-    confirm: () => true, alert: () => {},
+    confirm: () => true, alert: () => {}, prompt: (opts && opts.prompt) || (() => null),
     Mall: Mall, Pricing: Pricing, Admin: Admin, SdyApi: SdyApi
   };
   sandbox.globalThis = sandbox;
@@ -527,6 +527,70 @@ const online = {
     env.els.prodQ.value = '';
     ctx.renderProducts();
     ok(env.els.bulkFilterCount.textContent === '8', '清空关键词后计数回到全部 8 个商品');
+  }
+
+  /* ---------- 任务池⑥：商品图片与分类管理 / 批量上下架（D23） ---------- */
+  section('⑩ 商品图片与上下架（任务池⑥ / D23）');
+  {
+    // 顾客端：有图用图，没图回退 emoji；下架商品整条链路都拦住
+    const env = await bootPage('index.html', offline);
+    const ctx = env.ctx;
+    Mall.updateProduct('6901234567892', { img: 'https://cdn.example.com/kele.jpg' });
+    ctx.renderGrid();
+    ok(env.els.grid.innerHTML.indexOf('<img class="pimg" src="https://cdn.example.com/kele.jpg"') >= 0, '顾客端商品卡渲染商品图');
+    Mall.updateProduct('6901234567892', { onSale: false });
+    ctx.renderGrid();
+    ok(env.els.grid.innerHTML.indexOf('可口可乐') < 0, '下架商品从顾客端列表消失');
+    ctx.openDetail('6901234567892');
+    ok(env.els.toast.textContent.indexOf('已下架') >= 0, '直接点开下架商品 → 提示已下架：' + env.els.toast.textContent);
+    ok(!env.els.dlgDetail || env.els.dlgDetail.className.indexOf('show') < 0, '下架商品不会打开详情弹窗');
+    Mall.updateProduct('6901234567892', { onSale: true });
+    ctx.renderGrid();
+    ok(env.els.grid.innerHTML.indexOf('可口可乐') >= 0, '重新上架后顾客端又能看到');
+    Mall.updateProduct('6901234567892', { img: '' });
+    ctx.renderGrid();
+    ok(env.els.grid.innerHTML.indexOf('class="pimg"') < 0, '没填图片时回退 emoji 占位');
+
+    // 管理端：缩略图列 / 图片字段 / 单个上下架 / 批量上下架 / 分类改名入口
+    const aenv = await bootPage('admin.html', { fetch: offline.fetch, prompt: () => '酒水' });
+    const actx = aenv.ctx;
+    ok(aenv.els.prodTable.innerHTML.indexOf('class="thumb-wrap') >= 0, '商品表格每行有缩略图占位');
+    ok(aenv.els.prodTable.innerHTML.indexOf('>下架</button>') >= 0, '在售商品行有「下架」按钮');
+    ok(aenv.els.prodCats.innerHTML.indexOf('chip-x') >= 0, '分类 chip 带改名入口（分类管理）');
+
+    actx.openProductDlg('6901234567892');
+    ok(!!aenv.els.pfImg, '建档表单有「商品图片地址」字段');
+    aenv.els.pfImg.value = ' https://cdn.example.com/kele.jpg ';
+    await actx.submitProduct();
+    ok(Mall.getProduct('6901234567892').img === 'https://cdn.example.com/kele.jpg', '表单保存图片地址（自动去空格）');
+    actx.renderProducts();
+    ok(aenv.els.prodTable.innerHTML.indexOf('<img class="thumb" src="https://cdn.example.com/kele.jpg"') >= 0, '缩略图列渲染商品图');
+    ok(aenv.els.prodTable.innerHTML.indexOf('可口可乐') >= 0 && aenv.els.prodTable.innerHTML.indexOf('编辑') >= 0, '加图后商品行仍完整渲染');
+
+    await actx.toggleOnSale('6901234567892');
+    ok(Mall.getProduct('6901234567892').onSale === false, '点「下架」→ 商品转为下架');
+    ok(aenv.els.prodTable.innerHTML.indexOf('已下架') >= 0, '表格标出「已下架」badge');
+    ok(aenv.els.prodTable.innerHTML.indexOf('>上架</button>') >= 0, '按钮切换为「上架」');
+    await actx.toggleOnSale('6901234567892');
+    ok(Mall.getProduct('6901234567892').onSale === true, '再点一次 → 重新上架');
+
+    // 分类改名（合并到已有分类）
+    actx.bulkClear();
+    const renamed = await actx.renameCat('饮料');
+    ok(Mall.loadCatalog().filter(p => p.category === '饮料').length === 0, '分类改名：饮料下的商品全部挪走');
+    ok(Mall.loadCatalog().filter(p => p.category === '酒水').length >= 2, '分类改名：合并到「酒水」');
+
+    // 批量上下架：勾选当前筛选 → 下架 → 再上架
+    actx.bulkClear();
+    actx.bulkSelectAll();
+    aenv.els.bulkOnSale = fakeEl('bulkOnSale');
+    aenv.els.bulkOnSale.value = '0';
+    await actx.applyBulkOnSale();
+    ok(Mall.loadCatalog().every(p => p.onSale === false), '批量下架：当前筛选内商品全部下架');
+    ok(aenv.els.bulkResult.innerHTML.indexOf('下架') >= 0, '批量结果区给出回执：' + aenv.els.bulkResult.innerHTML.replace(/<[^>]+>/g, '').slice(0, 30));
+    aenv.els.bulkOnSale.value = '1';
+    await actx.applyBulkOnSale();
+    ok(Mall.loadCatalog().every(p => p.onSale !== false), '批量上架：全部恢复在售');
   }
 
   console.log('\n========================================');
