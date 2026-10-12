@@ -267,6 +267,85 @@ fresh();
   throws(() => Admin.buildReceipt({}), '无单号 → 拦截（订单不存在）');
 }
 
+section('⑧ 销售报表 / 日报（D19）');
+{
+  const NOW = new Date('2026-10-10T20:00:00').getTime();
+  const ts = s => new Date(s).getTime();
+  const od = (id, at, extra) => Object.assign({
+    id: id, createdAt: at, status: 'done', deliveryType: 'pickup',
+    items: [], subtotal: 0, deliveryFee: 0, total: 0,
+    customer: { name: '测试', phone: '13800000000', address: '' }
+  }, extra);
+  const cola = { code: '6902083881234', name: '可口可乐', spec: '330ml', unit: '罐', price: 1.8, qty: 11 };
+  const water = { code: '6921168509256', name: '农夫山泉', spec: '550ml', unit: '瓶', price: 12.9, qty: 1 };
+  const salt = { code: '6901234567890', name: '加碘盐', spec: '400g', unit: '袋', price: 1.8, qty: 1 };
+
+  const A = od('A', ts('2026-10-10T12:00:00'), { status: 'done', deliveryType: 'delivery', items: [cola, water], subtotal: 32.7, deliveryFee: 3, total: 35.7 });
+  const B = od('B', ts('2026-10-10T09:00:00'), { status: 'pending', items: [salt], subtotal: 1.8, total: 1.8 });
+  const C = od('C', ts('2026-10-10T08:00:00'), { status: 'cancelled', items: [cola], subtotal: 9, total: 9 });
+  const D = od('D', ts('2026-10-09T10:00:00'), { status: 'done', items: [water], subtotal: 12.9, total: 12.9 });
+  const list = [A, B, C, D];
+
+  ok(Admin.REPORT_RANGES.length === 6 && Admin.REPORT_RANGES[0][0] === 'today', '六个区间且首项为今天');
+  ok(Admin.dayKey(ts('2026-01-05T08:00:00')) === '2026-01-05', 'dayKey 补零为 YYYY-MM-DD');
+
+  const r7 = Admin.rangeOf('7d', NOW, list);
+  ok(r7.count === 7 && r7.from === '2026-10-04' && r7.to === '2026-10-10', '近 7 天含首尾共 7 格');
+  const rm = Admin.rangeOf('month', NOW, list);
+  ok(rm.count === 10 && rm.from === '2026-10-01', '本月从 1 号到今天共 10 格');
+  const rall = Admin.rangeOf('all', NOW, list);
+  ok(rall.from === '2026-10-09' && rall.count === 2, '全部区间以最早一单那天为起点');
+  ok(Admin.rangeOf('bogus', NOW, list).key === 'today', '未知区间回落今天');
+
+  const t = Admin.buildReport(list, 'today', NOW);
+  ok(t.count === 2 && t.revenue === 37.5, '今天：2 单 ¥37.50（取消单不计）');
+  ok(t.goods === 34.5 && t.deliveryFee === 3, '商品金额 ¥34.50、配送费 ¥3.00 分开统计');
+  ok(t.avgOrder === 18.75, '客单价 = 营业额 ÷ 单量 = ¥18.75');
+  ok(t.doneAmount === 35.7 && t.openAmount === 1.8, '已交付 ¥35.70 / 未交付 ¥1.80');
+  ok(t.byStatus.pending === 1 && t.byStatus.done === 1 && t.byStatus.cancelled === 1, '状态分布单独给出取消数');
+  ok(t.items === 13 && t.skuCount === 3, '售出 13 件 / 3 个商品');
+  ok(t.top[0].code === '6902083881234' && t.top[0].qty === 11, '热销榜第一按件数排序');
+  ok(t.top[1].name === '农夫山泉' && t.top[2].name === '加碘盐', '件数相同按金额降序（水 ¥12.90 在盐 ¥1.80 之前）');
+  ok(t.top[0].pct === 84.6, '占比 = 件数占比（11/13 = 84.6%）');
+  ok(t.top[0].amount === 19.8, '热销金额 = 单价 × 件数');
+  ok(t.top.every(x => x.name !== ''), '热销榜条目都带商品名');
+  ok(t.pickup.count === 1 && t.pickup.amount === 1.8 && t.delivery.count === 1 && t.delivery.amount === 35.7, '自提 / 配送单量与金额拆分');
+  const d10 = t.daily.find(d => d.date === '2026-10-10');
+  ok(d10.count === 2 && d10.revenue === 37.5 && d10.cancelled === 1, '当日格子：2 单 ¥37.50 + 取消 1 单');
+  ok(t.daily.length === 1 && t.maxDaily === 37.5, '今天区间只有一格，峰值 = 当日营业额');
+
+  ok(t.delta.revenue === 190.7, '营业额环比对照等长的上一区间（¥37.50 vs ¥12.90 → +190.7%）');
+  ok(t.delta.count === 100 && t.delta.avgOrder === 45.3, '单量 +100.0% / 客单价 +45.3%');
+
+  const r7rep = Admin.buildReport(list, '7d', NOW);
+  ok(r7rep.count === 3 && r7rep.revenue === 50.4, '近 7 天：3 单 ¥50.40（含 10-09 那一单）');
+  ok(r7rep.top[0].qty === 11 && r7rep.top[1].qty === 2, '跨天热销累加同商品件数（水 1+1=2）');
+  ok(r7rep.daily.filter(d => d.revenue === 0).length === 5, '近 7 天有 5 个零单日');
+  const z = r7rep.daily.find(d => d.date === '2026-10-08');
+  ok(z && z.count === 0 && z.revenue === 0, '零单日照样占格且各项为 0');
+  ok(Admin.buildReport(list, 'all', NOW).delta === undefined, '全部区间不做环比');
+
+  const empty = Admin.buildReport([], 'today', NOW);
+  ok(empty.count === 0 && empty.revenue === 0 && empty.avgOrder === 0 && empty.top.length === 0, '零单区间各项为 0 且不崩');
+  ok(empty.maxDaily === 0 && empty.daily.length === 1, '零单时峰值 0，今天仍占 1 格');
+
+  Mall._save(Mall.KEYS.orders, list);
+  ok(Admin.buildReport(Mall.getOrders(), 'today', NOW).count === 2, '接 Mall.getOrders() 数据源口径一致');
+
+  const txt = Admin.reportText(t, { store: { name: '家庭超市' }, now: NOW });
+  ok(txt.indexOf('家庭超市 · 销售日报') === 0, '日报抬头用门店名');
+  ok(txt.indexOf('单量：2 单（另有取消 1 单）') >= 0, '日报含单量与取消数');
+  ok(txt.indexOf('营业额：¥37.50（下单口径，不含取消）') >= 0, '日报标注营业额口径');
+  ok(txt.indexOf('客单价：¥18.75') >= 0 && txt.indexOf('商品金额：¥34.50 · 配送费：¥3.00') >= 0, '日报含客单价与金额拆分');
+  ok(txt.indexOf('已完成：¥35.70 · 进行中：¥1.80') >= 0, '日报区分已交付 / 未交付');
+  ok(txt.indexOf('自提 1 单 · 配送 1 单') >= 0, '日报含自提 / 配送单量');
+  ok(txt.indexOf('热销 TOP 3') >= 0 && txt.indexOf('占 84.6%') >= 0, '日报含热销 TOP 与占比');
+  ok(txt.indexOf('环比：营业额 +190.7% · 单量 +100.0%') >= 0, '日报含环比');
+  ok(/生成时间：2026-10-\d\d \d\d:\d\d/.test(txt), '日报末尾含生成时间');
+  ok(txt.split('\n').every(l => l.length <= 34), '日报每行不超过 34 字（32 字宽热敏纸可打）');
+  ok(Admin.reportText(empty, { store: { name: '家庭超市' }, now: NOW }).indexOf('热销') < 0, '零单日报不打印热销段');
+}
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

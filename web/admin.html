@@ -30,6 +30,19 @@
   #receipt .r-void { text-align: center; font-weight: 700; border: 1px solid #000; padding: 2px; margin: 6px 0; }
   #receipt .r-ft { text-align: center; margin-top: 10px; font-size: 11px; }
   .r-break { break-after: page; page-break-after: always; }
+
+  /* 销售报表（任务池第 4 项，D19）：纯 CSS 柱状图，零图表库依赖 */
+  .rpt-bars { display: flex; align-items: flex-end; gap: 4px; height: 150px; padding: 6px 2px 0; }
+  .rpt-bar { flex: 1 1 0; min-width: 5px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+  .rpt-bar i { display: block; width: 100%; min-height: 2px; background: var(--brand); opacity: .85; border-radius: 3px 3px 0 0; }
+  .rpt-bar.zero i { background: var(--line); opacity: 1; }
+  .rpt-bar:hover i { opacity: 1; }
+  .rpt-label { display: flex; gap: 4px; padding: 0 2px; margin-top: 5px; }
+  .rpt-label span { flex: 1 1 0; min-width: 5px; text-align: center; font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+  .rpt-top .bar { height: 6px; border-radius: 3px; background: var(--brand-light); overflow: hidden; margin-bottom: 2px; }
+  .rpt-top .bar i { display: block; height: 100%; background: var(--brand); }
+  .rpt-pre { white-space: pre; font: 12px/1.7 "PingFang SC", "Microsoft YaHei", monospace; background: #f8fafc; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; overflow: auto; max-height: 360px; color: var(--ink); margin: 0; }
+  #printRoot #rptPrint { width: 72mm; margin: 0 auto; white-space: pre; font: 12px/1.6 "PingFang SC", monospace; }
   @page { margin: 6mm; }
   @media print {
     body { background: #fff; }
@@ -53,6 +66,7 @@
     </div>
     <nav class="nav">
       <div class="nv on" id="navDash" onclick="switchTab('dash')"><i>📊</i>经营总览</div>
+      <div class="nv" id="navReport" onclick="switchTab('report')"><i>📈</i>销售报表</div>
       <div class="nv" id="navOrders" onclick="switchTab('orders')"><i>🧾</i>订单处理<span class="badge st-warn" id="navOrderBadge" style="margin-left:auto"></span></div>
       <div class="nv" id="navStock" onclick="switchTab('stock')"><i>📦</i>库存与流水</div>
       <div class="nv" id="navProducts" onclick="switchTab('products')"><i>🏷️</i>商品档案</div>
@@ -126,6 +140,52 @@
         </div>
       </div>
     </section>
+
+    <!-- ---------- 销售报表 ---------- -->
+    <section class="page hide" id="viewReport">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>销售报表</h3>
+          <div class="chips" id="rptRanges"></div>
+        </div>
+        <div class="panel-body">
+          <div class="muted" id="rptRange" style="font-size:12px;margin-bottom:12px"></div>
+          <div class="kpis" id="rptKpis"></div>
+        </div>
+      </div>
+
+      <div class="panel mt-lg">
+        <div class="panel-head">
+          <h3>每日营业额</h3>
+          <span class="muted" style="font-size:12px" id="rptBarsHint"></span>
+        </div>
+        <div class="panel-body">
+          <div class="rpt-bars" id="rptBars"></div>
+          <div class="rpt-label" id="rptBarLabels"></div>
+        </div>
+      </div>
+
+      <div class="stack mt-lg">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>热销商品</h3>
+            <span class="muted" style="font-size:12px" id="rptTopHint"></span>
+          </div>
+          <div class="panel-body"><div id="rptTop" class="rpt-top"></div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>日报预览</h3>
+            <div class="row" style="gap:8px">
+              <button class="btn btn-xs" onclick="copyReport()">📋 复制日报</button>
+              <button class="btn btn-xs" onclick="printReport()">🖨 打印日报</button>
+            </div>
+          </div>
+          <div class="panel-body"><pre class="rpt-pre" id="rptText"></pre></div>
+        </div>
+      </div>
+    </section>
+
 
     <!-- ---------- 订单 ---------- -->
     <section class="page hide" id="viewOrders">
@@ -327,7 +387,7 @@ function toggleSide() { const s = $('sidebar'); s.className = s.className.indexO
 function online() { return SdyApi.on(); }
 
 /* ---------------- 视图切换 ---------------- */
-const TABS = { dash: ['经营总览', 'navDash', 'viewDash'], orders: ['订单处理', 'navOrders', 'viewOrders'], stock: ['库存与流水', 'navStock', 'viewStock'], products: ['商品档案', 'navProducts', 'viewProducts'], pricing: ['价格防护', 'navPricing', 'viewPricing'], cust: ['顾客档案', 'navCust', 'viewCust'], sys: ['系统与工具', 'navSys', 'viewSys'] };
+const TABS = { dash: ['经营总览', 'navDash', 'viewDash'], report: ['销售报表', 'navReport', 'viewReport'], orders: ['订单处理', 'navOrders', 'viewOrders'], stock: ['库存与流水', 'navStock', 'viewStock'], products: ['商品档案', 'navProducts', 'viewProducts'], pricing: ['价格防护', 'navPricing', 'viewPricing'], cust: ['顾客档案', 'navCust', 'viewCust'], sys: ['系统与工具', 'navSys', 'viewSys'] };
 function switchTab(t) {
   tab = t;
   Object.keys(TABS).forEach(k => {
@@ -376,6 +436,89 @@ function renderDash() {
     '<b>' + esc(p.name) + '</b><span class="muted">' + esc(p.spec || '') + '</span>' +
     '<span class="ts">剩 ' + p.stock + ' ' + esc(p.unit || '件') + '</span></div>').join('')
     : '<div class="empty"><span class="big">✅</span>库存都很充足</div>';
+}
+
+/* ---------------- 销售报表（任务池第 4 项，D19） ---------------- */
+let rptKey = 'today';
+function pickRange(k) { rptKey = k; renderReport(); }
+function rptCards(r) {
+  const pct = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+  return [
+    ['营业额', yuan(r.revenue), r.delta ? '环比 ' + pct(r.delta.revenue) : '下单口径（不含取消）', 'accent'],
+    ['单量', r.count + ' 单', r.delta ? '环比 ' + pct(r.delta.count) + ' · 取消 ' + r.byStatus.cancelled + ' 单' : '取消 ' + r.byStatus.cancelled + ' 单', ''],
+    ['客单价', yuan(r.avgOrder), r.delta ? '环比 ' + pct(r.delta.avgOrder) : '营业额 ÷ 单量', ''],
+    ['商品金额', yuan(r.goods), '不含配送费', ''],
+    ['配送费', yuan(r.deliveryFee), '配送 ' + r.delivery.count + ' 单', ''],
+    ['已完成 / 进行中', yuan(r.doneAmount) + ' / ' + yuan(r.openAmount), '已交付 / 未交付', ''],
+    ['售出件数', r.items + ' 件', r.skuCount + ' 个商品', ''],
+    ['自提 / 配送', r.pickup.count + ' / ' + r.delivery.count, '自提 ' + yuan(r.pickup.amount) + ' · 配送 ' + yuan(r.delivery.amount), '']
+  ];
+}
+function renderReport() {
+  if (!$('rptKpis')) return;
+  const r = Admin.buildReport(Mall.getOrders(), rptKey);
+  $('rptRanges').innerHTML = Admin.REPORT_RANGES.map(x =>
+    '<div class="chip' + (x[0] === rptKey ? ' on' : '') + '" onclick="pickRange(\'' + x[0] + '\')">' + x[1] + '</div>').join('');
+  $('rptRange').textContent = r.range.label + ' · ' + r.range.from + (r.range.count > 1 ? ' ~ ' + r.range.to : '') +
+    '（' + r.range.count + ' 天）· 只统计非取消订单，零单日也占一格';
+
+  $('rptKpis').innerHTML = rptCards(r).map(c =>
+    '<div class="kpi ' + c[3] + '"><div class="k-label">' + c[0] + '</div><div class="k-value">' + c[1] + '</div><div class="k-foot">' + esc(c[2]) + '</div></div>').join('');
+
+  const max = r.maxDaily;
+  function bar(d) {
+    const h = max > 0 ? Math.max(2, Math.round(d.revenue / max * 100)) : 2;
+    return '<div class="rpt-bar' + (d.revenue > 0 ? '' : ' zero') + '" title="' + d.date + '：' + d.count + ' 单 · ' + yuan(d.revenue) + '">' +
+      '<i style="height:' + h + '%"></i></div>';
+  }
+  $('rptBars').innerHTML = r.daily.map(bar).join('');
+  $('rptBarsHint').textContent = max > 0 ? '区间峰值 ' + yuan(max) + ' / 天 · 最高柱为峰值' : '这段区间还没有订单';
+  // 柱少时不要拉成一整块：给图表一个按天数算的最大宽度并居中（刻度行同步，保持对齐）
+  const chartW = Math.max(240, Math.min(r.daily.length * 60, 1136));
+  ['rptBars', 'rptBarLabels'].forEach(id => { const el = $(id); el.style.maxWidth = chartW + 'px'; el.style.marginLeft = 'auto'; el.style.marginRight = 'auto'; });
+  const step = r.daily.length > 20 ? 5 : (r.daily.length > 12 ? 2 : 1);
+  const many = r.daily.length > 12;
+  $('rptBarLabels').innerHTML = r.daily.map((d, i) => {
+    const show = i === 0 || i === r.daily.length - 1 || i % step === 0;
+    return '<span title="' + d.date + '">' + (show ? (many ? d.label.slice(3) : d.label) : '') + '</span>';
+  }).join('');
+
+  $('rptTop').innerHTML = r.top.length
+    ? '<div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>商品</th><th class="num">售出</th><th class="num">金额</th><th>占比</th></tr></thead><tbody>' +
+      r.top.map((t, i) =>
+        '<tr><td>' + (i + 1) + '</td><td><b>' + esc(t.name) + '</b>' + (t.spec ? ' <span class="muted">' + esc(t.spec) + '</span>' : '') + '</td>' +
+        '<td class="num">' + t.qty + ' ' + esc(t.unit || '件') + '</td><td class="num">' + yuan(t.amount) + '</td>' +
+        '<td style="min-width:110px"><div class="bar"><i style="width:' + Math.max(2, Math.round(t.pct)) + '%"></i></div>' +
+        '<span class="muted" style="font-size:11px">' + t.pct + '%</span></td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<div class="empty"><span class="big">📈</span>这段区间还没有订单</div>';
+  $('rptTopHint').textContent = r.top.length ? '按售出件数排序 · 取前 ' + r.top.length + ' 名' : '';
+
+  $('rptText').textContent = Admin.reportText(r, { store: Admin.getStoreInfo() });
+}
+function copyReport() {
+  const r = Admin.buildReport(Mall.getOrders(), rptKey);
+  const text = Admin.reportText(r, { store: Admin.getStoreInfo() });
+  const ok = () => toast('✅ 日报已复制，去微信粘贴即可');
+  if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(ok, () => { rptFallbackCopy(text); ok(); });
+  } else { rptFallbackCopy(text); ok(); }
+}
+function rptFallbackCopy(text) {
+  if (typeof document === 'undefined' || !document.body) return;   // 假 DOM / 老页面兜底
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) { /* 复制不了也不影响：预览框里可手动全选 */ }
+  document.body.removeChild(ta);
+}
+function printReport() {
+  const r = Admin.buildReport(Mall.getOrders(), rptKey);
+  $('printRoot').innerHTML = '<pre id="rptPrint">' + esc(Admin.reportText(r, { store: Admin.getStoreInfo() })) + '</pre>';
+  window.print();
+  $('printRoot').innerHTML = '';
 }
 
 /* ---------------- 订单 ---------------- */
@@ -822,6 +965,7 @@ async function setBase() {
 /* ---------------- 刷新 / 启动 ---------------- */
 function renderAll() {
   if (tab === 'dash') renderDash();
+  else if (tab === 'report') renderReport();
   else if (tab === 'orders') renderOrders();
   else if (tab === 'stock') renderStock();
   else if (tab === 'products') renderProducts();
@@ -834,7 +978,7 @@ async function refreshAll() {
   renderAll();
 }
 function renderAllAdmin() {
-  renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderSys(); renderStore();
+  renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore();
 }
 async function initApi() {
   const badge = $('modeBadge');

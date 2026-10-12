@@ -290,6 +290,65 @@ const online = {
     ok(ctx.printOrder('M00000') === undefined && printed === 0, '打印不存在的订单不唤起打印（只提示）');
   }
 
+  /* ---------- 管理端：销售报表（D19） ---------- */
+  section('⑧ admin.html · 销售报表 / 日报');
+  {
+    const env = await bootPage('admin.html', offline);
+    const ctx = env.ctx;
+    const todayAt = h => { const d = new Date(); d.setHours(h, 0, 0, 0); return d.getTime(); };
+    const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); d.setHours(10, 0, 0, 0); return d.getTime(); };
+    const kToday = Admin.dayKey(todayAt(12)), kFirst7 = Admin.dayKey(daysAgo(6));
+    const mk = (id, at, extra) => Object.assign({
+      id: id, createdAt: at, status: 'done', deliveryType: 'pickup', items: [], subtotal: 0, deliveryFee: 0, total: 0,
+      customer: { name: '测试', phone: '13800000000', address: '' }
+    }, extra);
+    Mall._save(Mall.KEYS.orders, [
+      mk('R1', todayAt(12), { status: 'done', deliveryType: 'delivery', items: [{ code: 'c1', name: '可口可乐', spec: '330ml', unit: '罐', price: 1.8, qty: 11 }], subtotal: 19.8, deliveryFee: 3, total: 22.8 }),
+      mk('R2', todayAt(9), { status: 'pending', items: [{ code: 'c2', name: '加碘盐', spec: '400g', unit: '袋', price: 1.8, qty: 1 }], subtotal: 1.8, total: 1.8 }),
+      mk('R3', daysAgo(1), { status: 'done', items: [{ code: 'c3', name: '农夫山泉', spec: '550ml', unit: '瓶', price: 12.9, qty: 1 }], subtotal: 12.9, total: 12.9 })
+    ]);
+    ctx.switchTab('report');
+    ok(env.els.navReport.className.indexOf('on') >= 0 && env.els.viewReport.className.indexOf('hide') < 0, '侧栏「销售报表」可切换且视图显示');
+    ok(env.els.crumb.textContent === '销售报表', '面包屑跟随切换：' + env.els.crumb.textContent);
+    ok(env.els.rptRanges.innerHTML.split('chip').length - 1 === 6, '六个区间 chip');
+    ok(env.els.rptRanges.innerHTML.indexOf('chip on') >= 0, '默认选中「今天」');
+    ok(env.els.rptRange.textContent.indexOf(kToday) >= 0 && env.els.rptRange.textContent.indexOf('非取消') >= 0, '区间说明含日期与统计口径');
+    ok((env.els.rptKpis.innerHTML.match(/class="kpi/g) || []).length === 8, '八张 KPI 卡');
+    ok(env.els.rptKpis.innerHTML.indexOf('¥24.60') >= 0, '今日营业额 ¥24.60（22.80 + 1.80）');
+    ok(env.els.rptKpis.innerHTML.indexOf('环比') >= 0, 'KPI 卡带环比文案');
+    ok(env.els.rptKpis.innerHTML.indexOf('12 件') >= 0 && env.els.rptKpis.innerHTML.indexOf('2 个商品') >= 0, 'KPI 卡含售出件数与商品数');
+    ok((env.els.rptBars.innerHTML.match(/rpt-bar/g) || []).length === 1, '今天区间一根柱');
+    ok(env.els.rptBars.innerHTML.indexOf('title="' + kToday) >= 0, '柱子带日期悬停提示');
+    ctx.pickRange('7d');
+    ok((env.els.rptBars.innerHTML.match(/rpt-bar/g) || []).length === 7, '近 7 天七根柱');
+    ok(env.els.rptBarLabels.innerHTML.split('<span').length - 1 === 7, '近 7 天七个横轴刻度');
+    ok(env.els.rptBars.innerHTML.indexOf('rpt-bar zero') >= 0, '零单日柱子灰显（不消失）');
+    ok(env.els.rptRange.textContent.indexOf(kFirst7) >= 0, '近 7 天起点 = 6 天前：' + env.els.rptRange.textContent);
+    ctx.pickRange('today');
+    ok(env.els.rptTop.innerHTML.indexOf('可口可乐') >= 0 && env.els.rptTop.innerHTML.indexOf('91.7%') >= 0, '热销榜含商品与占比（11/12 = 91.7%）');
+    ok(env.els.rptTop.innerHTML.indexOf('¥19.80') >= 0, '热销榜金额 = 1.80 × 11');
+    ok(env.els.rptText.textContent.indexOf('销售日报') >= 0 && env.els.rptText.textContent.indexOf('营业额：¥24.60') >= 0, '日报预览已生成');
+    ok(env.els.rptText.textContent.indexOf('热销 TOP 2') >= 0, '日报含热销 TOP');
+
+    let printed = 0, snap = '';
+    env.ctx.window.print = function () { printed++; snap = env.els.printRoot.innerHTML; };
+    ctx.printReport();
+    ok(printed === 1 && snap.indexOf('rptPrint') >= 0 && snap.indexOf('销售日报') >= 0, '打印日报唤起一次打印并写入打印区');
+    ok(env.els.printRoot.innerHTML === '', '打印完清空打印区（不留残影）');
+
+    let copied = '';
+    env.ctx.navigator = { clipboard: { writeText: function (t) { copied = t; return Promise.resolve(); } } };
+    ctx.copyReport();
+    await new Promise(r => setTimeout(r, 20));
+    ok(copied.indexOf('销售日报') >= 0 && copied.indexOf('热销 TOP') >= 0, '复制日报把纯文本送进剪贴板');
+    ok(env.els.toast.className.indexOf('show') >= 0, '复制后有提示');
+
+    Mall._save(Mall.KEYS.orders, []);
+    ctx.renderReport();
+    ok(env.els.rptTop.innerHTML.indexOf('还没有订单') >= 0, '零单时热销榜显示空状态');
+    ok((env.els.rptBars.innerHTML.match(/rpt-bar zero/g) || []).length === 1, '零单时柱子为灰柱');
+  }
+
   /* ---------- 顾客端：收货地址簿（D18） ---------- */
   section('⑦ index.html · 收货地址簿（结算带出 / 保存 / 管理）');
   {

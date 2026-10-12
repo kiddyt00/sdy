@@ -207,6 +207,18 @@
   <p>仍然适用的部分：§3 总体架构分层、§4 核心模块设计、§5 关键业务流程、§9 成本与收益、§10 风险与对策。被取代的技术选型以本节为准。代码现状见 <code>README.md</code>。</p>
 </div>
 
+<div class="callout green" style="margin:18px 0 4px">
+  <strong>📌 现状校正（2026-10-12）—— M5′ Web 端商城复工，任务池第 4 项「销售报表 / 日报」落地</strong>
+  <p>上一节记为「2026-10-10 本机暂停」的 M5′ 已由用户「继续开发」指令复工，本轮补上经营数据的最后一环：报表（决策 <b>D19</b>）。</p>
+  <table>
+    <tr><th style="width:34%">上一节（2026-10-10）的状态</th><th>当前实际（2026-10-12）</th></tr>
+    <tr><td>M5′ 任务池 8 项完成 <strong>3</strong> 项（商品建档 / 订单小票 / 收货地址簿）</td><td>完成 <strong>4</strong> 项：新增「<strong>销售报表 / 日报</strong>」——管理端第 8 个视图，六档区间（今天/昨天/近 7 天/近 30 天/本月/全部）+ 8 张 KPI + 连续自然日柱状图（零单日占格）+ 热销 TOP8 + 环比 + 可复制 / 可 72mm 打印的纯文本日报</td></tr>
+    <tr><td>§13.2「商家管理后台」为 6 视图的设计</td><td>实为 <strong>8 视图</strong>（第 11 轮起新增商品档案、第 14 轮起新增销售报表）；报表沿用「只读投影 + 纯前端纯函数」原则（<code>Admin.buildReport</code> / <code>Admin.reportText</code>），<strong>不为报表新增后端表或接口</strong>，订单表仍是唯一真源</td></tr>
+    <tr><td>报表 / 数据分析属于「后台与数据」主题（未开始）</td><td>该主题转为<strong>进行中</strong>：SKU 主数据（第 11 轮）与销售报表（第 14 轮）已落地，剩导出 CSV、批量改价、图片与分类、批发价与顾客等级等（见《开发计划》任务池 5–8 项）</td></tr>
+  </table>
+  <p>本文其余判断不变；下一轮从任务池第 5 项「批量改价 / 批量操作」开始。测试基线更新为 Go 29 单测、Web 73 + 28 + 139 + 56 + 120、真后端联调 17。</p>
+</div>
+
 <nav class="toc">
   <h2>目录</h2>
   <ol>
@@ -230,12 +242,12 @@
 <!-- ================= 0 实施现状 ================= -->
 <section id="s0">
   <h2><span class="no">0</span>实施现状与本次更新（2026-10-10）</h2>
-  <div class="callout green"><strong>一句话：</strong>本文最初是「可行性分析 + 架构设计」，现在它同时是一份<strong>实施记录</strong>。截至第 13 轮：<strong>M0–M4 已完成并测试</strong>，<strong>小程序化（M5）按用户要求暂缓并归档</strong>，当前重心是 <strong>Web 端商城的功能补全</strong>（第 13 轮完成「待做任务池」第 3 项：顾客端收货地址簿；第 12 轮第 2 项：订单打印 / 小票；第 11 轮第 1 项：商品建档 / 编辑表单）。<strong>2026-10-10 用户决定本机暂停开发</strong>，进度与待办已同步仓库，下一轮从任务池第 4 项「销售报表 / 日报」续做。</div>
+  <div class="callout green"><strong>一句话：</strong>本文最初是「可行性分析 + 架构设计」，现在它同时是一份<strong>实施记录</strong>。截至第 14 轮：<strong>M0–M4 已完成并测试</strong>，<strong>小程序化（M5）按用户要求暂缓并归档</strong>，当前重心是 <strong>Web 端商城的功能补全</strong>（第 14 轮完成「待做任务池」第 4 项：销售报表 / 日报；第 13 轮第 3 项：顾客端收货地址簿；第 12 轮第 2 项：订单打印 / 小票；第 11 轮第 1 项：商品建档 / 编辑表单）。<strong>第 13 轮后曾在 2026-10-10 本机暂停，2026-10-12 用户要求「继续开发」已复工</strong>，下一轮从任务池第 5 项「批量改价 / 批量操作」续做。</div>
 
   <h3>0.1 已落地的东西（仓库实况）</h3>
   <table>
     <tr><th>目录</th><th>内容</th><th>状态</th></tr>
-    <tr><td><code>web/</code></td><td>顾客端 <code>index.html</code> + 经营管理台 <code>admin.html</code>（总览 / 订单（含<strong>小票打印</strong>）/ 库存 / <strong>商品档案</strong> / 价格防护 / 顾客 / 系统七视图）+ 设计系统 <code>assets/theme.css</code> + 领域逻辑 <code>mall.js</code> / <code>mall-admin.js</code> / <code>pricing.js</code> + 后端数据通道 <code>sdy-api.js</code></td><td>✅ 已完成（第 9 轮现代化重做；第 11 轮补商品建档/编辑/删除；第 12 轮补订单小票打印；第 13 轮补<strong>顾客端收货地址簿</strong>）</td></tr>
+    <tr><td><code>web/</code></td><td>顾客端 <code>index.html</code> + 经营管理台 <code>admin.html</code>（总览 / <strong>销售报表</strong> / 订单（含<strong>小票打印</strong>）/ 库存 / <strong>商品档案</strong> / 价格防护 / 顾客 / 系统八视图）+ 设计系统 <code>assets/theme.css</code> + 领域逻辑 <code>mall.js</code> / <code>mall-admin.js</code> / <code>pricing.js</code> + 后端数据通道 <code>sdy-api.js</code></td><td>✅ 已完成（第 9 轮现代化重做；第 11 轮补商品建档/编辑/删除；第 12 轮补订单小票打印；第 13 轮补<strong>顾客端收货地址簿</strong>；第 14 轮补<strong>销售报表 / 日报</strong>）</td></tr>
     <tr><td><code>server/</code></td><td>Go 后端：七表数据层（含 <code>customer_address</code>）、事务下单、订单状态机、价格与配送规则、商品档案增删改校验、收货地址簿接口、条码解析链（配额熔断）、HTTP API、Docker 蓝绿部署件</td><td>✅ 29 个单测（含 HTTP 层 4 个）+ 端到端冒烟通过</td></tr>
     <tr><td><code>barcode-demo/</code></td><td>扫码台（手机摄像头 / 扫码枪 HID）+ 商品库 / 条码库 / 扫码日志 + 后端通道 <code>bd-api.js</code></td><td>✅ APPCODE 只在服务端</td></tr>
     <tr><td><code>sync-demo/</code></td><td>牵牛花 CSV 对账引擎 + 对账工作台 + 导出确认清单</td><td>✅ 工具就绪（待真实导出文件核对列名）</td></tr>
@@ -255,7 +267,7 @@
     <tr><th>文档</th><th>定位</th></tr>
     <tr><td>本文（可行性分析与架构方案）</td><td>为什么做、怎么做、选型与成本的完整推演 + 第 0 章实施现状</td></tr>
     <tr><td><code>开发计划.html</code></td><td>里程碑路线图、当前重心与待办、依赖用户的事项、进度跟踪</td></tr>
-    <tr><td><code>细节讨论记录.html</code></td><td>逐轮讨论记录与 D1–D18 决策汇总（每条决策含来源与影响）</td></tr>
+    <tr><td><code>细节讨论记录.html</code></td><td>逐轮讨论记录与 D1–D19 决策汇总（每条决策含来源与影响）</td></tr>
     <tr><td><code>README.md</code> · <code>web/README.md</code> · <code>server/README.md</code></td><td>仓库落地说明：目录结构、运行方式、测试命令</td></tr>
   </table>
   <p style="color:var(--muted)">三份中文文档均会推送到腾讯文档便于共同编辑，<strong>每次推送都会生成新链接</strong>（导出接口每人每天 9 次配额，故推送按轮次合并进行），最新链接见每轮汇报与仓库 README。</p>
@@ -267,8 +279,8 @@
     <li><strong>小程序账号 + 商户号</strong>：M5 续做前置，申请周期 1–2 周；微信支付也要靠它。</li>
     <li><strong>第三方配送 API 权限</strong>（美团配送 / 达达 / 闪送 / 顺丰同城）：零售即时配送接入前各需 1–2 周审核。</li>
     <li><strong>D1–D5 待确认</strong>：入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算。</li>
-    <li><strong>下一轮候选（Web 端功能）</strong>：任务池第 4–8 项 —— 销售报表 / 日报、批量改价（必须过比价防线）、商品图片与分类管理、批发价与顾客等级、上线部署验证。</li>
-    <li><strong>⏸ 本机暂停（2026-10-10）</strong>：用户决定暂停本机开发，已完成 ①商品建档 ②订单小票 ③收货地址簿 三项；续做先 <code>git pull --rebase</code>，再从根 <code>README.md</code>「下一步（待续）」的任务池第 4 项接着做。</li>
+    <li><strong>下一轮候选（Web 端功能）</strong>：任务池第 5–8 项 —— 批量改价（必须过比价防线）、商品图片与分类管理、批发价与顾客等级、上线部署验证；另有第 12/14 轮遗留的订单备注字段与报表导出 CSV。</li>
+    <li><strong>▶ 第 14 轮已复工（2026-10-12）</strong>：用户要求「继续开发」，已完成 ①商品建档 ②订单小票 ③收货地址簿 ④<strong>销售报表 / 日报（D19）</strong> 四项；续做先 <code>git pull --rebase</code>，再从根 <code>README.md</code>「下一步（待续）」的任务池第 5 项接着做。（历史：第 13 轮结束时曾于 2026-10-10 本机暂停。）</li>
   </ul>
 </section>
 
@@ -925,7 +937,7 @@
     <tr><td>8. 我的</td><td>会员信息（一键登录）、地址簿、售后入口、优惠券（P1）、<strong>联系客服（原生会话/留言工单）</strong></td><td>openid 一键登录，手机号可选绑定</td></tr>
   </table>
 
-  <h3>13.2 商家管理后台（5 模块，极简看板化，家人/店员可操作）· ✅ Web 端已落地 6 视图</h3>
+  <h3>13.2 商家管理后台（5 模块，极简看板化，家人/店员可操作）· ✅ Web 端已落地 8 视图<i>（第 9 轮 6 视图；第 11 轮起补商品档案、第 14 轮起补销售报表）</i></h3>
   <table>
     <tr><th>模块</th><th>核心功能</th><th>要点</th></tr>
     <tr><td>1. 商品管理</td><td>批量导入建档（条码 EAN-13/名称/规格/双价格/图片）、扫码枪扫描调取、编辑、上下架、分类</td><td>牵牛花首次导入 + 手工补录；同商品不同规格按条码分建档；图片走 CDN</td></tr>

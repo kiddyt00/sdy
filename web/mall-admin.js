@@ -407,6 +407,150 @@ const Admin = (() => {
     return L.join('\n');
   }
 
+  /* ---------------- 销售报表 / 日报（D19） ----------------
+   * 口径（D19）：只统计非取消订单；营业额按「下单口径」（含未完成），另拆已完成/进行中；
+   * 商品金额取各单 subtotal（不含配送费）；客单价 = 营业额 / 单量；
+   * 时间按本机时区的自然日切分，区间含首尾两天、零单日也占一格（图表横轴连续）；
+   * 纯函数、数据源是订单镜像 —— 不新增后端接口、离线也能出报表。            */
+
+  const REPORT_RANGES = [
+    ['today', '今天'], ['yesterday', '昨天'], ['7d', '近 7 天'],
+    ['30d', '近 30 天'], ['month', '本月'], ['all', '全部']
+  ];
+
+  function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+  function shiftDay(d, n) { const x = startOfDay(d); x.setDate(x.getDate() + n); return x; }
+  function dayKey(ts) {
+    const d = new Date(ts);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+  function numOf(v) { const n = Number(v); return isNaN(n) ? 0 : n; }
+  function sumOf(arr, f) { return round2(arr.reduce((s, o) => s + numOf(f(o)), 0)); }
+
+  // 区间 → 连续自然日列表（「全部」以最早一单那天为起点，没有订单就是今天）
+  function rangeOf(key, now, orders) {
+    const today = startOfDay(now || new Date());
+    let label = '今天', days = [];
+    if (key === 'yesterday') { label = '昨天'; days = [shiftDay(today, -1)]; }
+    else if (key === '7d') { label = '近 7 天'; for (let i = 6; i >= 0; i--) days.push(shiftDay(today, -i)); }
+    else if (key === '30d') { label = '近 30 天'; for (let i = 29; i >= 0; i--) days.push(shiftDay(today, -i)); }
+    else if (key === 'month') {
+      label = '本月';
+      for (let d = new Date(today.getFullYear(), today.getMonth(), 1); d <= today; d = shiftDay(d, 1)) days.push(d);
+    } else if (key === 'all') {
+      label = '全部';
+      let min = today;
+      (Array.isArray(orders) ? orders : []).forEach(o => {
+        const d = startOfDay(o.createdAt);
+        if (!isNaN(d.getTime()) && d < min) min = d;
+      });
+      for (let d = min; d <= today; d = shiftDay(d, 1)) days.push(d);
+    } else { key = 'today'; days = [today]; }
+    const keys = days.map(dayKey);
+    return { key: key, label: label, days: keys, from: keys[0], to: keys[keys.length - 1], count: keys.length };
+  }
+
+  function aggregate(list, range) {
+    const inSet = {};
+    range.days.forEach(d => { inSet[d] = 1; });
+    const inRange = list.filter(o => inSet[dayKey(o.createdAt)]);
+    const valid = inRange.filter(o => o.status !== 'cancelled');
+
+    const byStatus = { pending: 0, delivering: 0, ready: 0, done: 0, cancelled: 0 };
+    inRange.forEach(o => { if (byStatus[o.status] != null) byStatus[o.status]++; });
+
+    const revenue = sumOf(valid, o => o.total);
+    const goods = sumOf(valid, o => o.subtotal);
+    const deliveryFee = sumOf(valid, o => o.deliveryFee);
+    const count = valid.length;
+    const doneAmount = sumOf(valid.filter(o => o.status === 'done'), o => o.total);
+
+    let items = 0;
+    const agg = {};
+    valid.forEach(o => (o.items || []).forEach(i => {
+      const qty = numOf(i.qty);
+      items += qty;
+      const k = String(i.code || i.name || '');
+      const a = agg[k] || (agg[k] = { code: i.code || '', name: i.name || '', spec: i.spec || '', unit: i.unit || '', qty: 0, amount: 0 });
+      a.qty += qty;
+      a.amount = round2(a.amount + numOf(i.price) * qty);
+    }));
+    const top = Object.keys(agg).map(k => agg[k])
+      .sort((a, b) => b.qty - a.qty || b.amount - a.amount)
+      .slice(0, 8)
+      .map(a => Object.assign({}, a, { pct: items ? Math.round(a.qty / items * 1000) / 10 : 0 }));
+
+    const daily = range.days.map(dk => {
+      const all = inRange.filter(o => dayKey(o.createdAt) === dk);
+      const ok = all.filter(o => o.status !== 'cancelled');
+      return { date: dk, label: dk.slice(5), count: ok.length, revenue: sumOf(ok, o => o.total), cancelled: all.length - ok.length };
+    });
+
+    const byType = t => {
+      const g = valid.filter(o => (o.deliveryType || 'pickup') === t);
+      return { count: g.length, amount: sumOf(g, o => o.total) };
+    };
+
+    return {
+      range: range, count: count, revenue: revenue, goods: goods, deliveryFee: deliveryFee,
+      avgOrder: count ? round2(revenue / count) : 0,
+      items: items, skuCount: Object.keys(agg).length,
+      doneAmount: doneAmount, openAmount: round2(revenue - doneAmount),
+      byStatus: byStatus, top: top, daily: daily,
+      pickup: byType('pickup'), delivery: byType('delivery'),
+      maxDaily: daily.reduce((m, d) => Math.max(m, d.revenue), 0)
+    };
+  }
+
+  function pctOf(now, prev) { return prev > 0 ? Math.round((now - prev) / prev * 1000) / 10 : null; }
+
+  // 报表主函数：orders 传 Mall.getOrders()，now 可注入（测试用）
+  function buildReport(orders, key, now) {
+    const list = Array.isArray(orders) ? orders : [];
+    const range = rangeOf(key, now, list);
+    const r = aggregate(list, range);
+    r.now = (now ? new Date(now) : new Date()).getTime();
+    if (range.key !== 'all') {                       // 等长的上一个区间 → 环比
+      const prevDays = [];
+      for (let i = range.count; i >= 1; i--) prevDays.push(dayKey(shiftDay(new Date(range.from + 'T00:00:00'), -i)));
+      const p = aggregate(list, { days: prevDays, from: prevDays[0], to: prevDays[prevDays.length - 1], count: prevDays.length, label: '上一区间' });
+      r.prev = { revenue: p.revenue, count: p.count, avgOrder: p.avgOrder };
+      r.delta = { revenue: pctOf(r.revenue, p.revenue), count: pctOf(r.count, p.count), avgOrder: pctOf(r.avgOrder, p.avgOrder) };
+    }
+    return r;
+  }
+
+  function pctText(v) { return v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%'; }
+
+  // 32 字宽纯文本日报（复制到微信 / 打印用）
+  function reportText(r, opts) {
+    const o = opts || {};
+    const store = o.store || getStoreInfo();
+    const line = '--------------------------------';
+    const L = [(store.name || DEFAULT_STORE.name) + ' · 销售日报'];
+    L.push(r.range.label + '（' + r.range.from + (r.range.count > 1 ? ' 至 ' + r.range.to : '') + '）');
+    L.push(line);
+    L.push('单量：' + r.count + ' 单' + (r.byStatus.cancelled ? '（另有取消 ' + r.byStatus.cancelled + ' 单）' : ''));
+    L.push('营业额：¥' + r.revenue.toFixed(2) + '（下单口径，不含取消）');
+    L.push('客单价：¥' + r.avgOrder.toFixed(2));
+    L.push('商品金额：¥' + r.goods.toFixed(2) + ' · 配送费：¥' + r.deliveryFee.toFixed(2));
+    L.push('已完成：¥' + r.doneAmount.toFixed(2) + ' · 进行中：¥' + r.openAmount.toFixed(2));
+    L.push('自提 ' + r.pickup.count + ' 单 · 配送 ' + r.delivery.count + ' 单');
+    L.push('未完成：待备货 ' + r.byStatus.pending + ' · 配送中 ' + r.byStatus.delivering + ' · 待自提 ' + r.byStatus.ready);
+    if (r.delta) L.push('环比：营业额 ' + pctText(r.delta.revenue) + ' · 单量 ' + pctText(r.delta.count));
+    if (r.top.length) {
+      L.push(line);
+      L.push('热销 TOP ' + Math.min(5, r.top.length));
+      r.top.slice(0, 5).forEach((t, i) => {
+        L.push((i + 1) + '. ' + t.name + (t.spec ? ' ' + t.spec : ''));
+        L.push('   ' + t.qty + ' ' + (t.unit || '件') + ' · ¥' + t.amount.toFixed(2) + ' · 占 ' + t.pct + '%');
+      });
+    }
+    L.push(line);
+    L.push('生成时间：' + formatTime(o.now || r.now || Date.now()));
+    return L.join('\n');
+  }
+
   return {
     KEYS: KEYS,
     DEFAULT_COURIERS: DEFAULT_COURIERS,
@@ -435,6 +579,11 @@ const Admin = (() => {
     setStoreInfo: setStoreInfo,
     buildReceipt: buildReceipt,
     formatTime: formatTime,
+    REPORT_RANGES: REPORT_RANGES,
+    rangeOf: rangeOf,
+    dayKey: dayKey,
+    buildReport: buildReport,
+    reportText: reportText,
     getCustomers: getCustomers,
     setCustomerNote: setCustomerNote
   };

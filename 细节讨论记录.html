@@ -59,7 +59,7 @@
   <tr><td>客服体系</td><td><span class="tag todo">未开始</span></td><td>原生客服消息 + 留言工单 + FAQ</td></tr>
   <tr><td>配送与自提</td><td><span class="tag todo">未开始</span></td><td>4 家配送聚合比价路由、自提核销</td></tr>
   <tr><td>财务对账与开票</td><td><span class="tag todo">未开始</span></td><td>零售/批发对账、批发电子发票预留</td></tr>
-  <tr><td>后台与数据</td><td><span class="tag todo">未开始</span></td><td>看板化后台、报表、SKU 主数据</td></tr>
+  <tr><td>后台与数据</td><td><span class="tag doing">进行中</span></td><td>看板化后台、报表、SKU 主数据；第 11 轮完成商品档案（SKU 主数据），第 14 轮完成销售报表 / 日报（D19），后续见 <code>开发计划.html</code> 任务池 5–8 项</td></tr>
 </table>
 
 <h2>二、轮次记录</h2>
@@ -310,6 +310,21 @@
   </ul>
 </div>
 
+<div class="callout green">
+  <strong>第 14 轮（2026-10-12）任务池第 4 项：销售报表 / 日报（用户要求「继续开发」后复工）</strong>
+  <p>老板每天早上要回答一个问题：「昨天做了多少生意、哪些货走得好」。此前管理端只有「经营总览」的当日 KPI，看不到趋势，也没有能直接发到家人微信群的一页日报。本轮把订单表变成一份能看、能复制、能打印的销售报表（决策 <b>D19</b>）。</p>
+  <ul>
+    <li><strong>口径先定，再写代码</strong>：只统计<b>非取消订单</b>；营业额按<b>下单口径</b>（含还没送完的单）并另拆「已完成 / 进行中」——老板问的是「今天做了多少生意」，但没交付的钱也要单独看得见；商品金额取各单 <code>subtotal</code>（不含配送费），客单价 = 营业额 ÷ 单量。数字全部来自订单本身，可随时由明细重算。</li>
+    <li><strong>六档区间</strong>：今天 / 昨天 / 近 7 天 / 近 30 天 / 本月 / 全部（<code>REPORT_RANGES</code>）。按<b>本机时区</b>切自然日、区间含首尾；<code>全部</code> 以最早一单那天为起点（没有订单就是今天）、<code>本月</code> 从当月 1 号到今天，未知区间回落今天——不会出现「空区间 + 报错」。</li>
+    <li><strong>零单日也占一格</strong>：日柱状图横轴是连续日期序列，没生意的日子画一条 2px 矮柱（<code>.rpt-bar.zero</code>），「哪几天没开张」一眼可见；柱高 = 当日营业额 ÷ 区间内最高日 × 100%，最少 2px。柱少时图表<b>不拉成整块</b>——容器宽度取 <code>Math.max(240, Math.min(天数 × 60, 1136))px</code> 并居中；超过 12 天日期标签隔二抽一、超过 20 天隔五抽一（完整日期放在 <code>title</code> 里）。</li>
+    <li><strong>环比只跟等长的上一区间比</strong>（今天比昨天、近 7 天比再往前 7 天）；前一期为 0 或不可比（<code>全部</code>）时显示「—」，<b>不编造百分比</b>。</li>
+    <li><strong>纯前端纯函数、不加后端接口</strong>：<code>Admin.buildReport(orders, key, now)</code> / <code>Admin.reportText(report, { store })</code> 只读订单与门店抬头，与「小票只读投影」同源；离线（本地演示模式）照样出报表，后端不必为报表新增任何表或接口。</li>
+    <li><strong>一页日报可带走</strong>：8 张 KPI（营业额·单量·客单价·商品金额·配送费·已完成/进行中·售出件数·自提/配送拆分）+ 日柱状图 + 热销 TOP8（带占比条）+ 32 字宽纯文本日报预览；「📋 复制日报」优先 <code>navigator.clipboard</code>、不可用时退回临时 <code>textarea</code> + <code>execCommand('copy')</code>（两种路径都不抛错），「🖨 打印日报」复用 <code>#printRoot</code> + <code>@media print</code> 打成 72mm 一页，零打印库依赖。</li>
+    <li><strong>验证</strong>：前端套件 <code>test-admin.js</code> 98 → <b>139</b>、<code>test-page-boot.js</code> 95 → <b>120</b>（造单时间戳一律<b>相对今天</b>，避免写成死日期）；真浏览器 CDP 用真 Go 后端造两单跑通六档区间（含 7 天 6 个零柱、30 天每 5 天刻度、复制 384 字符与 toast、打印调用一次并清空打印区），<b>0 异常 / 0 <code>console.error</code> / 0 横向溢出</b>，并用 <code>Emulation.setEmulatedMedia({media:'print'})</code> 仿真确认 <code>#rptPrint</code> 宽 <b>272.125px = 72mm</b>、版面其余部分 <code>display:none</code>。</li>
+    <li><strong>测试环境教训（新增）</strong>：页面启动冒烟里造订单<b>必须用相对当前日期</b>的时间戳（<code>Admin.dayKey(daysAgo(n))</code>），写死日期会在真实运行日失效；断言柱状图刻度时用 <code>split('&lt;span')</code> 而不是 <code>split('&lt;span&gt;')</code>——标签带上 <code>title</code> 属性后前者才成立。</li>
+  </ul>
+</div>
+
 <h2>三、已定决策汇总</h2>
 <table>
   <tr><th>决策</th><th>来源</th><th>对主方案的影响</th></tr>
@@ -326,6 +341,7 @@
   <tr><td><b>商品档案写接口语义（D16）</b>：建档与编辑共用 <code>POST /api/products</code>（覆盖式 upsert，按条码为主键），<b><code>stock</code> 字段采用指针语义——不传就是「不改库存」</b>，只有显式传值才写库；前端编辑表单根本不渲染库存输入。<b>删除</b>走 <code>DELETE /api/products/{code}</code>，两道闸：库存必须为 0、没有进行中（非 <code>done</code>/<code>cancelled</code>）订单引用；<b>删档不删条码字典层（D6 沉淀）</b>，所以删除只影响经营档案，不影响扫码识别能力。建档/编辑的服务端校验（条码与名称必填、价格与库存非负、比价防线超价 400）与前端归一化校验同口径</td><td>第 11 轮（做任务池第 1 项「商品建档 / 编辑表单」时定下）</td><td>避免「编辑商品把库存清零」这类静默数据事故；库存只有一个入口（<code>/api/products/stock</code> 与库存页三操作）与一条流水，与 D8「扫码只读、库存手动调整」一致</td></tr>
   <tr><td><b>订单小票约定（D17）</b>：小票是<b>只读投影</b>——<code>Admin.buildReceipt(order)</code> 只看订单与抬头，不改订单/库存/价格；打印走<b>纯前端 <code>@media print</code> + <code>#printRoot</code>、零打印库依赖</b>，热敏 72mm 一单一页；门店抬头（店名/电话/地址/票尾）存本机 <code>mall_store</code>、<b>不上后端</b>；批量打印只唤起一次打印并按订单分页；已取消订单盖「作废」仍可打（留痕）</td><td>第 12 轮（做任务池第 2 项「订单打印 / 小票」时定下）</td><td>不给家庭店加打印中间件与后端接口；小票内容永远可由订单重算，不引入第二份订单数据；后续若要 A4 对账单，复用同一 <code>buildReceipt</code> 模型换样式即可</td></tr>
   <tr><td><b>收货地址簿（D18）</b>：地址按<b>手机号</b>归档在 <code>customer_address</code> 表（<code>phone</code> 索引，无账号体系），顾客端结算「常用地址点一下带出」+「📍 地址簿」管理弹窗（增 / 改 / 设默认 / 删）；默认语义三条——<b>首条自动默认</b>、<b>设为默认则摘掉同号其它条</b>、<b>删掉默认后由剩下最早一条顶替</b>；<b>编辑不传 <code>isDefault</code> 时原默认标记保留</b>；下单写入<b>只增不改</b>——内容与已选地址完全一致时不重复写，改了内容则存成新的一条，<b>绝不覆盖已有地址</b>；<b>订单地址是下单当时的快照</b>，改地址簿不影响历史订单。离线时本地 <code>localStorage.mall_addresses</code> 与后端同一套默认语义（两套实现各有单测钉住）</td><td>第 13 轮（做任务池第 3 项「顾客端收货地址簿」时定下）</td><td>熟客二次下单从「重填地址」变成「点一下」；不引入顾客账号体系（手机号即身份）；历史订单与配送单的口径不被地址簿改动污染；后端不存「顾客档案」的地址副本，避免两处真源</td></tr>
+  <tr><td><b>销售报表口径（D19）</b>：报表<b>只统计非取消订单</b>；营业额按<b>下单口径</b>（含未完成）并另拆「已完成 / 进行中」——家庭店要看「今天做了多少生意」，未交付的钱也要单独可见；商品金额取各单 <code>subtotal</code>（不含配送费），客单价 = 营业额 ÷ 单量；六档区间（今天/昨天/近 7 天/近 30 天/本月/全部）按<b>本机时区自然日</b>切分、含首尾、<b>零单日也占一格</b>（柱状图横轴连续）；环比对<b>等长的上一个区间</b>，「全部」不比、前一期为 0 显示「—」；实现是<b>纯前端纯函数</b> <code>Admin.buildReport</code> / <code>Admin.reportText</code>（只读投影），<b>不加后端接口</b>、离线也能出报表；日报可一键复制（clipboard → textarea 兜底）或按 72mm 纯前端打印</td><td>第 14 轮（用户要求「继续开发」，做任务池第 4 项「销售报表 / 日报」时定下）</td><td>报表不进后端、不建新表，订单表始终是唯一真源，数字可由明细重算；「下单口径 + 已交付/未交付拆分」避免了「营业额只算已完成」与「算上取消单」两种口径误解；零单日占格让「哪天没开张」一眼可见；同比/环比只跟等长区间比，不编造百分比</td></tr>
   <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
 </table>
 
