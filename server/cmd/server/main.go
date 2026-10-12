@@ -342,6 +342,17 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		writeJSON(w, 200, map[string]any{"total": total, "violations": violations, "over": len(violations)})
 	})
 
+	// 管理端「干净地址」：/admin 直出 admin.html，地址栏里不出现 .html（D22）
+	// 必须没有结尾斜杠——/admin 的相对路径基准是根目录，页面里的 `assets/theme.css`、
+	// `mall-admin.js` 才能解析成 /assets/... 与 /mall-admin.js；带斜杠的 /admin/ 会把
+	// 基准变成 /admin/ 导致静态资源 404，所以直接 301 到规范地址。
+	mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(staticDir, "admin.html"))
+	})
+	mux.HandleFunc("/admin/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusMovedPermanently)
+	})
+
 	// 前端：本地开发时用 STATIC_DIR 指向仓库根目录，可直接打开 web 等页面
 	mux.Handle("/", http.FileServer(http.Dir(staticDir)))
 	return mux

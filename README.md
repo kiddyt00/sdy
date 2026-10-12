@@ -17,13 +17,13 @@
 | M4 | Go 后端服务（数据层 / 规则 / 条码链 / HTTP API / 部署件） | ✅ 完成，本地联调通过 |
 | M5 | 微信小程序化 | ⏸ 暂缓，骨架归档在 `archive/miniprogram/`（可续） |
 | M5′ | **Web 端商城现代化 + 功能实现** | 🔄 进行中（任务池 8 项已完成 5 项） |
-| M6 | 部署上线验证 | 🔄 已上生产（Docker 蓝绿 + 主机 Nginx「IP 直连」入口），域名 + 备案后补 HTTPS |
+| M6 | 部署上线验证 | 🔄 已上生产（Docker 蓝绿 + 主机 Nginx「IP 直连」入口），管理端走干净地址 `/admin`；域名 + 备案后补 HTTPS |
 
-> 📌 **节奏**：第 13 轮后曾在 2026-10-10 本机暂停并全量同步仓库；2026-10-12 用户要求「继续开发」，已陆续完成任务池第 4 项「销售报表 / 日报」与**第 5 项「批量改价 / 批量操作」**；**第 16 轮按用户要求先把项目部署到生产服务器**，可打开真实界面边看边提优化。续做请看下方「下一步（待续）」与 [`开发计划.html`](开发计划.html) 的任务池。
+> 📌 **节奏**：第 13 轮后曾在 2026-10-10 本机暂停并全量同步仓库；2026-10-12 用户要求「继续开发」，已陆续完成任务池第 4 项「销售报表 / 日报」与**第 5 项「批量改价 / 批量操作」**；**第 16 轮按用户要求先把项目部署到生产服务器**，可打开真实界面边看边提优化；**第 17 轮**据用户提问补了管理端干净地址 `/admin`（D22）、演示数据一键灌库脚本 `deploy/seed-demo.py`，并修掉一次「rsync 误删生产库」的事故。续做请看下方「下一步（待续）」与 [`开发计划.html`](开发计划.html) 的任务池。
 
 **M5′ 任务池进度**：①商品建档/编辑/删除 ✅ ②订单打印/小票 ✅ ③顾客端收货地址簿 ✅ ④销售报表/日报 ✅ ⑤批量改价/批量操作 ✅（批量上下架随⑥做）⑥商品图片与分类管理 ⬜ ⑦批发价与顾客等级 ⬜ ⑧上线部署验证 ⬜。
 
-**现在就能用**：起后端后，顾客端 `http://127.0.0.1:8093/` 可浏览商品、加购、下单、看我的订单，并维护**收货地址簿**（下单自动带出默认地址、改门牌顺手存新地址）；管理端 `/admin.html` 可看 KPI、流转订单、**给订单打小票 / 批量打印待备货小票**、入库/改数/盘点、**建档/编辑/删除商品档案（带比价防线校验）**、**勾选一批商品批量改价 / 批量改分类 / 批量改批发标记（改价逐款过比价防线）**、跑价格防护、维护顾客档案，以及**看销售报表 / 日报**（今天/昨天/近 7 天/近 30 天/本月/全部，日柱状图 + 热销 TOP + 环比，一键复制或打印日报）。前端与后端数据打通（`web/sdy-api.js` 为唯一通道），后端不在时自动降级为本地演示模式。
+**现在就能用**：起后端后，顾客端 `http://127.0.0.1:8093/` 可浏览商品、加购、下单、看我的订单，并维护**收货地址簿**（下单自动带出默认地址、改门牌顺手存新地址）；管理端 `/admin`（旧 `/admin.html` 仍可用）可看 KPI、流转订单、**给订单打小票 / 批量打印待备货小票**、入库/改数/盘点、**建档/编辑/删除商品档案（带比价防线校验）**、**勾选一批商品批量改价 / 批量改分类 / 批量改批发标记（改价逐款过比价防线）**、跑价格防护、维护顾客档案，以及**看销售报表 / 日报**（今天/昨天/近 7 天/近 30 天/本月/全部，日柱状图 + 热销 TOP + 环比，一键复制或打印日报）。前端与后端数据打通（`web/sdy-api.js` 为唯一通道），后端不在时自动降级为本地演示模式。
 
 **为什么先 Web 后小程序**（用户决定）：Web 端零门槛、当天能上线、功能可以立刻试；小程序要账号 + 商户号（1–2 周审批）且审核周期不可控，先把业务跑通再包壳。
 
@@ -33,7 +33,7 @@
 sdy/
 ├── web/                    # 商城 Web 端（唯一在用的前端）
 │   ├── index.html          #   顾客端：首页/分类/搜索/扫码找货/购物车/结算(常用地址带出)/我的订单/收货地址簿
-│   ├── admin.html          #   管理端：总览 KPI/销售报表/订单(含小票打印)/库存/商品档案(建档·编辑·删除)/价格防护/顾客/系统
+│   ├── admin.html          #   管理端：总览 KPI/销售报表/订单(含小票打印)/库存/商品档案(建档·编辑·删除)/价格防护/顾客/系统（服务端另有 /admin 干净地址）
 │   ├── assets/theme.css    #   共用设计系统（令牌 + 组件类 + 三档响应式）
 │   ├── mall.js             #   领域逻辑：商品/购物车/订单/配送规则/收货地址簿（全局 Mall）
 │   ├── mall-admin.js       #   后台逻辑：库存流水/盘点/商品档案 CRUD/配送员/顾客档案/小票模型/报表日报模型（全局 Admin）
@@ -43,12 +43,12 @@ sdy/
 ├── server/                 # Go 后端（cmd/server + internal/{store,pricing,barcode} + Dockerfile + smoke.sh）
 ├── barcode-demo/           # 条码双库工具：扫码台（摄像头）+ 商品库/条码库/扫码日志
 ├── sync-demo/              # 牵牛花月度 CSV 对账引擎 + 工作台 + 导出字段确认清单
-├── deploy/                 # 部署件：deploy.sh / rolling-update.sh / 主机 Nginx 模板
+├── deploy/                 # 部署件：deploy.sh / rolling-update.sh / seed-demo.py（演示数据一键灌库）/ 主机 Nginx 模板
 ├── archive/miniprogram/    # M5 微信小程序骨架（暂缓，未删除：app.json + utils + 4 页 + 2 套测试）
 ├── docker-compose.yml      # 蓝绿 api-a(8093) / api-b(8094)
 ├── *.py                    # 腾讯文档工具链：pull / convert_html / push / set_permission
 ├── 开发计划.html            # 路线图与里程碑状态（唯一「计划」入口）
-├── 细节讨论记录.html        # 决策台账 D1–D21 + 逐轮记录
+├── 细节讨论记录.html        # 决策台账 D1–D22 + 逐轮记录
 └── 独立小程序商城可行性分析与架构方案.html   # 架构与实现现状（可行性、成本、设计）
 ```
 
@@ -59,7 +59,7 @@ sdy/
 cd web && python3 -m http.server 8910        # 顾客端 /index.html，管理端 /admin.html
 
 # ② 接后端（推荐：规则与账目由服务端执行，前端只做展示）
-cd server && STATIC_DIR=.. go run ./cmd/server   # 顾客端 http://127.0.0.1:8093/ ，管理端 /admin.html
+cd server && STATIC_DIR=.. go run ./cmd/server   # 顾客端 http://127.0.0.1:8093/ ，管理端 /admin（旧 /admin.html 仍可用）
 
 # ③ Go 工具链不在默认 PATH 时，先导出（本机路径）
 export GOROOT=$PWD/.tools/go-sdk/go
@@ -79,7 +79,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | 价格规则 | `node web/test-pricing.js` | 28 | 否 |
 | 后台逻辑 | `node web/test-admin.js` | 180 | 否 |
 | 后端通道降级 | `node web/test-sdy-api.js` | 56 | 否 |
-| 页面启动冒烟（假 DOM） | `node web/test-page-boot.js` | 148 | 否 |
+| 页面启动冒烟（假 DOM） | `node web/test-page-boot.js` | 152 | 否 |
 | 前后端联调 | `node web/test-integration.js` | 17 | 是（`SDY_API_BASE`） |
 | 条码核心链路 | `node barcode-demo/test-core.js` | 7 组 | 否 |
 | 条码后端通道 | `node barcode-demo/test-api.js` | 55 | 否 |
@@ -87,7 +87,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | 扫码台联调 | `node barcode-demo/test-integration.js` | 34 | 是 |
 | 对账引擎 | `node sync-demo/test-sync.js` | 62 | 否 |
 | 小程序（归档） | `node archive/miniprogram/test-api.js` / `test-pages.js` / `test-integration.js` | 62 / 47 / 21 | 最后一个需要 |
-| 后端 | `cd server && go test ./...`（+ `gofmt`/`go vet`/`./smoke.sh`） | 29 | 自起服务 |
+| 后端 | `cd server && go test ./...`（+ `gofmt`/`go vet`/`./smoke.sh`） | 30 | 自起服务 |
 
 约定：
 - 联调测试做到**与库状态无关**（库存只比基线、商品条数用「至少 N 条」、建档用时间戳条码），可反复跑同一个库。
@@ -105,6 +105,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 - **D19 销售报表口径**：只统计**非取消订单**；营业额按**下单口径**（含未完成）并另拆「已完成 / 进行中」——家庭店要看「今天做了多少生意」，未交付的钱也要单独可见；商品金额取各单 `subtotal`（不含配送费），客单价 = 营业额 ÷ 单量；时间按本机时区的自然日切分，区间含首尾、零单日也占一格（柱状图横轴连续）；环比对**等长的上一个区间**（「全部」不比较）；实现是纯前端纯函数（`Admin.buildReport` / `Admin.reportText`），不加后端接口、离线也能出报表，日报可一键复制或按 72mm 打印。
 - **D20 批量操作边界**：商品表没有上下架字段，本轮批量只改**售价 / 分类 / 批发标记**三项，**库存一律不动**（D16）；批量改价逐款过比价防线，**超线默认跳过并在预览里标红**，可点「按防线顶格」按 `round2(参考价×0.95)` 落价；批发商品与缺牵牛花参考价的商品跳过比价检查，但仍照常改价并记流水；写库前**逐款重读当前商品**再写，只覆盖要改的字段，避免拿过期快照盖掉别人刚改的分类/单位；每款改动都单独记一条商品流水（原因写明规则，如「批量改价：+10%」）。
 - **D21 生产部署口径**：**先上「IP 直连」HTTP 入口**（`deploy/host-nginx-ip.conf` 的 `server_name` 只写本机 IP），域名 + 备案到位后再切 `deploy/host-nginx.conf` 的域名 + TLS；因为按 Host 精确匹配，未知 Host 仍落同机 beian 的 default_server，**不影响 yiguan / beian 等既有站点**。容器以 `uid 10001(app)` 运行：宿主机 `data/` 必须 `chown 10001`（否则 SQLite 报 `unable to open database file: out of memory (14)`），`web/` 必须对 others 可读（本地仓库常见 600 权限会让容器 403 / 退化成目录列表），从本机 rsync 一律带 `--chmod=D755,F644`；`api-a`/`api-b` 两容器共享 `/data/sdy.db`（SQLite DSN 带 WAL + `busy_timeout(5000)`），日常更新走 `deploy/rolling-update.sh` 先 B 后 A 不停服；生产库里的演示数据（14 款商品 / 6 张订单 / 3 条地址）只用于「打开界面看效果」，正式开张前清库重建即可。
+- **D22 管理端干净地址**：管理端对外统一走 `/admin`（Go 侧 `/admin` 直接吐 `admin.html`，`/admin/` 301 到 `/admin`），**旧 `/admin.html` 继续可用**，不让已收藏的链接失效。之所以带尾斜杠要重定向：`/admin` 不带尾斜杠时页面内的相对路径（`assets/theme.css`、`mall-admin.js`、`index.html`）仍以**根目录**为基准，而 `/admin/` 会把基准变成 `/admin/`，静态资源全部 404。不引入静态托管重写规则，Nginx 侧也不用改（`location /` 整站反代给 Go）。
 - **D12 单一真源**：前端不直连数据库、不持有任何密钥，所有请求走 `web/sdy-api.js`；服务端是规则与账目的唯一真源，冲突（409）原样呈现。
 - **技术栈**：后端 Go 1.24 + 标准库 `net/http` + `modernc.org/sqlite`（纯 Go，`CGO_ENABLED=0` 静态单文件）；前端纯 HTML/JS + 一个共享 CSS，**无构建步骤、无 npm 依赖**。
 - **红线**：敏感信息绝不上库（IP/凭证/APPCODE 只存本地且已 gitignore）；建档必须人工确认；价格与库存永不自动填云端值；对账以本地实物库存为准、牵牛花为单据权威。
@@ -128,10 +129,11 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ## 部署（M6）
 
-**当前状态（第 16 轮）**：已部署到生产服务器并**可外部访问**——Docker 蓝绿两个容器（`sdy-api-a`/`sdy-api-b`，宿主 `127.0.0.1:8093`/`8094`）已跑起来，主机 Nginx 上装了「IP 直连」入口：`http://<生产服务器IP>/` 是顾客端、`http://<生产服务器IP>/admin.html` 是管理端，`/api/` 由 Nginx 反代到蓝绿池；**生产服务器 IP 只存本地 `.server_cred.md`，公开仓库不出现**。演示数据已灌入生产库（14 款商品 / 6 张订单 / 3 条地址簿），打开即可看到 KPI、订单流转、小票、库存、报表、批量改价的真实效果。
+**当前状态（第 16–17 轮）**：已部署到生产服务器并**可外部访问**——Docker 蓝绿两个容器（`sdy-api-a`/`sdy-api-b`，宿主 `127.0.0.1:8093`/`8094`）已跑起来，主机 Nginx 上装了「IP 直连」入口：`http://<生产服务器IP>/` 是顾客端、`http://<生产服务器IP>/admin` 是管理端（旧 `/admin.html` 仍可用），`/api/` 由 Nginx 反代到蓝绿池；**生产服务器 IP 只存本地 `.server_cred.md`，公开仓库不出现**。演示数据用 `python3 deploy/seed-demo.py http://<地址>` 一键灌库（14 款商品 / 6 张订单 / 3 条地址簿，营业额 ¥199.00、客单价 ¥39.80、售出 35 件；脚本幂等，可反复执行），打开即可看到 KPI、订单流转、小票、库存、报表、批量改价的真实效果。
 
 - 范式和端口见 [deploy/](deploy/)：Docker Compose 蓝绿 A/B + 主机 Nginx(80/443)，后端 `api-a`→`127.0.0.1:8093`、`api-b`→`127.0.0.1:8094`，不对外直连；**避开同机已占用端口** 22/53/80/443/8081/8082。
-- 流程：rsync 同步（带 `--chmod=D755,F644`）→ `cp .env.example .env`（填 APPCODE）→ `./deploy/deploy.sh`（会自动 `chown` 数据目录、`chmod` 静态目录）→ 首次配主机 Nginx：域名 + TLS 用 `deploy/host-nginx.conf`，**备案前先用 IP 看界面**用 `deploy/host-nginx-ip.conf`；日常更新 `./deploy/rolling-update.sh` 逐台重启不停服。
+- 流程：rsync 同步（带 `--chmod=D755,F644`）→ `cp .env.example .env`（填 APPCODE）→ `./deploy/deploy.sh`（会自动 `chown` 数据目录、`chmod` 静态目录）→ 首次配主机 Nginx：域名 + TLS 用 `deploy/host-nginx.conf`，**备案前先用 IP 看界面**用 `deploy/host-nginx-ip.conf`；日常更新 `./deploy/rolling-update.sh` 逐台重启不停服；**只改前端时不必重启容器**——`./web:/app/web:ro` 是只读挂载，同步文件即生效。
+- **⛔ rsync 禁止加 `--delete` / `--delete-excluded`**：服务器上的 `data/sdy.db`（真数据）与 `.env` 都不在仓库里，加了就会被同步删掉，容器随即报 `unable to open database file: out of memory (14)` 并无限重启（第 17 轮真实踩过一次：`api-a` 握着已删 inode 的旧库所以公网看着还在，`api-b` 反复重启、滚动更新中断）。恢复动作：`cp -n .env.example .env` → 填 `SDY_DOMAIN` → `mkdir -p data && chown -R 10001:10001 data` → `bash deploy/rolling-update.sh` → `python3 deploy/seed-demo.py http://<地址>` 重建演示数据。
 - 服务器地址与登录凭证只存本地 `.server_cred.md`（已 gitignore，公开仓库绝不出现）。
 
 ## 文档
@@ -139,7 +141,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | 文件 | 说明 |
 | --- | --- |
 | [`开发计划.html`](开发计划.html) | 里程碑路线图、当前重心、依赖用户推进的事项 |
-| [`细节讨论记录.html`](细节讨论记录.html) | 决策台账 D1–D21 + 逐轮讨论记录 |
+| [`细节讨论记录.html`](细节讨论记录.html) | 决策台账 D1–D22 + 逐轮讨论记录 |
 | [`独立小程序商城可行性分析与架构方案.html`](独立小程序商城可行性分析与架构方案.html) | 可行性分析、成本、架构与实现现状 |
 | [`web/README.md`](web/README.md) | 商城 Web 端（顾客端 + 管理端） |
 | [`server/README.md`](server/README.md) | Go 后端：接口、环境变量、测试 |

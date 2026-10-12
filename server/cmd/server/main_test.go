@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -286,4 +288,47 @@ func TestAddressHTTPFlow(t *testing.T) {
 
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
+}
+
+// TestAdminCleanURL 管理端干净地址（D22）：/admin 直出 admin.html、/admin/ 301 到 /admin、
+// 老地址 /admin.html 继续可用（不能让老板已收藏的链接失效）。
+func TestAdminCleanURL(t *testing.T) {
+	st, err := store.Open(":memory:", pricing.DefaultConfig())
+	if err != nil {
+		t.Fatalf("打开内存库失败: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	// 静态目录里放一个带标记的 admin.html，避免依赖真实页面内容
+	dir := t.TempDir()
+	page := []byte("<title>小邻里超市 · 经营管理台</title>")
+	if err := os.WriteFile(filepath.Join(dir, "admin.html"), page, 0o644); err != nil {
+		t.Fatalf("写测试页面失败: %v", err)
+	}
+	ts := httptest.NewServer(routes(st, barcode.New(st, barcode.DefaultConfig(), nil), dir, false))
+	t.Cleanup(ts.Close)
+
+	// /admin → 200 且内容就是 admin.html
+	code, body := do(t, ts, http.MethodGet, "/admin", "")
+	if code != 200 || !strings.Contains(body, "经营管理台") {
+		t.Fatalf("/admin 应 200 且直出管理端页面，实际 %d %s", code, body)
+	}
+	// 老地址继续可用
+	if code, body := do(t, ts, http.MethodGet, "/admin.html", ""); code != 200 || !strings.Contains(body, "经营管理台") {
+		t.Fatalf("/admin.html 应继续可用，实际 %d %s", code, body)
+	}
+
+	// /admin/ → 301 到 /admin（不再跟随重定向，否则相对路径基准会变成 /admin/）
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Get(ts.URL + "/admin/")
+	if err != nil {
+		t.Fatalf("请求 /admin/ 失败: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusMovedPermanently {
+		t.Errorf("/admin/ 应 301，实际 %d", res.StatusCode)
+	}
+	if loc := res.Header.Get("Location"); loc != "/admin" {
+		t.Errorf("/admin/ 应跳到 /admin，实际 %q", loc)
+	}
 }

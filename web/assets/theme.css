@@ -166,10 +166,14 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
 .panel-body.tight { padding: 12px 14px; }
 
 /* 数据看板 KPI */
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
 .kpi { background: #fff; border: 1px solid var(--line); border-radius: var(--r); padding: 16px 18px; box-shadow: var(--sh-1); }
 .kpi .k-label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-.kpi .k-value { font-size: 26px; font-weight: 600; letter-spacing: -.02em; margin-top: 6px; }
+/* nowrap：像「¥27.00 / ¥172.00」这种成对数值必须留在同一行，不许被折成两行 */
+.kpi .k-value { font-size: 26px; font-weight: 600; letter-spacing: -.02em; margin-top: 6px; white-space: nowrap; }
+/* 成对/较长数值（例如「¥27.00 / ¥172.00」）按字符数自动降档，避免撑破卡片 */
+.kpi .k-value.sm { font-size: 19px; }
+.kpi .k-value.xs { font-size: 15px; }
 .kpi .k-value small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 3px; }
 .kpi .k-foot { font-size: 12px; color: var(--faint); margin-top: 4px; }
 .kpi.accent { background: linear-gradient(135deg, #16a34a, #0ea5e9); border-color: transparent; color: #fff; }

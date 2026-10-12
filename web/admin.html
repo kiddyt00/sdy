@@ -491,6 +491,12 @@ function renderDash() {
 /* ---------------- 销售报表（任务池第 4 项，D19） ---------------- */
 let rptKey = 'today';
 function pickRange(k) { rptKey = k; renderReport(); }
+// KPI 数值一律不换行（.k-value 的 white-space:nowrap）；字符多时逐步降一档字号，
+// 保证「¥27.00 / ¥172.00」这种成对数值始终留在同一行，同时不撑破卡片。
+function kpiSize(text) {
+  const n = String(text).length;
+  return n <= 11 ? '' : (n <= 17 ? ' sm' : ' xs');
+}
 function rptCards(r) {
   const pct = v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
   return [
@@ -513,7 +519,7 @@ function renderReport() {
     '（' + r.range.count + ' 天）· 只统计非取消订单，零单日也占一格';
 
   $('rptKpis').innerHTML = rptCards(r).map(c =>
-    '<div class="kpi ' + c[3] + '"><div class="k-label">' + c[0] + '</div><div class="k-value">' + c[1] + '</div><div class="k-foot">' + esc(c[2]) + '</div></div>').join('');
+    '<div class="kpi ' + c[3] + '"><div class="k-label">' + c[0] + '</div><div class="k-value' + kpiSize(c[1]) + '">' + c[1] + '</div><div class="k-foot">' + esc(c[2]) + '</div></div>').join('');
 
   const max = r.maxDaily;
   function bar(d) {

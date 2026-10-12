@@ -317,6 +317,13 @@ const online = {
     ok(env.els.rptKpis.innerHTML.indexOf('¥24.60') >= 0, '今日营业额 ¥24.60（22.80 + 1.80）');
     ok(env.els.rptKpis.innerHTML.indexOf('环比') >= 0, 'KPI 卡带环比文案');
     ok(env.els.rptKpis.innerHTML.indexOf('12 件') >= 0 && env.els.rptKpis.innerHTML.indexOf('2 个商品') >= 0, 'KPI 卡含售出件数与商品数');
+    ok(ctx.kpiSize('¥27.00') === '' && ctx.kpiSize('¥0.00 / ¥0.00') === ' sm' && ctx.kpiSize('¥12345.67 / ¥23456.78') === ' xs',
+      'KPI 数值按字符数降档：单值 26px / 成对 19px / 超长 15px');
+    ok(env.els.rptKpis.innerHTML.indexOf('k-value sm">¥') >= 0, '「已完成 / 进行中」成对数值按降档类渲染（不许换行）');
+    const themeCss = fs.readFileSync(path.join(__dirname, 'assets/theme.css'), 'utf8');
+    ok(/\.kpi \.k-value \{[^}]*white-space: nowrap/.test(themeCss), 'theme.css：KPI 数值强制 nowrap，成对数值不许折成两行');
+    ok(/\.kpi \.k-value\.sm \{[^}]*font-size: 19px/.test(themeCss) && /\.kpi \.k-value\.xs \{[^}]*font-size: 15px/.test(themeCss),
+      'theme.css：含 19px / 15px 两档降级字号（长数值不撑破卡片）');
     ok((env.els.rptBars.innerHTML.match(/rpt-bar/g) || []).length === 1, '今天区间一根柱');
     ok(env.els.rptBars.innerHTML.indexOf('title="' + kToday) >= 0, '柱子带日期悬停提示');
     ctx.pickRange('7d');

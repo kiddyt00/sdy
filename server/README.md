@@ -8,8 +8,8 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `server/cmd/server/main.go` | 进程入口（487 行）：环境变量、建库与种子数据、路由表、CORS/日志中间件、超时与优雅退出、云端条码 HTTP 客户端 |
-| `server/cmd/server/main_test.go` | HTTP 层单测（289 行，4 个）：商品建档/编辑/删除全流程、库存语义、**收货地址簿全流程**、CORS 预检 |
+| `server/cmd/server/main.go` | 进程入口（498 行）：环境变量、建库与种子数据、路由表、CORS/日志中间件、超时与优雅退出、云端条码 HTTP 客户端 |
+| `server/cmd/server/main_test.go` | HTTP 层单测（334 行，5 个）：商品建档/编辑/删除全流程、库存语义、**收货地址簿全流程**、**管理端干净地址 `/admin`（含 `/admin/` 301）**、CORS 预检 |
 | `server/internal/store/store.go` | 数据层（855 行）：7 张表、事务下单、状态机、库存回补、商品档案增删改校验、**收货地址簿**、条码字典 |
 | `server/internal/store/store_test.go` | 数据层单测（573 行，15 个） |
 | `server/internal/pricing/pricing.go` | 价格与配送规则（111 行），与 `web/pricing.js` 语义一致 |
@@ -36,7 +36,7 @@ go run ./cmd/server
 ```bash
 # ① 短路径：根路径直接是顾客端
 STATIC_DIR=../web go run ./cmd/server
-#   顾客端 http://127.0.0.1:8093/   管理端 http://127.0.0.1:8093/admin.html
+#   顾客端 http://127.0.0.1:8093/   管理端 http://127.0.0.1:8093/admin（干净地址；旧 /admin.html 仍可用）
 #   代价：管理端「系统与工具」里指向 ../barcode-demo/、../sync-demo/ 的链接会 404
 
 # ② 全仓库（推荐）：四个模块的页面都能打开，且同源共用 bd_products
@@ -96,6 +96,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | GET | `/api/barcode/resolve?code=` | 条码解析链：商品档案 → 本地字典 → 云端；查到永久回填字典，查无标记 90 天，连续失败 5 次熔断当日 |
 | GET | `/api/barcode/lib?limit=` | 条码字典层列表（默认 200 条，只读） |
 | GET | `/api/pricing/check` | 比价防线巡检，返回 `{total, over, violations}` |
+| GET | `/admin` | 管理端干净地址：直接把 `STATIC_DIR/admin.html` 吐出来；`/admin/` 带尾斜杠会 301 到 `/admin`（带斜杠时页面内相对路径基准变成 `/admin/`，`assets/theme.css` 等会 404）；旧 `/admin.html` 继续可用 |
 | — | `/`（其余路径） | 静态文件（`STATIC_DIR`） |
 
 **错误码**：`400` 参数不合法 / `404` 资源不存在 / `409` 库存不足或状态不允许流转 / `405` 方法不支持 / `500` 其他。领域错误到 HTTP 码的映射写在 `server/cmd/server/main.go:441` 的 `writeErr`，用 `errors.Is` 判断 `store.ErrBadInput` / `ErrNotFound` / `ErrStockLess` / `ErrConflict`。（`ErrBadInput` 的响应文案统一带「参数不合法: 」前缀，前端 `sdy-api.js` 原样透出，所以页面上看到的校验提示可能带这个前缀。）
@@ -106,7 +107,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy/server
-go test ./... -count=1        # 29 个单测
+go test ./... -count=1        # 30 个单测
 ./smoke.sh                    # 起真服务跑 HTTP 全流程
 ```
 
@@ -119,7 +120,7 @@ go test ./... -count=1        # 29 个单测
 | `server/internal/store` | 15 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook` |
 | `server/cmd/server` | 4 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestAddressHTTPFlow`、`TestHealthzAndOptions` |
 
-合计 **29 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
+合计 **30 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
 
 `./smoke.sh` 会 `go build` 一个临时二进制，用 `mktemp` 建临时库（**不碰 `server/data/sdy.db`**），起在 `127.0.0.1:8099`（`SMOKE_PORT` 可改，**默认不占用 8093**），轮询 `/healthz` 就绪后依次验证 8 项：健康检查 → 商品数 → 条码解析 → 下单 → 下单后库存 → 非法流转返回 409 → 取消回补库存 → 比价巡检，最后退出并清理进程与临时文件。实测输出以 `✅ 冒烟通过` 结束（下单示例：`6901234567892` 库存 120 → 118，取消后回到 120）。
 

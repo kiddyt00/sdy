@@ -59,7 +59,7 @@
   <tr><td>客服体系</td><td><span class="tag todo">未开始</span></td><td>原生客服消息 + 留言工单 + FAQ</td></tr>
   <tr><td>配送与自提</td><td><span class="tag todo">未开始</span></td><td>4 家配送聚合比价路由、自提核销</td></tr>
   <tr><td>财务对账与开票</td><td><span class="tag todo">未开始</span></td><td>零售/批发对账、批发电子发票预留</td></tr>
-  <tr><td>后台与数据</td><td><span class="tag doing">进行中</span></td><td>看板化后台、报表、SKU 主数据；第 11 轮完成商品档案（SKU 主数据），第 14 轮完成销售报表 / 日报（D19），第 15 轮完成批量改价 / 批量操作（D20），第 16 轮把项目部署到生产服务器并对外可访问（IP 直连入口，D21），后续见 <code>开发计划.html</code> 任务池 6–8 项</td></tr>
+  <tr><td>后台与数据</td><td><span class="tag doing">进行中</span></td><td>看板化后台、报表、SKU 主数据；第 11 轮完成商品档案（SKU 主数据），第 14 轮完成销售报表 / 日报（D19），第 15 轮完成批量改价 / 批量操作（D20），第 16 轮把项目部署到生产服务器并对外可访问（IP 直连入口，D21），第 17 轮补管理端干净地址 <code>/admin</code>（D22）与演示数据一键灌库脚本 <code>deploy/seed-demo.py</code>，后续见 <code>开发计划.html</code> 任务池 6–8 项</td></tr>
 </table>
 
 <h2>二、轮次记录</h2>
@@ -352,6 +352,18 @@
   </ul>
 </div>
 
+<div class="callout green">
+  <strong>第 17 轮（2026-10-12）管理端干净地址 + 演示数据一键灌库 + 一次 rsync 事故</strong>
+  <p>老板真的打开界面用了，随即问出三个问题：「我怎么访问商城后台」「目前是数据库的数据还是页面上写死的静态数据」「浏览器里为啥要显示 .html」。前两个是「信心问题」（能不能访问、看到的是不是真数据），第三个直接催出一个改动（决策 <b>D22</b>）。</p>
+  <ul>
+    <li><strong>数据来源核对（回答「库里的还是写死的」）</strong>：商品（<code>GET /api/products</code> → <code>product</code> 表）、订单（<code>GET /api/orders</code> → <code>orders</code> + <code>order_item</code>）、地址簿（<code>customer_address</code>）都进库，页面启动时 <code>SdyApi.sync()</code> 拉一次覆盖本地镜像。判定依据很直白——页面里写死的演示目录只有 6 款，线上是 14 款；订单号是服务端纳秒时间戳（<code>M1791…</code>）。同时向老板点明<b>只存浏览器 localStorage 的四样</b>：库存流水 <code>mall_stockLog</code>、顾客备注 <code>mall_customers</code>、配送员 <code>mall_couriers</code>、门店抬头 <code>mall_store</code>——换设备 / 清缓存会丢，属早期欠账，后续要搬进数据库。</li>
+    <li><strong>管理端干净地址 <code>/admin</code>（D22）</strong>：Go 侧新增 <code>/admin</code> 直接吐 <code>admin.html</code>，<code>/admin/</code> 301 到 <code>/admin</code>，<b>旧 <code>/admin.html</code> 继续可用</b>。带尾斜杠必须重定向的原因：<code>/admin</code> 不带斜杠时页面内相对路径（<code>assets/theme.css</code>、<code>mall-admin.js</code>）以<b>根目录</b>为基准，<code>/admin/</code> 会把基准变成 <code>/admin/</code> 导致静态资源全部 404。补 HTTP 单测 <code>TestAdminCleanURL</code>（Go 单测 29 → 30），公网 CDP 复验侧栏配色、九个导航、0 异常 0 个 4xx。</li>
+    <li><strong>演示数据一键灌库 <code>deploy/seed-demo.py</code></strong>：14 款商品 / 3 条地址簿 / 6 张订单（走真实接口下单 + 状态流转，顺带修了两个自测发现的 bug：下单返回 <b>201</b> 而非 200、红牛库存不足以支撑两张订单），幂等可反复跑。生产与本地灌完数字一致：<b>营业额 ¥199.00、商品金额 ¥193.00、配送费 ¥6.00、售出 35 件、客单价 ¥39.80</b>，与老板第 16 轮看到的完全相同。</li>
+    <li><strong>踩坑：rsync <code>--delete-excluded</code> 把生产库删了</strong>：同步时带了 <code>--delete-excluded</code>，服务器上<b>不在仓库里</b>的 <code>data/sdy.db</code>（全部演示数据）与 <code>.env</code> 一起被删 → <code>sdy-api-b</code> 反复重启并刷 <code>打开数据库失败: 建表失败: unable to open database file: out of memory (14)</code>，滚动更新中断；因为 <code>api-a</code> 还握着已被删除 inode 的旧库，公网看起来「站点还在」。抢修四步：<code>cp -n .env.example .env</code> → 填 <code>SDY_DOMAIN</code> → <code>mkdir -p data &amp;&amp; chown -R 10001:10001 data</code> → <code>bash deploy/rolling-update.sh</code>，再用 <code>seed-demo.py</code> 重建演示数据。教训已写进 <code>deploy/deploy.sh</code> 尾部与 <code>.agent_rules.md</code> 规则 18⑥：<b>本机 rsync 一律禁用 <code>--delete</code> / <code>--delete-excluded</code></b>。</li>
+    <li><strong>界面打磨：KPI 成对数值不许换行</strong>：老板反馈「<code>¥0.00 / ¥0.00</code> 这种格式的数据不能换行」——报表页「已完成 / 进行中」在窄卡片里被折成两行。修法：<code>.kpi .k-value</code> 一律 <code>white-space: nowrap</code>，并按字符数自动降一档字号（<code>kpiSize()</code>：≤11 字 26px、≤17 字 19px、更长 15px），既保证同一行又不撑破卡片；四种宽度（1440 / 1024 / 760 / 420）CDP 回读 <code>lines = 1</code>、<code>scrollWidth ≤ clientWidth</code>、横向溢出 0，超长探针 <code>¥123456.78 / ¥234567.89</code> 在最窄列也放得下。</li>
+  </ul>
+</div>
+
 <h2>三、已定决策汇总</h2>
 <table>
   <tr><th>决策</th><th>来源</th><th>对主方案的影响</th></tr>
@@ -371,6 +383,7 @@
   <tr><td><b>销售报表口径（D19）</b>：报表<b>只统计非取消订单</b>；营业额按<b>下单口径</b>（含未完成）并另拆「已完成 / 进行中」——家庭店要看「今天做了多少生意」，未交付的钱也要单独可见；商品金额取各单 <code>subtotal</code>（不含配送费），客单价 = 营业额 ÷ 单量；六档区间（今天/昨天/近 7 天/近 30 天/本月/全部）按<b>本机时区自然日</b>切分、含首尾、<b>零单日也占一格</b>（柱状图横轴连续）；环比对<b>等长的上一个区间</b>，「全部」不比、前一期为 0 显示「—」；实现是<b>纯前端纯函数</b> <code>Admin.buildReport</code> / <code>Admin.reportText</code>（只读投影），<b>不加后端接口</b>、离线也能出报表；日报可一键复制（clipboard → textarea 兜底）或按 72mm 纯前端打印</td><td>第 14 轮（用户要求「继续开发」，做任务池第 4 项「销售报表 / 日报」时定下）</td><td>报表不进后端、不建新表，订单表始终是唯一真源，数字可由明细重算；「下单口径 + 已交付/未交付拆分」避免了「营业额只算已完成」与「算上取消单」两种口径误解；零单日占格让「哪天没开张」一眼可见；同比/环比只跟等长区间比，不编造百分比</td></tr>
   <tr><td><b>批量操作边界（D20）</b>：批量面板只改<b>售价 / 分类 / 批发标记</b>三样，<b>库存一律不动</b>（延续 D16）；<b>批量上下架随任务池第 6 项</b>做（商品表需先加上下架字段）；批量改价<b>逐款过比价防线</b>，超线默认跳过并在预览里标红，可「按防线顶格」按 <code>round2(参考价 × 0.95)</code> 落价；批发与缺参考价商品跳过比价检查但仍改价并记流水；写库前<b>逐款重读当前商品</b>、只覆盖目标字段（不用页面旧快照），当前价已等于目标价则跳过不写流水；每款改动各记一条商品流水（原因写明规则，如「批量改价：+10%」）</td><td>第 15 轮（用户要求「继续开发」，做任务池第 5 项「批量改价 / 批量操作」时定下）</td><td>批量操作不能变成绕过比价防线的后门，也不能因为批量改写把别人刚改的字段/库存冲掉；「逐款重读 + 只覆盖目标字段」是后续所有批量功能的硬约束；批量上下架明确留给需要改表的第 6 项，避免半成品字段</td></tr>
   <tr><td><b>生产部署口径（D21）</b>：<b>先上「IP 直连」HTTP 入口</b>（<code>deploy/host-nginx-ip.conf</code> 的 <code>server_name</code> 只写本机 IP），域名 + 备案到位后再切 <code>deploy/host-nginx.conf</code> 的域名 + TLS——因为 Nginx 按 Host 精确匹配，未知 Host 仍落同机 beian 的 <code>default_server</code>，<b>不影响同机既有站点</b>；容器以 <code>uid 10001(app)</code> 运行，宿主 <code>data/</code> 必须 <code>chown 10001</code>（否则 SQLite 报 <code>unable to open database file: out of memory (14)</code>）、<code>web/</code> 必须对 others 可读（本地 600 权限会让容器 403 / 退化成目录列表），本机同步一律带 <code>--chmod=D755,F644</code>；<code>api-a</code>/<code>api-b</code> 共享 <code>/data/sdy.db</code>（SQLite WAL + <code>busy_timeout(5000)</code>），日常更新走 <code>deploy/rolling-update.sh</code> 先 B 后 A 不停服；生产库里的演示数据（14 商品 / 6 订单 / 3 地址）只用于「打开界面看效果」，正式开张前清库重建；<b>服务器 IP 与 root 口令只存本地 <code>.server_cred.md</code>，公开仓库用 <code>__SDY_HOST__</code> 占位</b></td><td>第 16 轮（用户要求「先在生产服务器上部署一下，这样我就能直观的看到界面，通过界面进行优化了」时定下）</td><td>老板的「直观看到界面」比域名完备更早需要，所以先用 IP + HTTP 抢时间、不阻塞看效果；用 Host 精确匹配把新站点与同机老站点彻底隔开，避免动别人线上服务；把两个权限坑写进脚本，是为了下次换机/重装不再重复踩；演示数据与真实经营数据分开对待，避免污染以后的对账</td></tr>
+  <tr><td><b>管理端干净地址（D22）</b>：管理端对外统一走 <code>/admin</code>（Go 侧 <code>/admin</code> 直接吐 <code>admin.html</code>，<code>/admin/</code> 301 到 <code>/admin</code>），<b>旧 <code>/admin.html</code> 继续可用</b>，不让已收藏 / 已分享的链接失效。之所以带尾斜杠要重定向：<code>/admin</code> 不带斜杠时页面内相对路径（<code>assets/theme.css</code>、<code>mall-admin.js</code>、<code>index.html</code>）仍以<b>根目录</b>为基准，而 <code>/admin/</code> 会把基准变成 <code>/admin/</code>，静态资源全部 404。不引入静态托管重写规则，Nginx 侧也不用改（<code>location /</code> 整站反代给 Go）</td><td>第 17 轮（用户问「浏览器里为啥要显示 .html」时定下）</td><td>老板要的是能直接念出来的地址（<code>/admin</code>），而不是带后缀的文件名；规范化交给服务端做，避免在 Nginx 上堆重写规则；同时保留旧地址，不让任何已分享的链接失效</td></tr>
   <tr><td colspan="3" style="color:#6b7280;">D1–D5 仍待确认（入库场景范围 / 无条码商品策略 / 批次效期 / 入库单完整度 / 多单位换算）</td></tr>
 </table>
 
