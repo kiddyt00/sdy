@@ -2,7 +2,7 @@
 <view class="page cartpage">
   <view class="chead">
     <view class="ctitle">{{buyNow ? '立即购买' : '购物车'}}<text wx:if="{{!buyNow && cartCount > 0}}" class="cnum">（{{cartCount}} 件）</text></view>
-    <view class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
+    <view class="cdot {{online ? 'ok' : 'off'}}"></view>
   </view>
 
   <van-notice-bar

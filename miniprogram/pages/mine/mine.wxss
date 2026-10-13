@@ -72,33 +72,6 @@
 }
 .mcard.login { padding: 28rpx; }
 .ltitle { font-size: 28rpx; font-weight: 700; margin-bottom: 20rpx; }
-.lrow { display: flex; align-items: center; margin-bottom: 20rpx; }
-.lavbtn {
-  width: 108rpx;
-  height: 108rpx;
-  min-width: 108rpx;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: 50%;
-  overflow: hidden;
-  flex: none;
-  line-height: 1;
-  font-size: 0;
-  box-sizing: border-box;
-  background: #f5f6f8;
-}
-.lavbtn::after { border: none; }
-.lav { width: 108rpx; height: 108rpx; border-radius: 50%; display: block; }
-.lav.ph {
-  line-height: 108rpx;
-  text-align: center;
-  font-size: 44rpx;
-  color: #9ca3af;
-}
-.lcol { flex: 1; padding-left: 22rpx; min-width: 0; }
-.lname { font-size: 27rpx; color: #111827; }
-.lsub { font-size: 22rpx; color: #9ca3af; margin-top: 8rpx; }
 .linput {
   background: #f5f6f8;
   border-radius: 14rpx;

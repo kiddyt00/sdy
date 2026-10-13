@@ -6,7 +6,6 @@ const rules = require('../../utils/rules.js')
 Page({
   data: {
     online: false,
-    statusLabel: '⏳ 探测中…',
     orders: [],
     loading: true,
     tabs: rules.STATUS_TABS,
@@ -46,7 +45,7 @@ Page({
     return getApp()
       .refreshStatus()
       .then((st) => {
-        this.setData({ online: st.online, statusLabel: st.label })
+        this.setData({ online: st.online })
         return api.listOrders(this.data.status)
       })
       .then((list) => {

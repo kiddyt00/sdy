@@ -4,10 +4,10 @@
   <view class="shopbar">
     <view class="sb-l">
       <view class="sb-name">{{shop.name}}</view>
-      <view class="sb-sub">{{online ? '送货上门 · 到店自提' : '本地演示模式（下单不会入库）'}}</view>
+      <view class="sb-sub">{{online ? '送货上门 · 到店自提' : '本地演示模式'}}</view>
     </view>
     <!-- 连接状态只留一个小绿点（离线为灰点），不占地方也不露开发信息 -->
-    <view class="sdot {{online ? 'ok' : 'off'}}"></view>
+    <view class="cdot sdot {{online ? 'ok' : 'off'}}"></view>
   </view>
 
   <!-- 搜索 + 扫码（扫码只读：只查货，不加购） -->

@@ -211,6 +211,22 @@ async function main() {
   const indexWxml = fs.readFileSync(path.join(ROOT, 'pages/index/index.wxml'), 'utf8')
   ok(indexWxml.indexOf('sdot') > 0 && indexWxml.indexOf('statusLabel') < 0, '首页店铺条只有状态圆点，不显示状态文案')
   ok(indexWxml.indexOf('后端已连接') < 0 && indexWxml.indexOf('class="badge') < 0, '首页不再出现「后端已连接」胶囊')
+  // 全页面扫一遍：顾客端不许出现连接状态这类开发文案（后端地址只留在「我的 → 开发者选项」）
+  const appJsonAll = JSON.parse(fs.readFileSync(path.join(ROOT, 'app.json'), 'utf8'))
+  const devWords = ['后端已连接', '后端连接', '探测中', 'statusLabel']
+  const offenders = []
+  appJsonAll.pages.forEach((p) => {
+    const wxml = fs.readFileSync(path.join(ROOT, p + '.wxml'), 'utf8')
+    devWords.forEach((w) => {
+      if (wxml.indexOf(w) >= 0) offenders.push(p + ' → ' + w)
+    })
+  })
+  ok(offenders.length === 0, '10 个页面都不出现开发信息' + (offenders.length ? '：' + offenders.join(' / ') : '（干净）'))
+  const dotPages = appJsonAll.pages.filter((p) => {
+    const wxml = fs.readFileSync(path.join(ROOT, p + '.wxml'), 'utf8')
+    return wxml.indexOf('cdot') >= 0 || wxml.indexOf('mdot') >= 0
+  })
+  ok(dotPages.length === 4, '首页 / 购物车 / 订单 / 我的 都只留小圆点：' + dotPages.join(' , '))
 
   /* ---------- ③ 购物车 / 下单 ---------- */
   section('③ 购物车与下单')
@@ -299,6 +315,10 @@ async function main() {
   ok(mineWxml.indexOf('后端连接') < 0 && mineWxml.indexOf('mdot') > 0, '不再显示「后端连接」一行，只留状态圆点')
   ok(mineWxml.indexOf('type="number"') < 0, '登录卡里不再有手机号输入框')
   ok(mineWxml.indexOf('open-type="chooseAvatar"') > 0 && mineWxml.indexOf('type="nickname"') > 0, '用微信官方「头像昵称填写能力」')
+  // 头像只留顶部一个（登录卡里再放一个就会出现两个头像）
+  const avatarBtns = mineWxml.split('open-type="chooseAvatar"').length - 1
+  ok(avatarBtns === 1, '头像只显示一处，不重复：chooseAvatar 出现 ' + avatarBtns + ' 次')
+  ok(mineWxss.indexOf('.lavbtn') < 0 && mineWxss.indexOf('.lav ') < 0, '登录卡里的第二个头像样式已清掉')
   ok(mineWxss.indexOf('box-sizing: border-box') > 0 && mineWxss.indexOf('.mavatar-btn::after') > 0, '头像按钮重置了 button 默认样式（真圆）')
 
   /* ---------- ⑥ 我的：微信登录（不绑手机号） ---------- */

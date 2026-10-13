@@ -7,7 +7,6 @@ const rules = require('../../utils/rules.js')
 Page({
   data: {
     online: false,
-    statusLabel: '⏳ 探测中…',
     lines: [],
     buyNow: false,
     buyNowLines: [],
@@ -50,7 +49,7 @@ Page({
     return getApp()
       .refreshStatus()
       .then((st) => {
-        this.setData({ online: st.online, statusLabel: st.label })
+        this.setData({ online: st.online })
         return this.reprice()
       })
       .then(() => this.render())

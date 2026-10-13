@@ -7,17 +7,11 @@
 }
 .sb-name { font-size: 36rpx; font-weight: 700; letter-spacing: 1rpx; }
 .sb-sub { font-size: 22rpx; color: #6b7280; margin-top: 6rpx; }
-/* 连接状态：一个小圆点（绿=在线，灰=本地演示模式），不再显示「后端已连接」这种开发信息 */
+/* 连接状态：一个小圆点（样式在 app.wxss 的 .cdot，这里只管位置），不再显示「后端已连接」这种开发信息 */
 .sdot {
-  width: 16rpx;
-  height: 16rpx;
-  border-radius: 50%;
-  flex: none;
   margin: 6rpx 6rpx 0 16rpx;
   align-self: flex-start;
 }
-.sdot.ok { background: #16a34a; box-shadow: 0 0 0 6rpx rgba(22, 163, 74, .14); }
-.sdot.off { background: #d1d5db; }
 
 .searchbar {
   display: flex;

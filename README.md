@@ -88,7 +88,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | 扫码台启动冒烟 | `node barcode-demo/test-page-boot.js` | 28 | 否 |
 | 扫码台联调 | `node barcode-demo/test-integration.js` | 34 | 是 |
 | 对账引擎 | `node sync-demo/test-sync.js` | 62 | 否 |
-| 小程序 | `node miniprogram/test-api.js` / `test-pages.js` / `test-integration.js` | 104 / 140 / 50 | 最后一个需要 |
+| 小程序 | `node miniprogram/test-api.js` / `test-pages.js` / `test-integration.js` | 104 / 144 / 50 | 最后一个需要 |
 | 后端 | `cd server && go test ./...`（+ `gofmt`/`go vet`/`./smoke.sh`） | 46（store 25 / cmd-server 10 / barcode 6 / pricing 5） | 自起服务 |
 
 约定：

@@ -6,7 +6,7 @@
     </button>
     <view class="mwho">
       <view class="mname">{{loggedIn ? (sessionName || '微信顾客') : '还没登录'}}</view>
-      <view class="msub">{{loggedIn ? sessionLabel : '登录后能看到自己的订单和批发价'}}</view>
+      <view class="msub">{{loggedIn ? sessionLabel : '点头像可选微信头像'}}</view>
       <view class="mtier">{{tierText}}</view>
     </view>
     <view class="mdot {{online ? 'ok' : 'off'}}"></view>
@@ -14,36 +14,16 @@
 
   <view class="mcard login" wx:if="{{!loggedIn}}">
     <view class="ltitle">微信登录</view>
-    <view class="lrow">
-      <button class="lavbtn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
-        <image wx:if="{{avatar}}" class="lav" src="{{avatar}}" mode="aspectFill" />
-        <view wx:else class="lav ph">＋</view>
-      </button>
-      <view class="lcol">
-        <view class="lname">点头像选微信头像</view>
-        <view class="lsub">头像昵称选填，登录只要点下面按钮</view>
-      </view>
-    </view>
     <input class="linput" type="nickname" value="{{nickname}}" maxlength="20" placeholder="微信昵称（选填）" placeholder-class="lph" bindinput="onNickname" />
     <van-button round block type="primary" loading="{{busy}}" bind:click="doLogin">微信一键登录</van-button>
-    <view class="lhint">登录不用手机号：手机号只在下单填收货信息时用；等级与批发价由老板在后台设定。</view>
+    <view class="lhint">点头像可换微信头像；登录不用手机号——手机号只在下单填收货信息时用，等级与批发价由老板在后台设定。</view>
   </view>
 
   <view class="mcard" wx:if="{{loggedIn}}">
     <view class="ltitle">微信头像昵称</view>
-    <view class="lrow">
-      <button class="lavbtn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
-        <image wx:if="{{avatar}}" class="lav" src="{{avatar}}" mode="aspectFill" />
-        <view wx:else class="lav ph">＋</view>
-      </button>
-      <view class="lcol">
-        <view class="lname">点左边圆圈换头像</view>
-        <view class="lsub">昵称改完点保存，下次进来自动带出来</view>
-      </view>
-    </view>
     <input class="linput" type="nickname" value="{{nickname}}" maxlength="20" placeholder="微信昵称" placeholder-class="lph" bindinput="onNickname" />
     <van-button size="small" round type="primary" loading="{{saving}}" bind:click="saveProfile">保存头像昵称</van-button>
-    <view class="lhint">手机号不在登录里绑：下单时填的收货手机号，就是老板给你算价、发货的凭据。</view>
+    <view class="lhint">点头像可换微信头像；手机号不在登录里绑——下单时填的收货手机号，就是老板给你算价、发货的凭据。</view>
   </view>
 
   <view class="mgrid">

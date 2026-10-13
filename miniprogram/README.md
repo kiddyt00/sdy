@@ -6,7 +6,7 @@
 >
 > **第 24 轮（2026-10-13）：界面整体重做（D29 品牌更名 / D30 引入 `@vant/weapp`，开发版 0.3.0）。** 参考开源商城 `EastWorld/wechat-app-mall` **只吸页面骨架与交互、不吸业务**：引入 **`@vant/weapp 1.11.7`**（本项目唯一获批的 npm 依赖，**只在小程序端**），页面 **4 → 10 页**（新增 商品详情 / 分类 / 搜索 / 订单详情 / 地址簿 list+edit，重做 首页 / 购物车 / 订单 / 我的），打通**浏览→详情→下单**主链路（详情「加入购物车 / 立即购买」、购物车多选 + 左滑删除 + 步进 + 地址簿回填、订单按状态分页 + 确认收货 / 取消 / 再来一单）；门店更名 **啥都有快送**；Web 端同步对齐（详情「立即购买」临时单、订单状态文案与确认收货）。
 >
-> **第 25 轮（2026-10-13）：登录与信息展示收敛（D31，开发版 0.4.0）。** 按用户五条反馈改：① 登录改用微信官方**「头像昵称填写能力」**（`<button open-type="chooseAvatar">` + `<input type="nickname">`；`wx.getUserProfile` 自 2022-10-25 起只给灰头像与「微信用户」，**不能用**），头像用 `wx.getFileSystemManager().saveFile` 落本机永久文件（临时路径重启就失效）并 `POST /api/wx/profile` 回传云地址（`wxfile://` 传上去没用，不回传）；② **登录不再要手机号**——只走 `wx.login` → `openid`，手机号推到**下单时**填，填过一次由 `api.rememberPhone()` 记住（它仍是价格身份与地址簿钥匙，见 D24/D18），地址簿改成「显式手机号优先、否则用记住的」；③ 登录后**不再显示「微信一键登录」**，改成「微信头像昵称」卡（换头像 / 改昵称 / 保存）；④ **修掉头像椭圆**——根因是把原生 `button` 当圆形容器，它的默认 `padding` / 行高 / `::after` 边框把 128rpx 的盒子撑成椭圆，现重置 `padding:0;line-height:1;font-size:0;box-sizing:border-box` + `::after{border:none}`；⑤ **顾客端不露开发信息**——「我的」页删掉「后端连接」一行、首页「后端已连接」徽标换成 9px 小圆点（绿=在线 / 灰=离线）。服务端 `wx_user` 加 `avatar` 列（`ensureColumn` 幂等迁移）、`/api/wx/login` 的 `phone` 变可选、新增 `POST /api/wx/profile`。小程序三套测试 **104 / 140 / 50** 全绿。
+> **第 25 轮（2026-10-13）：登录与信息展示收敛（D31，开发版 0.4.0）。** 按用户五条反馈改：① 登录改用微信官方**「头像昵称填写能力」**（`<button open-type="chooseAvatar">` + `<input type="nickname">`；`wx.getUserProfile` 自 2022-10-25 起只给灰头像与「微信用户」，**不能用**），头像用 `wx.getFileSystemManager().saveFile` 落本机永久文件（临时路径重启就失效）并 `POST /api/wx/profile` 回传云地址（`wxfile://` 传上去没用，不回传）；② **登录不再要手机号**——只走 `wx.login` → `openid`，手机号推到**下单时**填，填过一次由 `api.rememberPhone()` 记住（它仍是价格身份与地址簿钥匙，见 D24/D18），地址簿改成「显式手机号优先、否则用记住的」；③ 登录后**不再显示「微信一键登录」**，改成「微信头像昵称」卡（改昵称 / 保存）；**头像全页只留顶部一处**（`chooseAvatar` 只出现 1 次，登录卡里原来那个第二头像已删——之前出现了两个头像）；④ **修掉头像椭圆**——根因是把原生 `button` 当圆形容器，它的默认 `padding` / 行高 / `::after` 边框把 128rpx 的盒子撑成椭圆，现重置 `padding:0;line-height:1;font-size:0;box-sizing:border-box` + `::after{border:none}`；⑤ **顾客端不露开发信息**——「我的」页删掉「后端连接」一行，**首页 / 购物车 / 订单 / 我的四处**一律只画小圆点（`.cdot` 在 `app.wxss` 一处定义，`.ok` 绿 / `.off` 灰，首页 `.sdot` 与我的 `.mdot` 只管位置配色），旧的 `.badge` 胶囊（含「🟢 后端已连接」）**已从 `app.wxss` 删除**，页面 data 里的 `statusLabel` 一并删掉；测试加了「遍历 10 个页面扫开发字样」的守卫。服务端 `wx_user` 加 `avatar` 列（`ensureColumn` 幂等迁移）、`/api/wx/login` 的 `phone` 变可选、新增 `POST /api/wx/profile`。小程序三套测试 **104 / 144 / 50** 全绿。
 >
 > 下一步：把 **0.4.0 设为体验版**、加家人为体验成员做真机验证（同时在小程序后台补 `<image>` 需要的「**downloadFile 合法域名**」——`chooseAvatar` 之后服务端头像是网络图，这一步不做真机上会不显示）；微信支付（`/api/wx/pay`、`/api/wx/notify`）与订阅消息要等**微信认证（¥300，2026-10-13 已付款审核中）+ 关联商户号**。载体换了，业务逻辑不变：商品 / 购物车 / 订单 / 运费 / 库存全部复用 `server/` 的后端接口。
 
@@ -51,7 +51,7 @@ NODE_PATH=/tmp/mpci/node_modules node deploy/mp-ci.js upload   # 只上传开发
 
 ```bash
 node miniprogram/test-api.js          # 110 项 · 通道/配置/扫码/等级与有效价/微信登录与头像昵称（假 wx）· 不需要后端
-node miniprogram/test-pages.js        # 140 项 · 十页逻辑冒烟（假 Page/wx，含不绑手机号的微信登录、头像本地落缓存、地址簿）· 不需要后端
+node miniprogram/test-pages.js        # 144 项 · 十页逻辑冒烟（假 Page/wx，含不绑手机号的微信登录、头像本地落缓存、地址簿）· 不需要后端
 node miniprogram/test-integration.js  # 50 项 · 真后端联调（需先起 server，或用 SDY_API_BASE 指定）
 ```
 

@@ -17,7 +17,6 @@ function avatarForServer(path) {
 Page({
   data: {
     online: false,
-    statusLabel: '⏳ 探测中…',
     statusDetail: '',
     apiBase: '',
     cartCount: 0,
@@ -185,7 +184,6 @@ Page({
       .then((st) => {
         this.setData({
           online: st.online,
-          statusLabel: st.label,
           statusDetail: st.detail,
           apiBase: st.base,
           cartCount: store.cartCount()

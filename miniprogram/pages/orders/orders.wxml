@@ -2,7 +2,7 @@
 <view class="opage">
   <view class="obar">
     <view class="otitle">我的订单</view>
-    <view class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
+    <view class="cdot {{online ? 'ok' : 'off'}}"></view>
   </view>
 
   <van-tabs active="{{activeTab}}" bind:change="onTabChange" color="#16a34a" line-width="40rpx" sticky>
