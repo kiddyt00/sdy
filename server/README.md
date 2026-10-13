@@ -87,6 +87,8 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | GET | `/api/products?keyword=&category=&onSale=1&phone=` | 商品列表，返回 `{items, total, tier}`；`keyword` 匹配名称或条码，`category` 精确等值，`onSale=1` 只返回在售商品（顾客端用），按条码排序；每条**都带 `onSale` 字段**（不带 `omitempty`，缺字段视为上架）；**带 `phone=` 时按该手机号的顾客等级算好 `price` 下发**（D24：非零售等级且批发价 > 0 → 批发价，`tier` 在信封里，缺字段视为零售） |
 | POST | `/api/products` | 建档/编辑商品（**自动写入条码字典层**）：服务端校验条码/名称必填、价格非负（**批发价非负且不得高于零售价**）、库存非负，并执行比价防线（超价 `400`，批发与无参考价豁免）；`stock` 字段**不传 = 不改库存**（编辑表单不改库存），传了才写；`wholesalePrice` 不传 = 清零（覆盖式 upsert，调用方必须带全）；成功返回保存后的商品，`syncStatus` 置 `pending` |
 | POST | `/api/products/onsale` | 批量上下架（D23）：`{codes:[...], onSale:true\|false}`，只改 `product.on_sale` 一个字段，返回 `{ok, changed}`；**编辑档案走 `/api/products`、上下架走这里，两者互不影响**；下架只在顾客端生效（档案/库存/历史订单/条码字典都不动） |
+| GET | `/api/products/{code}` | **商品详情（只读，第 24 轮新增）**：返回单个商品；带 `?phone=` 时按该手机号等级算好有效价（`p.Tier` + `p.Price`，规则同列表）；条码为空 → `400 缺少条码`，查不到 → `404 资源不存在: 商品 <code>`，非 GET 方法 → `405`（`/api/products/stock`、`/api/products/onsale` 是更精确的模式，仍优先匹配） |
+| GET | `/api/products/categories?onSale=1` | **分类计数（只读，第 24 轮新增）**：`{items:[{name, count}], total}`；空 / 空白分类统一归 **`未分类`**（与 `web/mall-admin.js` / `web/sdy-api.js` 同口径）；排序按件数降序、同名升序；`onSale=1` 只统计在售；无数据返回**非 nil 空数组**；非 GET → `405` |
 | DELETE | `/api/products/{code}` | 删除商品档案（任务池①）：库存必须为 0（否则 `409` 提示先盘点为 0）、没有进行中订单引用（否则 `409`）；删档**保留条码字典层记录**（D6 永久沉淀）；成功返回 `{ok:true, code}` |
 | POST | `/api/products/stock` | 手动改库存 `{code, stock}`（D8：库存一律手动调整，扫码只读）；同时把 `syncStatus` 置为 `pending` |
 | GET | `/api/addresses?phone=` | 收货地址簿列表（D18）：默认地址排最前，其余按入库顺序；`phone` 为空返回 `400` |
@@ -121,7 +123,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy/server
-go test ./... -count=1        # 46 个单测
+go test ./... -count=1        # 48 个单测
 ./smoke.sh                    # 起真服务跑 HTTP 全流程
 ```
 
@@ -131,10 +133,10 @@ go test ./... -count=1        # 46 个单测
 | --- | --- | --- |
 | `server/internal/barcode` | 6 | `TestResolveProductFirst`、`TestResolveLibSecond`、`TestResolveCloudBackfill`、`TestResolveCloudNotFoundTTL`、`TestResolveCircuitBreaker`、`TestResolveEdgeCases` |
 | `server/internal/pricing` | 5 | `TestDeliveryFee`、`TestDeliveryFeeCustomConfig`、`TestCheckRetailPrice`、`TestPricingCheck`、`TestEffectivePrice` |
-| `server/internal/store` | 25 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook`、`TestProductOnSaleSemantics`、`TestOnSaleColumnMigration`、`TestCustomerTierWholesalePrice`、`TestTierColumnMigration`、**`TestStockChangeAudit`、`TestStockLogCap`、`TestCouriersPersist`、`TestStoreSettings`、`TestCustomerNote`（D25）、**`TestWxUserBind`（D28：昵称超 20 字截断不报错、坏手机号不建档、`EnsureCustomer` 不覆盖已维护姓名）** |
-| `server/cmd/server` | 10 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestProductOnSaleHTTPFlow`、`TestAddressHTTPFlow`、`TestAdminCleanURL`、`TestHealthzAndOptions`、`TestCustomerTierHTTPFlow`、**`TestStockChangeHTTPFlow`、`TestCourierSettingsNoteHTTPFlow`（D25）、`TestWxLoginHTTPFlow`（D28：未配置 → 503、缺 code → 400、微信侧错误原样透出、绑定后等级仍由档案决定）** |
+| `server/internal/store` | 26 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook`、`TestProductOnSaleSemantics`、`TestOnSaleColumnMigration`、`TestCustomerTierWholesalePrice`、`TestTierColumnMigration`、**`TestStockChangeAudit`、`TestStockLogCap`、`TestCouriersPersist`、`TestStoreSettings`、`TestCustomerNote`（D25）、**`TestWxUserBind`（D28：昵称超 20 字截断不报错、坏手机号不建档、`EnsureCustomer` 不覆盖已维护姓名）**、**`TestListCategories`（第 24 轮：空/空白分类归「未分类」、件数降序同名升序、`onSale=1` 过滤、无数据返回非 nil 空数组）** |
+| `server/cmd/server` | 11 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestProductOnSaleHTTPFlow`、`TestAddressHTTPFlow`、`TestAdminCleanURL`、`TestHealthzAndOptions`、`TestCustomerTierHTTPFlow`、**`TestStockChangeHTTPFlow`、`TestCourierSettingsNoteHTTPFlow`（D25）、`TestWxLoginHTTPFlow`（D28：未配置 → 503、缺 code → 400、微信侧错误原样透出、绑定后等级仍由档案决定）**、**`TestProductDetailAndCategoriesHTTPFlow`（第 24 轮：详情有效价 / 未知条码 404 / 非 GET 405 / 分类 `onSale=1` 过滤）** |
 
-合计 **46 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
+合计 **48 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
 
 `./smoke.sh` 会 `go build` 一个临时二进制，用 `mktemp` 建临时库（**不碰 `server/data/sdy.db`**），起在 `127.0.0.1:8099`（`SMOKE_PORT` 可改，**默认不占用 8093**），轮询 `/healthz` 就绪后依次验证 8 项：健康检查 → 商品数 → 条码解析 → 下单 → 下单后库存 → 非法流转返回 409 → 取消回补库存 → 比价巡检，最后退出并清理进程与临时文件。实测输出以 `✅ 冒烟通过` 结束（下单示例：`6901234567892` 库存 120 → 118，取消后回到 120）。
 

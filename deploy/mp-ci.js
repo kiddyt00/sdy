@@ -37,8 +37,9 @@ try {
 }
 
 const mode = process.argv[2] || 'all' // all | preview | upload
-const version = process.env.MP_VERSION || '0.1.0'
-const desc = process.env.MP_DESC || '第22轮：生产 HTTPS 域名 + 扫码找货（开发版）'
+// 版本号真源 = miniprogram/package.json（避免脚本和包版本号各写一份）
+const version = process.env.MP_VERSION || require(path.join(REPO, 'miniprogram/package.json')).version
+const desc = process.env.MP_DESC || '第24轮：Vant 视觉重做 + 浏览→详情→下单主链路（开发版）'
 
 const project = new ci.Project({
   appid: APPID,

@@ -73,17 +73,17 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy
-node web/test-mall.js          # 75 项
-node web/test-pricing.js       # 28 项
-node web/test-admin.js         # 180 项
-node web/test-sdy-api.js       # 56 项
-node web/test-page-boot.js     # 152 项
-node web/test-integration.js   # 17 项（需后端在线）
+node web/test-mall.js          # 109 项
+node web/test-pricing.js       # 42 项
+node web/test-admin.js         # 206 项
+node web/test-sdy-api.js       # 117 项
+node web/test-page-boot.js     # 211 项
+node web/test-integration.js   # 50 项（需后端在线）
 ```
 
 | 测试 | 实测结果 | 覆盖什么 | 需要后端 |
 | --- | --- | --- | --- |
-| `web/test-mall.js` | 通过 88 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机、**同一毫秒连下两单单号不重复**、**收货地址簿（默认地址语义、按手机号隔离、删默认顶替）**、**上下架过滤（`isOnSale` / `listOnSale` / 加购与下单拦截、缺字段视为上架）** | 否 |
+| `web/test-mall.js` | 通过 109 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机、**同一毫秒连下两单单号不重复**、**收货地址簿（默认地址语义、按手机号隔离、删默认顶替）**、**上下架过滤（`isOnSale` / `listOnSale` / 加购与下单拦截、缺字段视为上架）**、**立即购买临时单（`setBuyNow`/`peekBuyNow`/`clearBuyNow`：只结算这一件、不污染真购物车、下单后自动退出、手动动购物车即退出）**、**订单状态文案 `statusHint()` 与小程序 `miniprogram/utils/rules.js` 逐字一致** | 否 |
 | `web/test-pricing.js` | 通过 42 项 / 失败 0 项 | 配送费规则、价格防线、批发与无参考价豁免、**顾客等级与有效价（`effectivePrice` / `normalizeTier` / `validTier` / `isWholesaleTier` / `tierLabel`，与 Go 侧 `TestEffectivePrice` 同一组用例，D24）** | 否 |
 | `web/test-admin.js` | 通过 206 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额）、**商品档案归一化/校验/价格防线/三档删除约束**、**小票模型与门店抬头**、**销售报表六档区间/聚合/环比/日报文本**、**批量改价计划（各状态/顶格/汇总）、批量应用（保库存·写流水·未变跳过·单条失败不中断）、批量改字段校验**、**商品图去空格与空串回落、编辑不改上下架/库存、批量改分类不动图片与上下架（D23）**、**落库审计（D25：`kind`/`type` 双写、`recordStockEntry` 按 `id` 幂等且把库存对齐 `after`、`saveCourier` 四条约束、只登记备注的顾客也进档案、`window.Admin` 必须显式暴露）** | 否 |
 | `web/test-sdy-api.js` | 通过 117 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品、**地址簿在线/离线双路径（写成功自动重拉、失败不污染镜像）**、**`setOnSale` 在线/离线双路径**、**我的价格与顾客等级（离线 `Mall.priceOf` 按等级算价、在线 `sync()` 带 `?phone=` 且服务端下发价优先、`setMyPhone` / `listCustomers` / `setCustomerTier`，D24）**、**库存审计 / 配送员 / 门店抬头 / 顾客备注（D25：六类接口的在线请求体与回执、离线一律 `null` 不发请求、没注入 `cfg.admin` 时退回 `window.Admin` 做本地镜像）** | 否（注入假 fetch） |
@@ -117,6 +117,8 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 - **订单状态机**：`pending → delivering | ready → done`，且 `pending → cancelled`。`done`/`cancelled` 是终态，不允许再流转；非法流转服务端返回 409，前端照播后端文案。
 - **下单与库存**：下单在一个事务里「校验 → 扣库存 → 写订单」，库存不足整单失败（不部分扣减）；取消订单**逐行回补库存**。本地模式同样是「先全量校验再扣减」。
 - **D8 扫码只读**：顾客端「扫码找货」只做识别（先查本地商品档案，未建档再问后端解析链），**绝不改库存、不自动填价格**。
+- **与小程序的文案 / 行为同源（第 24 轮，D30⑩）**：订单状态提示语只有一份——`web/mall.js` 的 `statusHint(o)` 与 `miniprogram/utils/rules.js` 的 `statusHint(o)` **逐字一致**（`web/test-mall.js` 有逐字比对用例），**别在这里另写一套**；订单卡上的「确认收货」与小程序订单详情走同一个状态机动作（`POST /api/orders/{id}/advance` 且 `to=done`）。
+- **「立即购买」是临时单，不污染购物车（第 24 轮）**：详情弹窗的「立即购买」走 `Mall.setBuyNow([{code, qty}])` → 结算弹窗只算这一件（顶部提示「立即购买：只结算这一件，购物车里的东西不受影响。」）；`getCart()` 在该模式下返回临时单，手动动购物车（加购 / 改数量 / 删除）**立即退出该模式**，`clearCart()` 在立即购买模式下**只清临时单、不动真购物车**。
 
 **商品档案（建档 / 编辑 / 删除）**
 
