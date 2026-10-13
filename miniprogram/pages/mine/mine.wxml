@@ -15,6 +15,30 @@
   </view>
 
   <view class="section">
+    <view class="section-title">我的账号</view>
+    <view class="row">
+      <view>{{sessionLabel}}</view>
+      <view class="badge {{loggedIn ? 'ok' : 'off'}}">{{loggedIn ? '已登录' : '未登录'}}</view>
+    </view>
+    <view wx:if="{{bound}}" class="muted" style="margin-top:12rpx">
+      手机号 {{sessionPhone}} · 看的是{{tierText}}（价格由店里设定）
+    </view>
+    <block wx:if="{{!bound}}">
+      <view class="field" style="margin-top:16rpx">
+        <input class="input" type="number" maxlength="11" placeholder="手机号（11 位，老板靠它建档）" value="{{phone}}" bindinput="onPhone" />
+      </view>
+      <view class="field">
+        <input class="input" maxlength="20" placeholder="称呼（可选，如 王阿姨）" value="{{nickname}}" bindinput="onNickname" />
+      </view>
+    </block>
+    <view wx:if="{{!bound}}" class="btn btn-primary btn-block" bindtap="doLogin">{{busy ? '登录中…' : (loggedIn ? '绑定手机号' : '微信登录')}}</view>
+    <view wx:else class="btn btn-ghost btn-block" bindtap="doLogout">退出登录</view>
+    <view class="muted" style="margin-top:12rpx">
+      登录只是让店里知道「这台微信是谁」，省得每次重输手机号；绑定不会自动变成批发价——批发价与白名单由老板在管理端设定。
+    </view>
+  </view>
+
+  <view class="section">
     <view class="section-title">后端地址（开发用）</view>
     <view class="field">
       <input class="input" placeholder="http://127.0.0.1:8093" value="{{apiBase}}" bindinput="onBase" />

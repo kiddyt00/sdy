@@ -30,6 +30,11 @@ function mkWx(routes) {
     showToast: function (o) { this.toasts.push(o && o.title) },
     switchTab: function (o) { this.tabs.push(o && o.url) },
     stopPullDownRefresh: () => {},
+    login: function (o) {
+      this._calls.push({ method: 'LOGIN', path: 'wx.login', data: null })
+      if (this._loginFail) { if (o && o.fail) o.fail({ errMsg: this._loginFail }); return }
+      if (o && o.success) o.success({ code: this._loginCode || 'CODE_PAGE' })
+    },
     showModal: (o) => { if (o && o.success) o.success({ confirm: true }) },
     request(opts) {
       const method = (opts.method || 'GET').toUpperCase()
@@ -228,6 +233,40 @@ async function main() {
   ok(global.wx.toasts.indexOf('保存了，但还没连上') >= 0, '保存后仍连不上会如实提示')
   mine.goOrders()
   ok(global.wx.tabs.indexOf('/pages/orders/orders') >= 0, '我的 → 订单 tab')
+
+  /* ---------- ⑥ 我的：微信登录 ---------- */
+  section('⑥ 我的（微信登录 / 绑定手机号）')
+  const LOGIN_ROUTE = {
+    method: 'POST', path: '/api/wx/login',
+    body: { ok: true, openid: 'o_page_1', bound: true, phone: '13800001111', name: '王阿姨', tier: 'wholesale' }
+  }
+  global.wx = mkWx(ONLINE.concat([LOGIN_ROUTE]))
+  const acc = loadPage('pages/mine/mine.js')
+  await acc.onShow()
+  ok(acc.data.loggedIn === false && acc.data.sessionLabel.indexOf('未登录') >= 0, '未登录：如实显示未登录')
+  // 没填手机号不让登
+  await acc.doLogin()
+  ok(global.wx.toasts.indexOf('请先填手机号（老板建档、给价都靠它）') >= 0, '不填手机号不给登：' + JSON.stringify(global.wx.toasts))
+  // 手机号格式不对
+  acc.onPhone({ detail: { value: '138123' } })
+  await acc.doLogin()
+  ok(global.wx.toasts.indexOf('手机号要 11 位、1 开头') >= 0, '格式不对就拦下来')
+  ok(acc.data.busy === false, '被拦下时 busy 不是卡住的')
+  // 正常登录
+  acc.onPhone({ detail: { value: '13800001111' } })
+  acc.onNickname({ detail: { value: '阿明' } })
+  const logged = await acc.doLogin()
+  ok(!!logged && logged.openid === 'o_page_1', '登录拿到 openid')
+  ok(acc.data.loggedIn === true && acc.data.bound === true, '登录后页面切到已登录态')
+  ok(acc.data.tierText === '批发', '显示等级文案（不显示枚举值）')
+  ok(acc.data.sessionLabel.indexOf('王阿姨') >= 0 && acc.data.sessionPhone === '13800001111', '显示姓名与手机号：' + acc.data.sessionLabel)
+  ok(acc.data.phone === '' && acc.data.busy === false, '登录成功后清空输入并复位 busy')
+  ok(global.wx.toasts.filter((t) => String(t).indexOf('登录成功') === 0).length === 1, '有且只有一次登录成功提示')
+  // 退出登录
+  await acc.doLogout()
+  ok(acc.data.loggedIn === false && acc.data.bound === false, '退出后回到未登录')
+  ok(global.wx.toasts.indexOf('已退出登录') >= 0, '退出有明确提示')
+  ok(acc.data.bound === false, '退出后回到可换号再登的状态')
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

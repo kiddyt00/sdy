@@ -67,6 +67,14 @@ function setQty(code, qty) {
 function removeFromCart(code) {
   return saveCart(getCart().filter((it) => it.code !== code))
 }
+// 改购物车里的单价：登录 / 换等级后按服务端有效价刷新（价格真源在服务端，D24）
+function setPrice(code, price) {
+  const list = getCart()
+  const hit = list.filter((it) => it.code === code)[0]
+  if (!hit) return list
+  hit.price = num(price)
+  return saveCart(list)
+}
 function clearCart() {
   return saveCart([])
 }
@@ -99,6 +107,7 @@ module.exports = {
   getCart: getCart,
   addToCart: addToCart,
   setQty: setQty,
+  setPrice: setPrice,
   removeFromCart: removeFromCart,
   clearCart: clearCart,
   cartCount: cartCount,

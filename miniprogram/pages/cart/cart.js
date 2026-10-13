@@ -22,7 +22,13 @@ Page({
 
   onShow() {
     const c = store.getCustomer()
-    this.setData({ name: c.name || '', phone: c.phone || '', address: c.address || '' })
+    const s = api.session() || {}
+    // 已登录就用登录态里的姓名/手机号兜底（省得每次重输；地址仍以本地记住的为准）
+    this.setData({
+      name: c.name || s.name || '',
+      phone: c.phone || s.phone || '',
+      address: c.address || ''
+    })
     return this.refresh()
   },
 
@@ -31,8 +37,32 @@ Page({
       .refreshStatus()
       .then((st) => {
         this.setData({ online: st.online, statusLabel: st.label })
-        this.render()
+        return this.reprice()
       })
+      .then(() => this.render())
+  },
+
+  // 用服务端有效价刷新购物车单价：登录 / 换等级后价格会变（价格真源在服务端，D24）
+  reprice() {
+    if (!this.data.online) return Promise.resolve(false)
+    const raw = store.getCart()
+    if (!raw.length) return Promise.resolve(false)
+    return api
+      .listProducts()
+      .then((items) => {
+        let changed = false
+        raw.forEach((it) => {
+          const hit = items.filter((p) => p.code === it.code)[0]
+          if (!hit) return
+          const now = rules.round2(hit.salePrice)
+          if (now !== rules.round2(it.price)) {
+            store.setPrice(it.code, now)
+            changed = true
+          }
+        })
+        return changed
+      })
+      .catch(() => false)
   },
 
   render() {

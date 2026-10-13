@@ -20,6 +20,8 @@ services:
       TZ: Asia/Shanghai
       BARCODE_APPCODE: ${BARCODE_APPCODE:-}
       BARCODE_GATEWAY: ${BARCODE_GATEWAY:-https://gscode.market.alicloudapi.com/getBarcode}
+      WX_APPID: ${WX_APPID:-}
+      WX_SECRET: ${WX_SECRET:-}
     volumes:
       - ./data:/data
       - ./web:/app/web:ro
@@ -48,6 +50,8 @@ services:
       TZ: Asia/Shanghai
       BARCODE_APPCODE: ${BARCODE_APPCODE:-}
       BARCODE_GATEWAY: ${BARCODE_GATEWAY:-https://gscode.market.alicloudapi.com/getBarcode}
+      WX_APPID: ${WX_APPID:-}
+      WX_SECRET: ${WX_SECRET:-}
     volumes:
       - ./data:/data
       - ./web:/app/web:ro

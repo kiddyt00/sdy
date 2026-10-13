@@ -230,6 +230,18 @@ var schemaStmts = []string{
 		k TEXT PRIMARY KEY,
 		v TEXT NOT NULL DEFAULT ''
 	)`,
+	// 第 23 轮（D28）：微信登录绑定。openid 只代表「这台微信」——用来免去重复登录，
+	// 业务身份仍是手机号（D24/D26），等级永远以 customer.tier 为准。
+	`CREATE TABLE IF NOT EXISTS wx_user (
+		openid TEXT PRIMARY KEY,
+		unionid TEXT NOT NULL DEFAULT '',
+		phone TEXT NOT NULL DEFAULT '',
+		nickname TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL DEFAULT '',
+		updated_at TEXT NOT NULL DEFAULT '',
+		last_login_at TEXT NOT NULL DEFAULT ''
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_wx_user_phone ON wx_user(phone)`,
 }
 
 // Open 打开（或创建）数据库并建表。
@@ -1064,6 +1076,26 @@ func (s *Store) SetCustomerTier(phone, name, tier string) (Customer, error) {
 	return s.GetCustomer(phone)
 }
 
+// EnsureCustomer 保证顾客档案存在（微信首次绑手机号时建档）。
+// **不覆盖已有姓名与等级**：只补空姓名，等级永远由老板在管理端设定（D24）——
+// 登录只是让老板知道「这台微信是谁」，不是提权手段。管理端维护的姓名是唯一真源（D15）。
+func (s *Store) EnsureCustomer(phone, name string) (Customer, error) {
+	phone = strings.TrimSpace(phone)
+	name = strings.TrimSpace(name)
+	if !ValidPhone(phone) {
+		return Customer{}, fmt.Errorf("%w: 手机号格式不对（要 11 位、1 开头）", ErrBadInput)
+	}
+	if len([]rune(name)) > 20 {
+		name = string([]rune(name)[:20])
+	}
+	if _, err := s.db.Exec(`INSERT INTO customer (phone,name,tier,created_at) VALUES (?,?,?,?)
+		ON CONFLICT(phone) DO UPDATE SET name=CASE WHEN customer.name='' THEN excluded.name ELSE customer.name END`,
+		phone, name, pricing.TierRetail, nowStr()); err != nil {
+		return Customer{}, fmt.Errorf("建档失败: %w", err)
+	}
+	return s.GetCustomer(phone)
+}
+
 // GetCustomer 取顾客档案（含等级）。
 func (s *Store) GetCustomer(phone string) (Customer, error) {
 	phone = strings.TrimSpace(phone)
@@ -1125,6 +1157,108 @@ func (s *Store) SetCustomerNote(phone, name, tags, note string) (Customer, error
 		return Customer{}, fmt.Errorf("写入顾客备注失败: %w", err)
 	}
 	return s.GetCustomer(phone)
+}
+
+// WxUser 微信登录绑定（第 23 轮 / D28）：openid 只代表「这台微信」，
+// 用来免去顾客每次重复输入；业务身份仍是手机号（D24/D26）。
+type WxUser struct {
+	OpenID    string `json:"openid"`
+	UnionID   string `json:"unionid,omitempty"`
+	Phone     string `json:"phone,omitempty"`
+	Nickname  string `json:"nickname,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+	LastLogin string `json:"lastLoginAt,omitempty"`
+}
+
+// ValidPhone 大陆手机号粗校验：11 位、1 开头、全数字，防止把乱码绑成顾客身份。
+func ValidPhone(p string) bool {
+	if len(p) != 11 || p[0] != '1' {
+		return false
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] < '0' || p[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// BindWxUser 记录一次微信登录（openid 为主键），并可选绑定手机号。
+// phone 传空＝只刷新登录时间、保留原绑定；传新号＝换绑（一个 openid 只对一个手机号，
+// 反过来一家人共用一个手机号下单是允许的）。
+// **不碰顾客等级**：批发/白名单只能由老板在管理端设定，登录永远不能自动提权（D24）。
+func (s *Store) BindWxUser(openid, unionid, phone, nickname string) (WxUser, error) {
+	openid = strings.TrimSpace(openid)
+	unionid = strings.TrimSpace(unionid)
+	phone = strings.TrimSpace(phone)
+	nickname = strings.TrimSpace(nickname)
+	if openid == "" {
+		return WxUser{}, fmt.Errorf("%w: openid 不能为空", ErrBadInput)
+	}
+	if phone != "" && !ValidPhone(phone) {
+		return WxUser{}, fmt.Errorf("%w: 手机号格式不对（要 11 位、1 开头）", ErrBadInput)
+	}
+	if r := []rune(nickname); len(r) > 20 {
+		// 老板维护的姓名优先，微信昵称只是兜底：超长就截断，绝不让登录因为昵称而失败。
+		nickname = string(r[:20])
+	}
+	now := nowStr()
+	if _, err := s.db.Exec(`INSERT INTO wx_user (openid,unionid,phone,nickname,created_at,updated_at,last_login_at)
+		VALUES (?,?,?,?,?,?,?)
+		ON CONFLICT(openid) DO UPDATE SET
+			unionid=CASE WHEN excluded.unionid<>'' THEN excluded.unionid ELSE wx_user.unionid END,
+			phone=CASE WHEN excluded.phone<>'' THEN excluded.phone ELSE wx_user.phone END,
+			nickname=CASE WHEN excluded.nickname<>'' THEN excluded.nickname ELSE wx_user.nickname END,
+			updated_at=excluded.updated_at,
+			last_login_at=excluded.last_login_at`,
+		openid, unionid, phone, nickname, now, now, now); err != nil {
+		return WxUser{}, fmt.Errorf("写入微信登录失败: %w", err)
+	}
+	u, _, err := s.GetWxUser(openid)
+	return u, err
+}
+
+// GetWxUser 按 openid 取绑定记录；没有记录返回 false（不是错误：新顾客第一次进来必然没有）。
+func (s *Store) GetWxUser(openid string) (WxUser, bool, error) {
+	openid = strings.TrimSpace(openid)
+	if openid == "" {
+		return WxUser{}, false, fmt.Errorf("%w: openid 不能为空", ErrBadInput)
+	}
+	var u WxUser
+	err := s.db.QueryRow(`SELECT openid,unionid,phone,nickname,created_at,updated_at,last_login_at
+		FROM wx_user WHERE openid=?`, openid).
+		Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WxUser{}, false, nil
+	}
+	if err != nil {
+		return WxUser{}, false, err
+	}
+	return u, true, nil
+}
+
+// ListWxUsers 最近的微信登录绑定（管理端审阅用：谁把哪台微信绑到了哪个手机号）。
+// 绑定不会自动提权（D24），但老板要能看见「有人绑了我的老顾客手机号」这件事。
+func (s *Store) ListWxUsers(limit int) ([]WxUser, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.db.Query(`SELECT openid,unionid,phone,nickname,created_at,updated_at,last_login_at
+		FROM wx_user ORDER BY last_login_at DESC, openid LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("查询微信绑定失败: %w", err)
+	}
+	defer rows.Close()
+	out := make([]WxUser, 0, 16)
+	for rows.Next() {
+		var u WxUser
+		if err := rows.Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 // Courier 配送员（任务池⑧ / D25）：原来只存在浏览器 localStorage，换台设备就没人可派单。

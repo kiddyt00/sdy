@@ -7,11 +7,13 @@
 // 上线：**只改 utils/config.js 的 PROD_BASE_URL**（小程序服务器域名必须 HTTPS + 已备案）
 
 const store = require('./store.js')
+const rules = require('./rules.js')
 const config = require('./config.js')
 
 const LS_BASE_KEY = 'sdy_api_base'
 const LS_PRODUCTS_KEY = 'sdy_mp_products'
 const LS_ORDERS_KEY = 'sdy_mp_orders'
+const LS_SESSION_KEY = 'sdy_mp_session'
 const DEFAULT_BASE = config.DEFAULT_BASE_URL
 const TIMEOUT_MS = 8000
 
@@ -150,6 +152,10 @@ function num(v) {
   return isFinite(n) ? n : 0
 }
 function mapProduct(p) {
+  // 价格真源在服务端（D12/D24）：带 phone 请求时，服务端按顾客等级算好 price，
+  // 小程序只读不换算；没带 phone（未登录）时一律零售价。
+  const retail = num(p.salePrice)
+  const eff = num(p.price) > 0 ? num(p.price) : retail
   return {
     code: String(p.code || ''),
     name: p.name || '',
@@ -158,10 +164,13 @@ function mapProduct(p) {
     category: p.category || '其他',
     unit: p.unit || '件',
     emoji: emojiFor(p.name),
-    salePrice: num(p.salePrice),
-    priceText: num(p.salePrice).toFixed(2),
-    stock: num(p.stock),
+    salePrice: eff,
+    retailPrice: retail,
+    priceText: eff.toFixed(2),
     isWholesale: !!p.isWholesale,
+    wholesalePrice: num(p.wholesalePrice),
+    tier: p.tier || '',
+    stock: num(p.stock),
     syncStatus: p.syncStatus || '',
     server: true
   }
@@ -190,13 +199,92 @@ function localProducts(keyword) {
 }
 
 // 商品列表；在线时顺便把服务端商品缓存到本地（断网也能看）
+// 顾客端只看上架商品（onSale=1，D23）；已登录就带 phone，让服务端按等级给价（D24）。
 function listProducts(keyword) {
   if (!state.online) return Promise.resolve(localProducts(keyword))
-  const q = keyword ? '?keyword=' + encodeURIComponent(keyword) : ''
-  return request('GET', '/api/products' + q).then((d) => {
+  const qs = ['onSale=1']
+  if (keyword) qs.push('keyword=' + encodeURIComponent(keyword))
+  const ph = boundPhone()
+  if (ph) qs.push('phone=' + encodeURIComponent(ph))
+  return request('GET', '/api/products?' + qs.join('&')).then((d) => {
     const items = (d.items || []).map(mapProduct)
     if (!keyword) sset(LS_PRODUCTS_KEY, items)
     return items
+  })
+}
+
+// ---------- 微信登录（第 23 轮 / D28） ----------
+// 手机号仍是业务身份（D24）：openid 只记住「这台微信是谁」，免去每次重输手机号；
+// 价格与等级一律由服务端按顾客档案下发，小程序不自己算、也存不下任何密钥（D13/D26）。
+
+function session() {
+  const s = sget(LS_SESSION_KEY, null)
+  return s && typeof s === 'object' ? s : null
+}
+function saveSession(s) {
+  sset(LS_SESSION_KEY, s)
+  return s
+}
+function clearSession() {
+  sdel(LS_SESSION_KEY)
+  sdel(LS_PRODUCTS_KEY) // 价格跟着等级走，退出登录别留旧价
+  return null
+}
+// 已绑定的手机号（没登录 / 只登录没绑号就是空串）
+function boundPhone() {
+  const s = session()
+  return s && s.phone ? String(s.phone) : ''
+}
+function isLoggedIn() {
+  const s = session()
+  return !!(s && s.openid)
+}
+// 给页面用的一句话状态
+function sessionLabel() {
+  const s = session()
+  if (!s || !s.openid) return '未登录（登录后免输手机号）'
+  if (!s.phone) return '已登录 · 还没绑手机号'
+  return '已登录 · ' + (s.name || '微信顾客') + ' · ' + rules.tierLabel(s.tier)
+}
+
+// 登录：wx.login 的 code 换 openid；带 phone 就顺手绑上。
+// 绑定**不提权**——批发/白名单只能由老板在管理端设定（D24）。
+function wxLogin(opts) {
+  const o = opts || {}
+  if (typeof wx === 'undefined' || !wx || typeof wx.login !== 'function') {
+    return Promise.reject(new Error('当前环境没有 wx.login（请在小程序里使用）'))
+  }
+  if (!state.online) {
+    return Promise.reject(new Error('后端未连接：登录要连上服务端才能用（本地演示模式不联网）'))
+  }
+  return new Promise((resolve, reject) => {
+    wx.login({
+      success(res) {
+        const code = res && res.code
+        if (!code) {
+          reject(new Error('微信没有返回 code，请重试'))
+          return
+        }
+        const body = { code: String(code) }
+        if (o.phone) body.phone = String(o.phone).trim()
+        if (o.nickname) body.nickname = String(o.nickname).trim()
+        request('POST', '/api/wx/login', body).then((d) => {
+          const s = saveSession({
+            openid: d.openid || '',
+            bound: !!d.bound,
+            phone: d.phone || '',
+            name: d.name || '',
+            tier: d.tier || rules.TIER_RETAIL,
+            at: Date.now()
+          })
+          sdel(LS_PRODUCTS_KEY) // 等级可能变了，价格缓存作废
+          resolve(s)
+        }, reject)
+      },
+      fail(err) {
+        reject(new Error((err && err.errMsg) || 'wx.login 失败'))
+      }
+    })
   })
 }
 
@@ -339,6 +427,12 @@ module.exports = {
   status: status,
   listProducts: listProducts,
   resolveBarcode: resolveBarcode,
+  wxLogin: wxLogin,
+  session: session,
+  clearSession: clearSession,
+  isLoggedIn: isLoggedIn,
+  boundPhone: boundPhone,
+  sessionLabel: sessionLabel,
   createOrder: createOrder,
   listOrders: listOrders,
   getOrder: getOrder,

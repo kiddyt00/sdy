@@ -21,6 +21,7 @@ global.wx = {
   removeStorageSync: (k) => { delete kv[k] },
   showToast: () => {},
   switchTab: () => {},
+  login: (o) => { if (o && o.success) o.success({ code: 'CODE_TEST' }) },
   showModal: (o) => { if (o && o.success) o.success({ confirm: true }) },
   request(opts) {
     const method = (opts.method || 'GET').toUpperCase()
@@ -111,6 +112,22 @@ async function main() {
   ok(hitUnknown.found === false, '未建档条码 found=false（source=' + hitUnknown.source + '）')
   const stockAfterScan = (await api.listProducts('可口可乐')).filter((p) => p.code === '6901234567892')[0].stock
   ok(stockAfterScan === stockAtScan, '扫码只读：库存不变（' + stockAfterScan + '，D8）')
+
+  section('⑦ 微信登录（没配 AppSecret 就不假装成功）')
+  let loginErr = ''
+  try {
+    await api.wxLogin({ phone: '13800001111', nickname: '联调' })
+  } catch (e) {
+    loginErr = e.message
+  }
+  if (api.isLoggedIn()) {
+    ok(true, '目标服务端已配好微信登录，换回 openid=' + api.session().openid)
+    api.clearSession()
+  } else {
+    ok(loginErr.length > 0, '未配置时如实报错：' + loginErr)
+    ok(loginErr.indexOf('微信') >= 0, '报错要说清是微信登录的问题，不能静默失败')
+    ok(api.boundPhone() === '', '登录失败不留任何身份')
+  }
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

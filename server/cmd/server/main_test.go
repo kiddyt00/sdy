@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kiddyt00/sdy/server/internal/barcode"
 	"github.com/kiddyt00/sdy/server/internal/pricing"
@@ -19,13 +20,22 @@ import (
 // newTestServer 起一个内存库的测试服务（静态目录用临时目录，避免读到真实页面）。
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return newTestServerWx(t, wxConf{})
+}
+
+// newTestServerWx 同上，但可注入微信登录配置（测试指向假微信服务器，本地不出网）。
+func newTestServerWx(t *testing.T, wxc wxConf) *httptest.Server {
+	t.Helper()
 	st, err := store.Open(":memory:", pricing.DefaultConfig())
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 	res := barcode.New(st, barcode.DefaultConfig(), nil)
-	ts := httptest.NewServer(withCORS(routes(st, res, t.TempDir(), false)))
+	if wxc.client == nil {
+		wxc.client = &http.Client{Timeout: 3 * time.Second}
+	}
+	ts := httptest.NewServer(withCORS(routes(st, res, t.TempDir(), false, wxc)))
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -305,7 +315,7 @@ func TestAdminCleanURL(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "admin.html"), page, 0o644); err != nil {
 		t.Fatalf("写测试页面失败: %v", err)
 	}
-	ts := httptest.NewServer(routes(st, barcode.New(st, barcode.DefaultConfig(), nil), dir, false))
+	ts := httptest.NewServer(routes(st, barcode.New(st, barcode.DefaultConfig(), nil), dir, false, wxConf{}))
 	t.Cleanup(ts.Close)
 
 	// /admin → 200 且内容就是 admin.html
@@ -610,5 +620,120 @@ func TestCourierSettingsNoteHTTPFlow(t *testing.T) {
 	}
 	if code, _ = do(t, ts, http.MethodGet, "/api/customers/note", ""); code != 405 {
 		t.Errorf("GET /api/customers/note 应 405，实际 %d", code)
+	}
+}
+
+// secretForTest 假 AppSecret：用来断言它绝不会出现在任何响应体里（D13）。
+const secretForTest = "SECRET_MUST_NOT_LEAK_9f3a"
+
+// TestWxLoginHTTPFlow 微信登录（第 23 轮 / D28）：假微信服务器换 openid → 绑手机号 →
+// 等级取顾客档案（绑定不提权）、未配置 503、错误码翻译、secret 绝不外泄。
+func TestWxLoginHTTPFlow(t *testing.T) {
+	var hits int
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sns/jscode2session" {
+			t.Errorf("微信接口路径不对: %s", r.URL.Path)
+		}
+		q := r.URL.Query()
+		hits++
+		if q.Get("appid") != "wx_test" || q.Get("secret") != secretForTest ||
+			q.Get("grant_type") != "authorization_code" {
+			t.Errorf("code2session 参数不对: %s", r.URL.RawQuery)
+		}
+		switch q.Get("js_code") {
+		case "BAD":
+			_, _ = w.Write([]byte(`{"errcode":40029,"errmsg":"invalid code"}`))
+		case "FLOOD":
+			_, _ = w.Write([]byte(`{"errcode":45011,"errmsg":"freq limit"}`))
+		default:
+			_, _ = w.Write([]byte(`{"openid":"o_TEST_1","unionid":"u_TEST_1","session_key":"sk_must_not_leak"}`))
+		}
+	}))
+	defer fake.Close()
+
+	ts := newTestServerWx(t, wxConf{appid: "wx_test", secret: secretForTest, apiBase: fake.URL})
+
+	// 收集所有响应体，最后统一断言 secret / session_key 没有外泄。
+	var seen strings.Builder
+	call := func(ts *httptest.Server, method, path, body string) (int, string) {
+		c, b := do(t, ts, method, path, body)
+		seen.WriteString(b)
+		return c, b
+	}
+
+	// 老板先把 13800001111 设成批发客户（等级只能由管理端设定，D24）
+	if code, body := call(ts, http.MethodPost, "/api/customers/tier",
+		`{"phone":"13800001111","name":"王阿姨","tier":"wholesale"}`); code != 200 {
+		t.Fatalf("设等级失败: %d %s", code, body)
+	}
+
+	// ① 只带 code：登录成功但不绑定，等级零售
+	code, body := call(ts, http.MethodPost, "/api/wx/login", `{"code":"CODE_1"}`)
+	if code != 200 || !strings.Contains(body, `"ok":true`) || !strings.Contains(body, `"openid":"o_TEST_1"`) ||
+		!strings.Contains(body, `"bound":false`) || !strings.Contains(body, `"tier":"retail"`) {
+		t.Fatalf("首次登录失败: %d %s", code, body)
+	}
+
+	// ② 带手机号：绑到批发顾客，等级跟着档案走（绑手机号本身不提权）
+	code, body = call(ts, http.MethodPost, "/api/wx/login",
+		`{"code":"CODE_2","phone":"13800001111","nickname":"阿明"}`)
+	if code != 200 || !strings.Contains(body, `"bound":true`) || !strings.Contains(body, `"tier":"wholesale"`) ||
+		!strings.Contains(body, `"name":"王阿姨"`) {
+		t.Fatalf("绑手机号后应拿到批发等级与档案姓名: %d %s", code, body)
+	}
+
+	// ③ 同一台微信再次登录（新 code、不带手机号）：绑定保留、等级不变
+	code, body = call(ts, http.MethodPost, "/api/wx/login", `{"code":"CODE_3"}`)
+	if code != 200 || !strings.Contains(body, `"bound":true`) || !strings.Contains(body, `"tier":"wholesale"`) ||
+		!strings.Contains(body, `"openid":"o_TEST_1"`) {
+		t.Fatalf("再次登录应保留绑定: %d %s", code, body)
+	}
+
+	// ④ 绑定档案可在后台审阅（只读）
+	if code, body = call(ts, http.MethodGet, "/api/wx/users", ""); code != 200 ||
+		!strings.Contains(body, "o_TEST_1") || !strings.Contains(body, "13800001111") {
+		t.Fatalf("微信绑定列表失败: %d %s", code, body)
+	}
+	if code, _ = call(ts, http.MethodPost, "/api/wx/users", "{}"); code != 405 {
+		t.Errorf("POST /api/wx/users 应 405，实际 %d", code)
+	}
+
+	// ⑤ 缺 code / 坏手机号 / 错方法
+	if code, body = call(ts, http.MethodPost, "/api/wx/login", `{}`); code != 400 ||
+		!strings.Contains(body, "缺少 code") {
+		t.Errorf("缺 code 应 400，实际 %d %s", code, body)
+	}
+	if code, body = call(ts, http.MethodPost, "/api/wx/login", `{"code":"CODE_4","phone":"12345"}`); code != 400 ||
+		!strings.Contains(body, "手机号格式不对") {
+		t.Errorf("坏手机号应 400，实际 %d %s", code, body)
+	}
+	if code, _ = call(ts, http.MethodGet, "/api/wx/login", ""); code != 405 {
+		t.Errorf("GET /api/wx/login 应 405，实际 %d", code)
+	}
+
+	// ⑥ 微信错误码翻译：40029 → 400，45011 → 429
+	if code, body = call(ts, http.MethodPost, "/api/wx/login", `{"code":"BAD"}`); code != 400 ||
+		!strings.Contains(body, "无效或已过期") {
+		t.Errorf("40029 应 400，实际 %d %s", code, body)
+	}
+	if code, body = call(ts, http.MethodPost, "/api/wx/login", `{"code":"FLOOD"}`); code != 429 ||
+		!strings.Contains(body, "太频繁") {
+		t.Errorf("45011 应 429，实际 %d %s", code, body)
+	}
+
+	// ⑦ 服务端没配 WX_APPID / WX_SECRET → 503
+	bare := newTestServer(t)
+	if code, body = call(bare, http.MethodPost, "/api/wx/login", `{"code":"CODE_5"}`); code != 503 ||
+		!strings.Contains(body, "未配置") {
+		t.Errorf("未配置应 503，实际 %d %s", code, body)
+	}
+
+	// ⑧ 假微信服务器确实被调用了（否则上面全是假通过）
+	if hits < 5 {
+		t.Errorf("假微信服务器调用次数偏少: %d", hits)
+	}
+	// ⑨ secret 与 session_key 绝不外泄（D13）
+	if strings.Contains(seen.String(), secretForTest) || strings.Contains(seen.String(), "sk_must_not_leak") {
+		t.Errorf("响应体里出现了 secret / session_key：%s", seen.String())
 	}
 }

@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,6 +33,20 @@ func main() {
 	gateway := getenv("BARCODE_GATEWAY", "https://gscode.market.alicloudapi.com/getBarcode")
 	appcode := os.Getenv("BARCODE_APPCODE")
 	staticDir := getenv("STATIC_DIR", ".")
+
+	// 微信登录（第 23 轮 / D28）：AppID 是公开信息，AppSecret 只从环境变量读，
+	// 绝不落库、绝不进日志（D13）。WX_API_BASE 可注入，便于测试用假微信服务器。
+	wxc := wxConf{
+		appid:   strings.TrimSpace(os.Getenv("WX_APPID")),
+		secret:  strings.TrimSpace(os.Getenv("WX_SECRET")),
+		apiBase: strings.TrimRight(getenv("WX_API_BASE", "https://api.weixin.qq.com"), "/"),
+		client:  &http.Client{Timeout: 8 * time.Second},
+	}
+	if wxc.ready() {
+		log.Printf("微信登录已启用（AppID %s）", wxc.appid)
+	} else {
+		log.Printf("微信登录未配置（缺少 WX_APPID / WX_SECRET，/api/wx/login 会返回 503）")
+	}
 
 	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -58,7 +74,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           withCORS(withLogging(routes(st, resolver, staticDir, appcode != ""))),
+		Handler:           withCORS(withLogging(routes(st, resolver, staticDir, appcode != "", wxc))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -83,7 +99,7 @@ func main() {
 
 /* ------------------------------ 路由 ------------------------------ */
 
-func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabled bool) http.Handler {
+func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabled bool, wxc wxConf) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -511,6 +527,87 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		writeJSON(w, 200, saved)
 	})
 
+	// 微信登录（第 23 轮 / D28）：小程序 wx.login 的 code 换 openid；可选带手机号完成绑定。
+	// 手机号仍是业务身份（D24）——本接口只让服务端记住「这台微信是谁」，
+	// **绝不改顾客等级**（批发/白名单只能由老板在管理端设定）。
+	mux.HandleFunc("/api/wx/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		var in struct {
+			Code     string `json:"code"`
+			Phone    string `json:"phone"`
+			Nickname string `json:"nickname"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		if strings.TrimSpace(in.Code) == "" {
+			writeJSON(w, 400, map[string]string{"error": "缺少 code（小程序端要先调 wx.login）"})
+			return
+		}
+		if !wxc.ready() {
+			writeJSON(w, 503, map[string]string{"error": "微信登录未配置（服务端缺少 WX_APPID / WX_SECRET）"})
+			return
+		}
+		sess, err := wxc.code2Session(in.Code)
+		if err != nil {
+			var le *wxLoginError
+			if errors.As(err, &le) {
+				writeJSON(w, le.status, map[string]string{"error": le.msg})
+				return
+			}
+			writeJSON(w, 502, map[string]string{"error": err.Error()})
+			return
+		}
+		// 绑过的手机号决定看到的价格；等级一律取顾客档案里的值（老板设的）。
+		u, err := st.BindWxUser(sess.OpenID, sess.UnionID, in.Phone, in.Nickname)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		name := ""
+		tier := pricing.TierRetail
+		if u.Phone != "" {
+			if _, err := st.EnsureCustomer(u.Phone, u.Nickname); err != nil {
+				writeErr(w, err)
+				return
+			}
+			if tier, err = st.GetCustomerTier(u.Phone); err != nil {
+				writeErr(w, err)
+				return
+			}
+			if c, err := st.GetCustomer(u.Phone); err == nil {
+				name = c.Name
+			}
+		}
+		writeJSON(w, 200, map[string]any{
+			"ok": true, "openid": u.OpenID, "bound": u.Phone != "",
+			"phone": u.Phone, "name": name, "tier": tier,
+		})
+	})
+
+	// 微信绑定审阅（只读，D28）：老板要能看见谁把哪台微信绑到了哪个手机号。
+	mux.HandleFunc("/api/wx/users", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		limit := 200
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		list, err := st.ListWxUsers(limit)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
+	})
+
 	// 条码解析链（本地优先，扫码只读，不改库存）
 	mux.HandleFunc("/api/barcode/resolve", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
@@ -617,6 +714,77 @@ func aliCloud(gateway, appcode string) barcode.CloudFunc {
 		}
 		return barcode.CloudItem{Name: out.ItemName, Spec: out.ItemSpecification}, true, nil
 	}
+}
+
+/* ------------------------------ 微信登录（第 23 轮 / D28） ------------------------------ */
+
+// wxConf 微信登录配置。AppID 可公开（已在 project.config.json），AppSecret 只来自环境变量（D13）。
+type wxConf struct {
+	appid   string
+	secret  string
+	apiBase string
+	client  *http.Client
+}
+
+func (c wxConf) ready() bool { return c.appid != "" && c.secret != "" && c.client != nil }
+
+// wxSession code2session 响应。只关心 openid / unionid，session_key 不回传客户端。
+type wxSession struct {
+	OpenID  string `json:"openid"`
+	UnionID string `json:"unionid"`
+	ErrCode int    `json:"errcode"`
+	ErrMsg  string `json:"errmsg"`
+}
+
+// wxLoginError 带 HTTP 状态码的登录失败：4xx 是客户端可纠正的，502 是微信侧故障。
+type wxLoginError struct {
+	status int
+	msg    string
+}
+
+func (e *wxLoginError) Error() string { return e.msg }
+
+// code2Session 用 wx.login 的 code 换 openid。**绝不记录 code 与 secret**（D13）。
+func (c wxConf) code2Session(code string) (wxSession, error) {
+	u := c.apiBase + "/sns/jscode2session?appid=" + url.QueryEscape(c.appid) +
+		"&secret=" + url.QueryEscape(c.secret) +
+		"&js_code=" + url.QueryEscape(code) +
+		"&grant_type=authorization_code"
+	resp, err := c.client.Get(u)
+	if err != nil {
+		return wxSession{}, fmt.Errorf("无法连接微信服务器：%v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		return wxSession{}, fmt.Errorf("读取微信响应失败：%v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return wxSession{}, fmt.Errorf("微信服务器返回 HTTP %d", resp.StatusCode)
+	}
+	var s wxSession
+	if err := json.Unmarshal(body, &s); err != nil {
+		return wxSession{}, fmt.Errorf("微信响应解析失败：%v", err)
+	}
+	if s.ErrCode != 0 || s.OpenID == "" {
+		return wxSession{}, wxErrFor(s.ErrCode, s.ErrMsg)
+	}
+	return s, nil
+}
+
+// wxErrFor 把微信错误码翻译成老板/顾客看得懂的话（以后台与微信文档为准，这里只覆盖常见码）。
+func wxErrFor(code int, msg string) *wxLoginError {
+	switch code {
+	case 40029, 40163:
+		return &wxLoginError{400, "微信登录码无效或已过期，请退出小程序重进再试"}
+	case 45011:
+		return &wxLoginError{429, "登录请求太频繁，请稍后再试"}
+	case 40226:
+		return &wxLoginError{403, "该微信账号被微信标记为高风险，登录被拦截"}
+	case -1:
+		return &wxLoginError{502, "微信服务繁忙，请稍后再试"}
+	}
+	return &wxLoginError{502, fmt.Sprintf("微信登录失败（errcode=%d %s）", code, msg)}
 }
 
 /* ------------------------------ 中间件与工具 ------------------------------ */

@@ -2,7 +2,9 @@
 
 > **状态：🚧 开发中（2026-10-12 起）。** 第 21 轮把 `archive/miniprogram` 恢复激活为本目录；第 22 轮（2026-10-13）三项前置全部到位——AppID `wx3f2d2aa52660b80f`、已备案 HTTPS 域名 `https://mall.shadouyou.cloud`（小程序后台「request 合法域名」已配置）、生产接口可用，**开发版 0.1.0 已上传，真机预览二维码可扫**（家人要用则先在后台「选为体验版」并加为体验成员）。
 >
-> 下一步：服务端 `POST /api/wx/login`（`code2Session`，**不依赖微信认证**）→「我的」页接登录态；微信支付要等**微信认证（¥300/年）+ 关联商户号**之后。载体换了，业务逻辑不变：商品 / 购物车 / 订单 / 运费 / 库存全部复用 `server/` 的后端接口。
+> **第 23 轮（2026-10-13）：微信登录打通（D28，开发版 0.2.0）。**「我的」页新增账号区——`wx.login` 拿 `code` → 服务端 `POST /api/wx/login`（`code2Session`）换 `openid` 并绑手机号档案，**不依赖微信认证**；登录后按手机号等级看价（批发 / 白名单价格由服务端下发），登录**不提权**（新顾客一律零售档，批发价只能老板在管理端设）。
+>
+> 下一步：微信支付（`/api/wx/pay`、`/api/wx/notify`）与订阅消息，要等**微信认证（¥300，2026-10-13 已付款审核中）+ 关联商户号**。载体换了，业务逻辑不变：商品 / 购物车 / 订单 / 运费 / 库存全部复用 `server/` 的后端接口。
 
 ## 里面有什么
 
@@ -13,12 +15,12 @@ miniprogram/
 │   ├── index/                       # 首页：商品列表 + 分类 + 扫码找货
 │   ├── cart/                        # 购物车：加购/步进/结算
 │   ├── orders/                      # 订单：列表与状态
-│   └── mine/                        # 我的：连接状态与后端地址
+│   └── mine/                        # 我的：微信登录/绑定手机号 + 连接状态与后端地址
 ├── utils/
 │   ├── config.js                    # **唯一域名配置点**：DEV_BASE_URL / PROD_BASE_URL
 │   ├── api.js                       # 后端通道（与 web/sdy-api.js 同构：在线=服务端真源，离线=本地演示）
-│   ├── rules.js                     # 价格防护 / 配送规则（与 server/internal/pricing 同源）
-│   └── store.js                     # wx.storage 封装
+│   ├── rules.js                     # 价格防护 / 配送规则 / 等级与有效价（与 server/internal/pricing 同源）
+│   └── store.js                     # wx.storage 封装（购物车、后端地址、登录会话 sdy_mp_session）
 ├── project.config.json              # AppID 已填 wx3f2d2aa52660b80f；开发期 urlCheck:false
 └── test-api.js / test-pages.js / test-integration.js   # 三套测试
 ```
@@ -44,9 +46,9 @@ NODE_PATH=/tmp/mpci/node_modules node deploy/mp-ci.js upload   # 只上传开发
 ## 测试
 
 ```bash
-node miniprogram/test-api.js          # 73 项 · 通道/配置/扫码（假 wx）· 不需要后端
-node miniprogram/test-pages.js        # 57 项 · 四页逻辑冒烟（假 Page/wx）· 不需要后端
-node miniprogram/test-integration.js  # 24 项 · 真后端联调（需先起 server，或用 SDY_API_BASE 指定）
+node miniprogram/test-api.js          # 104 项 · 通道/配置/扫码/等级与有效价/微信登录（假 wx）· 不需要后端
+node miniprogram/test-pages.js        # 70 项 · 四页逻辑冒烟（假 Page/wx，含「我的」登录/退出）· 不需要后端
+node miniprogram/test-integration.js  # 27 项 · 真后端联调（需先起 server，或用 SDY_API_BASE 指定）
 ```
 
 ## 上线前改造清单
@@ -60,7 +62,7 @@ node miniprogram/test-integration.js  # 24 项 · 真后端联调（需先起 se
 | 5 | `PROD_BASE_URL` 填已备案 HTTPS 域名 + 后台「服务器域名」配置 | ✅ 2026-10-13 |
 | 6 | `project.config.json` 填真 AppID | ✅ 2026-10-13 |
 | 7 | 开发版上传 + 真机预览（`deploy/mp-ci.js`） | ✅ 2026-10-13（0.1.0） |
-| 8 | 服务端 `POST /api/wx/login`（`code2Session`）+「我的」页登录态 | ⬜ 第 23 轮先做（不依赖认证） |
+| 8 | 服务端 `POST /api/wx/login`（`code2Session`）+「我的」页登录态 | ✅ 2026-10-13（第 23 轮 D28，开发版 0.2.0） |
 | 9 | 服务端 `/api/wx/pay`、`/api/wx/notify` + 订阅消息 | ⬜ 等微信认证 + 关联商户号 |
 | 10 | 上传体验版给家人用 + 真机走一遍下单 | ⬜ 用户侧 2 步 |
 
@@ -68,7 +70,7 @@ node miniprogram/test-integration.js  # 24 项 · 真后端联调（需先起 se
 
 1. **域名** ✅ 已完成（2026-10-13）：`mall.shadouyou.cloud` 解析到生产服务器，acme.sh(ZeroSSL ECC) 签发证书，80 自动 301 到 HTTPS，每日自动续期。
 2. **AppID / AppSecret** ✅ 已完成：AppID 是公开信息，已进 `project.config.json`；AppSecret 只在服务器 `/root/sdy/.env` 与本机 `.wx_secret.env`，**绝不入库**。
-3. **微信认证（¥300/年）+ 关联微信支付商户号** ⬜ **唯一还花钱的卡点**：认证通过后到 `产品中心 → APPID授权管理 → +关联AppID` 发起绑定，小程序侧在「微信支付 → 商户号管理 → 待关联商户号」确认；**关联后不支持解绑**，一个商户号最多关联 50 个 AppID。另需回传营业执照「营业期限」原文与食品类资质持证主体（须与小程序主体一致）。
+3. **微信认证（¥300/年）+ 关联微信支付商户号** 🚧 认证费 **2026-10-13 已付款、审核中**；商户号未开始关联：认证通过后到 `产品中心 → APPID授权管理 → +关联AppID` 发起绑定，小程序侧在「微信支付 → 商户号管理 → 待关联商户号」确认；**关联后不支持解绑**，一个商户号最多关联 50 个 AppID。另需回传营业执照「营业期限」原文与食品类资质持证主体（须与小程序主体一致）。
 
 ## 注意事项
 
@@ -82,4 +84,4 @@ node miniprogram/test-integration.js  # 24 项 · 真后端联调（需先起 se
 
 - 上手引导：[`../小程序开发引导.html`](../小程序开发引导.html)
 - 路线与里程碑：[`../开发计划.html`](../开发计划.html)、[`../README.md`](../README.md)
-- 决策台账：[`../细节讨论记录.html`](../细节讨论记录.html)（D7/D8 扫码、D14 先 Web、D25 库存审计、D26 小程序口径、D27 域名与证书）
+- 决策台账：[`../细节讨论记录.html`](../细节讨论记录.html)（D7/D8 扫码、D14 先 Web、D25 库存审计、D26 小程序口径、D27 域名与证书、D28 微信登录）

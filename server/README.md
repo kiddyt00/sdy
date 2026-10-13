@@ -76,6 +76,8 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | `STATIC_DIR` | `.` | 静态文件根目录（页面托管，见上） |
 | `BARCODE_APPCODE` | 空 | 云端条码 APPCODE；留空 = 纯本地模式 |
 | `BARCODE_GATEWAY` | `https://gscode.market.alicloudapi.com/getBarcode` | 云端网关完整地址 |
+| `WX_APPID` | 空 | 微信小程序 AppID（第 23 轮 D28；公开信息，`miniprogram/project.config.json` 里也有一份） |
+| `WX_SECRET` | 空 | 微信小程序 AppSecret（**只在服务端**，绝不下发到前端/小程序、绝不入库）；与 `WX_APPID` 任一为空 = 微信登录关闭（`POST /api/wx/login` 返 `503`，其它功能不受影响） |
 
 ## API
 
@@ -106,6 +108,8 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | GET | `/api/barcode/resolve?code=` | 条码解析链：商品档案 → 本地字典 → 云端；查到永久回填字典，查无标记 90 天，连续失败 5 次熔断当日 |
 | GET | `/api/barcode/lib?limit=` | 条码字典层列表（默认 200 条，只读） |
 | GET | `/api/pricing/check` | 比价防线巡检，返回 `{total, over, violations}` |
+| POST | `/api/wx/login` | **微信登录唯一入口**（D28）：`{code, phone, nickname}`；`code` 来自小程序 `wx.login`，服务端用 `WX_APPID`/`WX_SECRET` 调 `sns/jscode2session` 换 `openid`（**session_key 只留服务端、不回传**），把 openid 绑到手机号档案（`EnsureCustomer` 建档但**只补空姓名、不覆盖老板维护的姓名**，手机号必须 11 位且 1 开头）；成功返回 `{ok, openid, bound, phone, name, tier}`；`code` 为空 → `400`，微信侧错误（code 失效 / AppSecret 不对 → `-10008` 一类）原文透出，服务端没配 `WX_APPID`/`WX_SECRET` → `503 微信登录未配置（服务端缺少 WX_APPID / WX_SECRET）`；**登录不提权**：新顾客一律零售档，批发/白名单只能老板在管理端改（D24） |
+| GET | `/api/wx/users` | 已绑过的微信用户（只读，管理端排查用）：`{items:[{openid, unionid, phone, nickname, createdAt, updatedAt, lastLogin}], total}` |
 | GET | `/admin` | 管理端干净地址：直接把 `STATIC_DIR/admin.html` 吐出来；`/admin/` 带尾斜杠会 301 到 `/admin`（带斜杠时页面内相对路径基准变成 `/admin/`，`assets/theme.css` 等会 404）；旧 `/admin.html` 继续可用 |
 | — | `/`（其余路径） | 静态文件（`STATIC_DIR`） |
 
@@ -117,7 +121,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy/server
-go test ./... -count=1        # 42 个单测
+go test ./... -count=1        # 46 个单测
 ./smoke.sh                    # 起真服务跑 HTTP 全流程
 ```
 
@@ -127,10 +131,10 @@ go test ./... -count=1        # 42 个单测
 | --- | --- | --- |
 | `server/internal/barcode` | 6 | `TestResolveProductFirst`、`TestResolveLibSecond`、`TestResolveCloudBackfill`、`TestResolveCloudNotFoundTTL`、`TestResolveCircuitBreaker`、`TestResolveEdgeCases` |
 | `server/internal/pricing` | 5 | `TestDeliveryFee`、`TestDeliveryFeeCustomConfig`、`TestCheckRetailPrice`、`TestPricingCheck`、`TestEffectivePrice` |
-| `server/internal/store` | 24 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook`、`TestProductOnSaleSemantics`、`TestOnSaleColumnMigration`、`TestCustomerTierWholesalePrice`、`TestTierColumnMigration`、**`TestStockChangeAudit`、`TestStockLogCap`、`TestCouriersPersist`、`TestStoreSettings`、`TestCustomerNote`（D25）** |
-| `server/cmd/server` | 9 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestProductOnSaleHTTPFlow`、`TestAddressHTTPFlow`、`TestAdminCleanURL`、`TestHealthzAndOptions`、`TestCustomerTierHTTPFlow`、**`TestStockChangeHTTPFlow`、`TestCourierSettingsNoteHTTPFlow`（D25）** |
+| `server/internal/store` | 25 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook`、`TestProductOnSaleSemantics`、`TestOnSaleColumnMigration`、`TestCustomerTierWholesalePrice`、`TestTierColumnMigration`、**`TestStockChangeAudit`、`TestStockLogCap`、`TestCouriersPersist`、`TestStoreSettings`、`TestCustomerNote`（D25）、**`TestWxUserBind`（D28：昵称超 20 字截断不报错、坏手机号不建档、`EnsureCustomer` 不覆盖已维护姓名）** |
+| `server/cmd/server` | 10 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestProductOnSaleHTTPFlow`、`TestAddressHTTPFlow`、`TestAdminCleanURL`、`TestHealthzAndOptions`、`TestCustomerTierHTTPFlow`、**`TestStockChangeHTTPFlow`、`TestCourierSettingsNoteHTTPFlow`（D25）、`TestWxLoginHTTPFlow`（D28：未配置 → 503、缺 code → 400、微信侧错误原样透出、绑定后等级仍由档案决定）** |
 
-合计 **42 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
+合计 **46 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
 
 `./smoke.sh` 会 `go build` 一个临时二进制，用 `mktemp` 建临时库（**不碰 `server/data/sdy.db`**），起在 `127.0.0.1:8099`（`SMOKE_PORT` 可改，**默认不占用 8093**），轮询 `/healthz` 就绪后依次验证 8 项：健康检查 → 商品数 → 条码解析 → 下单 → 下单后库存 → 非法流转返回 409 → 取消回补库存 → 比价巡检，最后退出并清理进程与临时文件。实测输出以 `✅ 冒烟通过` 结束（下单示例：`6901234567892` 库存 120 → 118，取消后回到 120）。
 
@@ -154,6 +158,7 @@ go vet ./...
 - **价格防线**：`salePrice ≤ round2(refPrice × 0.95)`；批发商品（`ExcludeWholesale: true`）与无参考价（`refPrice <= 0`）自动跳过。默认配置：自提 0 元、满 30 元免运费否则 3 元。
 - **商品档案校验**：`POST /api/products` 在 store 层校验条码/名称必填、价格非负、库存非负，并**在服务端执行比价防线**（`UpsertProduct` 内调 `pricing.CheckRetailPrice`，超价返回 `400`，批发与无参考价豁免）；缺省单位补「件」、分类补「未分类」。**`stock` 不传 = 保留原库存**（指针区分「没传」与「传 0」），保证管理端编辑表单不会误清库存。
 - **删除商品档案**：`DeleteProduct` 先查在库量与进行中订单，再删行；**条码字典层（`barcode_lib`）不删**——D6 的永久沉淀，删档后扫码仍能识别。
+- **D28 微信登录**：`wx.login` 的 `code` 只用于服务端换 `openid`（`sns/jscode2session`），**session_key 不出服务器**；`wx_user` 表存 `openid`/`unionid`/`phone`/`nickname`/时间戳（时间是 RFC3339 字符串），`BindWxUser` 对超长昵称**截断不报错**（绝不让登录因为昵称失败），`EnsureCustomer` 只在新名字为空时补名、**绝不覆盖老板维护的姓名**，`ValidPhone` 把坏手机号挡在登录之外。**登录不提权**：手机号仍是价格身份（`customer.tier`），新顾客一律零售档，批发价/白名单只能管理端改（D24 不变）；cookie 与 token 都不发，openid 就是客户端要记住的全部。未配置 `WX_APPID`/`WX_SECRET` 时接口返 `503` 且**其它接口完全不受影响**——所以本机演示与没配密钥的生产环境都能照常跑。
 - **D18 收货地址簿**：`customer_address` 按手机号一档多条（`phone` 建索引），`ListAddresses/SaveAddress/GetAddress/DeleteAddress` 四个方法守住三条语义——第一条自动为默认、`isDefault=true` 时摘掉同号其它默认、删掉默认后由最早一条顶替；`SaveAddress` 不传 `isDefault` 时**不动原有默认标记**（避免改门牌丢默认），更新不存在的 `id` 返回 `404`。订单里存的仍是下单当时的地址快照，改地址簿不影响历史订单。
 - **D23 商品上下架**：`product.on_sale INTEGER NOT NULL DEFAULT 1`，只为老库补的列走 `ensureColumn`（幂等：`PRAGMA table_info` 里没有才 `ALTER TABLE ADD COLUMN`），**升级不用清库**；`SetProductsOnSale(codes, on) (int, error)` 一条 `UPDATE ... WHERE code IN (...)`，返回真正改动的行数；`ListProducts(onSaleOnly=true)` 过滤在售；**`CreateOrder` 会拦下架商品**（即使前端被绕过），形成「顾客端不显示 + 下单端拦截」双保险；`onSale` 用**不带 `omitempty`** 的字段下发，缺字段一律视为上架（老库/老前端不会集体消失）。
 - **上下架与建档是两条路**：`UpsertProduct`（`POST /api/products`）**不读写 `on_sale`**（保持原值），上下架只走 `POST /api/products/onsale`——「编辑不改库存」（D16）与「编辑不改上下架」（D23）是同一条原则的两个实例。

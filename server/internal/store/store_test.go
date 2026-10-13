@@ -1063,3 +1063,105 @@ func TestCustomerNote(t *testing.T) {
 		t.Fatalf("列表未带出备注/标签: %+v", list[0])
 	}
 }
+
+// TestWxUserBind 微信登录档案（第 23 轮 / D28）：手机号校验、openid 幂等、绑手机号不提权。
+func TestWxUserBind(t *testing.T) {
+	st := newTestStore(t)
+
+	// 手机号校验：11 位、1 开头、全数字
+	for _, bad := range []string{"", "1380000111", "138000011112", "23800001111", "1380000111a", "138 0001111"} {
+		if ValidPhone(bad) {
+			t.Errorf("%q 不该被判为合法手机号", bad)
+		}
+	}
+	for _, good := range []string{"13800001111", "19912345678", "15000000000"} {
+		if !ValidPhone(good) {
+			t.Errorf("%q 应判为合法手机号", good)
+		}
+	}
+
+	// 首次登录：只有 openid，没有手机号
+	u, err := st.BindWxUser("o_1", "u_1", "", "")
+	if err != nil {
+		t.Fatalf("首次登录失败: %v", err)
+	}
+	if u.OpenID != "o_1" || u.Phone != "" || u.CreatedAt == "" || u.LastLogin == "" {
+		t.Fatalf("首次登录档案不对: %+v", u)
+	}
+
+	// 再登录（新时间）仍然是同一条记录
+	if _, err := st.BindWxUser("o_1", "u_1", "", ""); err != nil {
+		t.Fatalf("重复登录失败: %v", err)
+	}
+	list, err := st.ListWxUsers(50)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("openid 应幂等（只一条）: %v %+v", err, list)
+	}
+
+	// 绑手机号：等级仍是顾客档案里的零售（老板还没设批发）
+	if _, err := st.BindWxUser("o_1", "u_1", "13800001111", "阿明"); err != nil {
+		t.Fatalf("绑手机号失败: %v", err)
+	}
+	if tier, err := st.GetCustomerTier("13800001111"); err != nil || tier != pricing.TierRetail {
+		t.Fatalf("绑定不该提权: %v %q", err, tier)
+	}
+	if _, err := st.SetCustomerTier("13800001111", "王阿姨", pricing.TierWholesale); err != nil {
+		t.Fatalf("设等级失败: %v", err)
+	}
+
+	// 再登录不带手机号：绑定保留（不许被空手机号抹掉）
+	u, err = st.BindWxUser("o_1", "u_1", "", "")
+	if err != nil || u.Phone != "13800001111" || u.Nickname != "阿明" {
+		t.Fatalf("空手机号不该抹掉已有绑定: %v %+v", err, u)
+	}
+
+	// 坏手机号：报错且不动原绑定
+	if _, err := st.BindWxUser("o_1", "u_1", "12345", ""); err == nil ||
+		!strings.Contains(err.Error(), "手机号格式不对") {
+		t.Fatalf("坏手机号应报错: %v", err)
+	}
+	if u, _, _ := st.GetWxUser("o_1"); u.Phone != "13800001111" {
+		t.Fatalf("坏手机号不该改绑定: %+v", u)
+	}
+
+	// 超长昵称截断到 20 字；换绑另一台微信到同一手机号互不影响
+	long := strings.Repeat("名", 30)
+	if u, err = st.BindWxUser("o_2", "u_2", "13900002222", long); err != nil {
+		t.Fatalf("第二台微信绑定失败: %v", err)
+	}
+	if len([]rune(u.Nickname)) != 20 {
+		t.Fatalf("昵称应截断到 20 字: %q(%d)", u.Nickname, len([]rune(u.Nickname)))
+	}
+	list, err = st.ListWxUsers(50)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("应有两条微信档案: %v %+v", err, list)
+	}
+	if list[0].LastLogin < list[1].LastLogin {
+		t.Errorf("列表应按最近登录倒序: %+v", list)
+	}
+
+	// 不存在 / 非法 openid
+	if _, ok, _ := st.GetWxUser("o_none"); ok {
+		t.Errorf("不存在的 openid 不该返回 ok")
+	}
+	if _, _, err := st.GetWxUser(""); err == nil {
+		t.Errorf("空 openid 应报错")
+	}
+
+	// EnsureCustomer：建档不覆盖已有姓名与等级
+	c, err := st.EnsureCustomer("13800001111", "别的名字")
+	if err != nil {
+		t.Fatalf("EnsureCustomer 失败: %v", err)
+	}
+	if c.Name != "王阿姨" || c.Tier != pricing.TierWholesale {
+		t.Fatalf("EnsureCustomer 不该覆盖姓名/等级: %+v", c)
+	}
+	// 新手机号：用昵称建档，默认零售
+	c2, err := st.EnsureCustomer("13700003333", "小陈")
+	if err != nil || c2.Name != "小陈" || c2.Tier != pricing.TierRetail {
+		t.Fatalf("新顾客建档不对: %v %+v", err, c2)
+	}
+	if _, err := st.EnsureCustomer("12345", ""); err == nil {
+		t.Errorf("坏手机号不该建档")
+	}
+}

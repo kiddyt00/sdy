@@ -20,11 +20,20 @@ function mkWx(routes) {
   const wx = {
     _kv: kv,
     _calls: calls,
+    _loginCode: 'CODE_MOCK',
+    _loginFail: '',
     getStorageSync: (k) => (k in kv ? kv[k] : ''),
     setStorageSync: (k, v) => { kv[k] = v },
     removeStorageSync: (k) => { delete kv[k] },
     showToast: () => {},
     switchTab: () => {},
+    // 假 wx.login：默认给一个 code，可用 _loginCode / _loginFail 改行为
+    login(opts) {
+      const o = opts || {}
+      calls.push({ method: 'LOGIN', path: 'wx.login', data: null })
+      if (wx._loginFail) { if (o.fail) o.fail({ errMsg: wx._loginFail }); return }
+      if (o.success) o.success({ code: wx._loginCode })
+    },
     request(opts) {
       const method = (opts.method || 'GET').toUpperCase()
       const full = String(opts.url).replace(/^https?:\/\/[^/]+/, '')
@@ -181,6 +190,10 @@ async function main() {
   store.addToCart({ code: 'C', name: '丙', salePrice: 1.11 }, 3)
   ok(store.cartAmount() === 3.33, '金额按两位小数聚合：' + store.cartAmount())
   ok(store.orderItems()[0].qty === 3 && store.orderItems()[0].price === 1.11, 'orderItems 只带 code/name/price/qty')
+  store.setPrice('C', 2)
+  ok(store.cartAmount() === 6, 'setPrice 改单价生效（登录/换等级后按服务端有效价刷新）')
+  ok(store.setPrice('NOPE', 1).length === store.getCart().length, 'setPrice 对不存在的条码无副作用')
+  store.addToCart({ code: 'C', name: '丙', salePrice: 1.11 }, 1)
 
   /* ---------- ⑥ 收货信息 + 后端地址 ---------- */
   section('⑥ 收货信息与后端地址')
@@ -228,6 +241,98 @@ async function main() {
   ok(hit.found === true && hit.name === '农夫山泉' && hit.source === 'lib', '在线扫码走后端解析链并透传 source=lib')
   const resolveCall = global.wx._calls[global.wx._calls.length - 1]
   ok(resolveCall.method === 'GET' && resolveCall.path.indexOf('/api/barcode/resolve?code=6902083881234') === 0, '请求形如 GET /api/barcode/resolve?code=…')
+
+  /* ---------- ⑧ 等级与有效价（D24，与 web/pricing.js 同口径） ---------- */
+  section('⑧ 等级与有效价（D24）')
+  ok(rules.tierLabel('wholesale') === '批发' && rules.tierLabel('vip') === '白名单' && rules.tierLabel('retail') === '零售',
+    '等级文案：零售 / 批发 / 白名单')
+  ok(rules.tierLabel('') === '零售' && rules.tierLabel(null) === '零售', '空等级按零售')
+  ok(rules.normalizeTier('VIP') === 'retail', '未知大小写等级归一为零售（只认小写枚举）')
+  ok(rules.validTier('wholesale') === true && rules.validTier('gold') === false && rules.validTier('') === true, 'validTier 认三个枚举')
+  ok(rules.isWholesaleTier('vip') === true && rules.isWholesaleTier('retail') === false, '批发/白名单算批发档')
+  ok(rules.effectivePrice('retail', 2.5, 2.2) === 2.5, '零售等级用零售价')
+  ok(rules.effectivePrice('wholesale', 2.5, 2.2) === 2.2, '批发等级用批发价')
+  ok(rules.effectivePrice('wholesale', 2.5, 0) === 2.5, '没设批发价 → 回落零售价')
+
+  /* ---------- ⑨ 微信登录（第 23 轮 / D28） ---------- */
+  section('⑨ 微信登录与顾客身份')
+  const LOGIN_OK = { method: 'POST', path: '/api/wx/login', body: { ok: true, openid: 'o_test_1', bound: true, phone: '13800001111', name: '王阿姨', tier: 'wholesale' } }
+  global.wx = mkWx(ROUTES.concat([LOGIN_OK]))
+  api.clearSession()
+  await api.probe()
+  ok(api.isLoggedIn() === false && api.boundPhone() === '' && api.session() === null, '未登录：isLoggedIn=false、boundPhone 空、session=null')
+  ok(api.sessionLabel().indexOf('未登录') >= 0, '未登录文案：' + api.sessionLabel())
+
+  const sess = await api.wxLogin({ phone: '13800001111', nickname: '阿明' })
+  ok(sess.openid === 'o_test_1' && sess.tier === 'wholesale' && sess.bound === true, '登录成功并记住 openid / 等级')
+  ok(api.isLoggedIn() === true && api.boundPhone() === '13800001111', '登录态落地本地')
+  ok(global.wx.getStorageSync('sdy_mp_session') && global.wx.getStorageSync('sdy_mp_session').name === '王阿姨', '会话写入 sdy_mp_session')
+  ok(api.sessionLabel().indexOf('王阿姨') >= 0 && api.sessionLabel().indexOf('批发') >= 0, '登录态文案：' + api.sessionLabel())
+  const loginCall = global.wx._calls.filter((c) => c.path === '/api/wx/login')[0]
+  ok(!!loginCall && loginCall.data.code === 'CODE_MOCK', 'body 带 wx.login 拿到的 code')
+  ok(loginCall.data.phone === '13800001111' && loginCall.data.nickname === '阿明', 'body 带手机号与称呼')
+  ok(!!global.wx._calls.filter((c) => c.method === 'LOGIN')[0], '确实调用了 wx.login')
+
+  list = await api.listProducts()
+  const reqPath = global.wx._calls.filter((c) => c.path.indexOf('/api/products') === 0).pop().path
+  ok(reqPath.indexOf('onSale=1') > 0, '顾客端只请求上架商品：' + reqPath)
+  ok(reqPath.indexOf('phone=13800001111') > 0, '已登录时带 phone，让服务端按等级给价：' + reqPath)
+
+  // 服务端给了有效价 price 就用它（零售价仍保留，便于页面显示划线价）
+  global.wx = mkWx([
+    { method: 'GET', path: '/healthz', body: { ok: true, cloudConfigured: false, circuitOpen: false, cloudFails: 0 } },
+    {
+      method: 'GET', path: '/api/products',
+      body: { items: [{ code: '6901234567892', name: '可口可乐', spec: '330ml 罐', category: '饮料', unit: '罐', salePrice: 2.5, wholesalePrice: 2.2, price: 2.2, tier: 'wholesale', stock: 10 }], total: 1, tier: 'wholesale' }
+    }
+  ])
+  await api.probe()
+  list = await api.listProducts()
+  ok(list[0].salePrice === 2.2 && list[0].retailPrice === 2.5, '有效价取服务端 price（批发 2.20，零售价留 2.50）')
+  ok(list[0].priceText === '2.20', '显示价按有效价格式化：' + list[0].priceText)
+
+  // 退出登录：会话与价格缓存一起清掉（免得留旧价）
+  global.wx.setStorageSync('sdy_mp_products', [{ code: 'x' }])
+  api.clearSession()
+  ok(api.isLoggedIn() === false && api.session() === null, '退出登录后会话清空')
+  ok(!global.wx.getStorageSync('sdy_mp_products'), '退出登录后价格缓存作废')
+
+  // 没有 wx.login 的环境（例如被误用到 H5）
+  const savedLogin = global.wx.login
+  delete global.wx.login
+  let lerr = ''
+  await api.wxLogin({}).catch((e) => { lerr = e.message })
+  ok(lerr.indexOf('wx.login') >= 0, '没有 wx.login 时报错：' + lerr)
+  global.wx.login = savedLogin
+  // wx.login 本身失败
+  global.wx._loginFail = 'login:fail mock'
+  lerr = ''
+  await api.wxLogin({}).catch((e) => { lerr = e.message })
+  ok(lerr.indexOf('login:fail mock') >= 0, 'wx.login 失败原文透出：' + lerr)
+  global.wx._loginFail = ''
+  // 微信没给 code
+  global.wx._loginCode = ''
+  lerr = ''
+  await api.wxLogin({}).catch((e) => { lerr = e.message })
+  ok(lerr.indexOf('没有返回 code') >= 0, '没有 code 时报错：' + lerr)
+  global.wx._loginCode = 'CODE_MOCK'
+
+  // 服务端拒绝：错误文案原样透出（D12）
+  global.wx = mkWx(ROUTES.concat([
+    { method: 'POST', path: '/api/wx/login', status: 400, body: { error: '手机号格式不对（要 11 位、1 开头）' } }
+  ]))
+  await api.probe()
+  lerr = ''
+  await api.wxLogin({ phone: '12345' }).catch((e) => { lerr = e.message })
+  ok(lerr.indexOf('手机号格式不对') >= 0, '服务端错误原文透出：' + lerr)
+  ok(api.isLoggedIn() === false, '登录失败不留会话')
+
+  // 离线时不冒充登录成功
+  global.wx = wxOffline
+  await api.probe()
+  lerr = ''
+  await api.wxLogin({}).catch((e) => { lerr = e.message })
+  ok(lerr.indexOf('后端未连接') >= 0, '离线直接拒绝登录：' + lerr)
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')
