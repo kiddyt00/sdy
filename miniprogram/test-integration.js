@@ -113,6 +113,65 @@ async function main() {
   const stockAfterScan = (await api.listProducts('可口可乐')).filter((p) => p.code === '6901234567892')[0].stock
   ok(stockAfterScan === stockAtScan, '扫码只读：库存不变（' + stockAfterScan + '，D8）')
 
+  section('⑧ 商品详情 / 分类（R24 新增接口）')
+  const detail = await api.getProduct('6901234567892')
+  ok(detail.code === '6901234567892' && detail.name === '可口可乐', '按条码取详情：' + detail.name)
+  ok(detail.price === 2.5 && detail.salePrice === 2.5, '零售顾客看到零售价 2.5')
+  ok(!!detail.emoji, '带 emoji 兜底图标：' + detail.emoji)
+  let detailErr = ''
+  try { await api.getProduct('9999999999999') } catch (e) { detailErr = e.message }
+  ok(detailErr.indexOf('商品') >= 0, '未知条码报错原文：' + detailErr)
+
+  const cats = await api.listCategories()
+  ok(cats.length >= 1, '分类接口返回 ' + cats.length + ' 个分类')
+  ok(cats.every((c) => typeof c.name === 'string' && c.name !== '' && c.count > 0), '每个分类都有名字与在售件数')
+  ok(cats.some((c) => c.name === '饮料'), '含「饮料」分类（' + cats.map((c) => c.name + '/' + c.count).join(' ') + '）')
+
+  section('⑨ 批发等级 + 地址簿（手机号即身份）')
+  kv['sdy_mp_session'] = { openid: 'integration-test', phone: '13800001111', name: '王阿姨', tier: 'wholesale' }
+  ok(api.boundPhone() === '13800001111', '注入会话手机号：' + api.boundPhone())
+  const dw = await api.getProduct('6901234567892')
+  ok(dw.tier === 'wholesale' && dw.price === 2.2, '批发顾客看到批发价 2.2（tier=' + dw.tier + '）')
+
+  // 地址簿换一个演示数据里没有的号，第一条必然成为默认地址（老号 13800001111 演示数据已带地址）
+  kv['sdy_mp_session'] = { openid: 'integration-test', phone: '13800138000', name: '联调顾客', tier: 'retail' }
+  ok(api.boundPhone() === '13800138000', '地址簿换到干净手机号：' + api.boundPhone())
+  const addr1 = await api.saveAddress({ contact: '联调收货人', address: '福建省福州市联调路 1 号' })
+  ok(addr1.id !== '' && addr1.contact === '联调收货人', '新增地址返回 id=' + addr1.id)
+  ok(addr1.isDefault === true, '第一条自动成为默认地址')
+  const addr2 = await api.saveAddress({ contact: '联调乙', address: '福建省福州市联调路 2 号', isDefault: true })
+  const addrList = await api.listAddresses()
+  const a1 = addrList.filter((x) => x.id === addr1.id)[0]
+  const a2 = addrList.filter((x) => x.id === addr2.id)[0]
+  ok(addrList.length >= 2, '地址列表至少 2 条（' + addrList.length + '）')
+  ok(a2.isDefault === true && a1.isDefault === false, '设默认会把旧的默认顶掉')
+  ok(addr1.id === String(addr1.id), 'id 一律当字符串用（模板不区分数字/字符串）')
+  const del = await api.deleteAddress(addr1.id)
+  ok(del.ok === true || del.id !== undefined, '删除地址有回执')
+  ok((await api.listAddresses()).every((x) => x.id !== addr1.id), '删掉的地址不再出现')
+  await api.deleteAddress(addr2.id)
+  api.clearSession()
+
+  section('⑩ 订单状态机（配送→完成，非法迁移要拦）')
+  store.clearCart()
+  const colaNow = (await api.listProducts('可口可乐')).filter((p) => p.code === '6901234567892')[0]
+  store.addToCart(colaNow, 1)
+  const r2 = await api.createOrder({
+    customerName: '状态测试', phone: '13800138000', address: '福建省福州市联调路 1 号',
+    deliveryType: 'delivery', items: store.orderItems()
+  })
+  const o2 = r2.order
+  ok(o2.deliveryFee === 3 && o2.total === 5.5, '送货不满 30 元加 3 元配送费：' + o2.total)
+  const moving = await api.advanceOrder(o2.id, 'delivering')
+  ok(moving.status === 'delivering' && moving.statusText === '配送中', '待处理→配送中')
+  ok(moving.canAdvance === true && moving.canCancel === false, '配送中只给「确认收货」按钮')
+  const fin = await api.advanceOrder(o2.id, 'done')
+  ok(fin.status === 'done' && fin.statusText === '已完成', '配送中→已完成')
+  ok(fin.canReorder === true, '已完成给「再来一单」按钮')
+  let advErr = ''
+  try { await api.advanceOrder(o2.id, 'ready') } catch (e) { advErr = e.message }
+  ok(advErr.indexOf('状态不允许') >= 0, '已完成不能退回待自提：' + advErr)
+
   section('⑦ 微信登录（没配 AppSecret 就不假装成功）')
   let loginErr = ''
   try {

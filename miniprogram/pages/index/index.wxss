@@ -1,1 +1,46 @@
-.list { margin-top: 8rpx; }
+/* 首页 */
+.shopbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8rpx 4rpx 20rpx;
+}
+.sb-name { font-size: 36rpx; font-weight: 700; letter-spacing: 1rpx; }
+.sb-sub { font-size: 22rpx; color: #6b7280; margin-top: 6rpx; }
+
+.searchbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+.sbox {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 999rpx;
+  padding: 16rpx 24rpx;
+  margin-right: 12rpx;
+}
+.sph { font-size: 26rpx; color: #9ca3af; margin-left: 10rpx; }
+
+.kwbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  border-radius: 14rpx;
+  padding: 12rpx 20rpx;
+  margin-bottom: 16rpx;
+}
+.kwt { font-size: 24rpx; color: #374151; }
+.kwx { font-size: 24rpx; color: #16a34a; padding: 4rpx 10rpx; }
+
+van-notice-bar { margin-bottom: 16rpx; border-radius: 14rpx; overflow: hidden; }
+
+.more {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 22rpx;
+  padding: 24rpx 0 180rpx;
+}

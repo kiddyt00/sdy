@@ -1,0 +1,54 @@
+<wxs src="../../utils/tools.wxs" module="tools" />
+<view class="cpage">
+  <view class="cbar">
+    <view class="csearch" bindtap="goSearch">
+      <van-icon name="search" size="30rpx" color="#9ca3af" />
+      <text class="cph">搜商品名 / 条码</text>
+    </view>
+  </view>
+
+  <view class="cbody">
+    <scroll-view class="cside" scroll-y>
+      <view
+        wx:for="{{cats}}"
+        wx:key="name"
+        class="csitem {{item.name === cat ? 'on' : ''}}"
+        data-name="{{item.name}}"
+        bindtap="onSelect"
+      >
+        <text class="csname">{{item.name}}</text>
+        <text class="csnum">{{item.count}}</text>
+      </view>
+    </scroll-view>
+
+    <scroll-view class="cmain" scroll-y>
+      <van-skeleton wx:if="{{loading}}" title row="4" />
+      <van-empty wx:elif="{{empty}}" description="这个分类还没上架商品" />
+      <block wx:else>
+        <view class="crow" wx:for="{{products}}" wx:key="code" data-code="{{item.code}}" bindtap="goDetail">
+          <view class="cthumb">
+            <image wx:if="{{item.img}}" class="cimg" src="{{item.img}}" mode="aspectFill" lazy-load />
+            <text wx:else>{{item.emoji}}</text>
+          </view>
+          <view class="cinfo">
+            <view class="cname">{{item.name}}</view>
+            <view class="cspec">{{item.spec || item.brand || '—'}}</view>
+            <view class="cfoot">
+              <view class="cprice"><text class="csym">¥</text>{{tools.fix2(item.price)}}</view>
+              <view
+                class="cadd {{item.stock <= 0 ? 'dis' : ''}}"
+                data-code="{{item.code}}"
+                catchtap="onAdd"
+              >{{item.stock <= 0 ? '缺货' : '＋'}}</view>
+            </view>
+          </view>
+        </view>
+      </block>
+    </scroll-view>
+  </view>
+
+  <view class="ccart" wx:if="{{cartCount > 0}}" bindtap="goCart">
+    <van-icon name="shopping-cart-o" size="34rpx" color="#fff" />
+    <text class="ccart-n">{{cartCount}}</text>
+  </view>
+</view>

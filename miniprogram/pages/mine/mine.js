@@ -1,7 +1,10 @@
-// 我的：登录 / 连接状态 / 后端地址 / 店铺信息
+// 我的：登录 / 订单状态概览 / 地址簿 / 连接状态（第 24 轮重构）
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
 const rules = require('../../utils/rules.js')
+
+const TAB_KEY = 'sdy_mp_order_tab'
+const AVATAR_KEY = 'sdy_mp_avatar'
 
 Page({
   data: {
@@ -20,8 +23,17 @@ Page({
     phone: '',
     nickname: '',
     busy: false,
+    avatar: '',
+    devMode: false,
+    counts: { pending: 0, delivering: 0, ready: 0, done: 0 },
+    orderGrid: [
+      { key: 'pending', label: '待处理', icon: 'tosend' },
+      { key: 'delivering', label: '配送中', icon: 'logistics' },
+      { key: 'ready', label: '待自提', icon: 'shop-o' },
+      { key: 'done', label: '已完成', icon: 'completed' }
+    ],
     shop: {
-      name: '小邻里超市',
+      name: '啥都有快送',
       hours: '07:30 – 22:30',
       notice: '满 30 元免配送费（自提随时免）；4 人小店，当天送当天到。'
     }
@@ -30,7 +42,11 @@ Page({
   onShow() {
     this.syncSession()
     this.setData({ apiBase: api.base(), cartCount: store.cartCount() })
-    return this.refresh()
+    this.loadAvatar()
+    return this.refresh().then((st) => {
+      this.loadCounts()
+      return st
+    })
   },
 
   // 把登录态同步到页面（退出/登录后都调一次）
@@ -44,6 +60,44 @@ Page({
       sessionPhone: (s && s.phone) || '',
       tierText: rules.tierLabel(s && s.tier)
     })
+  },
+
+  loadAvatar() {
+    try {
+      const a = wx.getStorageSync(AVATAR_KEY)
+      if (a) this.setData({ avatar: a })
+    } catch (e) { /* 忽略 */ }
+  },
+
+  // open-type="chooseAvatar" 回传的临时头像，只存在本机（服务端没存头像字段）
+  onChooseAvatar(e) {
+    const url = (e.detail && e.detail.avatarUrl) || ''
+    if (!url) return null
+    this.setData({ avatar: url })
+    try {
+      wx.setStorageSync(AVATAR_KEY, url)
+    } catch (err) { /* 忽略 */ }
+    return url
+  },
+
+  // 订单状态条：把想看的 tab 存下来，切到订单页读走（tab 页不能带参数）
+  goOrdersWith(e) {
+    const key = (e.currentTarget.dataset.key) || ''
+    try {
+      wx.setStorageSync(TAB_KEY, key)
+    } catch (err) { /* 忽略 */ }
+    wx.switchTab({ url: '/pages/orders/orders' })
+  },
+
+  loadCounts() {
+    return api.listOrders('').then((list) => {
+      const c = { pending: 0, delivering: 0, ready: 0, done: 0 }
+      ;(list || []).forEach((o) => {
+        if (c[o.status] !== undefined) c[o.status] += 1
+      })
+      this.setData({ counts: c })
+      return c
+    }, () => null)
   },
 
   onPhone(e) {
@@ -71,6 +125,7 @@ Page({
       .then((s) => {
         this.setData({ busy: false, phone: '', nickname: '' })
         this.syncSession()
+        this.loadCounts()
         this.toast('登录成功：' + (s.name || '微信顾客') + ' · ' + rules.tierLabel(s.tier))
         return s
       })
@@ -86,6 +141,7 @@ Page({
       if (!yes) return null
       api.clearSession()
       this.syncSession()
+      this.loadCounts()
       this.toast('已退出登录')
       return null
     })
@@ -102,6 +158,13 @@ Page({
           apiBase: st.base,
           cartCount: store.cartCount()
         })
+        const s = getApp().globalData && getApp().globalData.settings
+        if (s && s.name) {
+          this.setData({
+            'shop.name': s.name,
+            'shop.notice': s.notice || s.footer || this.data.shop.notice
+          })
+        }
         return st
       })
   },
@@ -117,11 +180,30 @@ Page({
     })
   },
 
+  toggleDev() {
+    this.setData({ devMode: !this.data.devMode })
+  },
+
   goOrders() {
     if (typeof wx !== 'undefined' && wx.switchTab) wx.switchTab({ url: '/pages/orders/orders' })
   },
   goCart() {
     if (typeof wx !== 'undefined' && wx.switchTab) wx.switchTab({ url: '/pages/cart/cart' })
+  },
+  goAddress() {
+    if (typeof wx !== 'undefined' && wx.navigateTo) wx.navigateTo({ url: '/pages/address/list' })
+  },
+  goIndex() {
+    if (typeof wx !== 'undefined' && wx.switchTab) wx.switchTab({ url: '/pages/index/index' })
+  },
+  callShop() {
+    const p = (getApp().globalData && getApp().globalData.settings && getApp().globalData.settings.phone) || ''
+    if (!p) {
+      this.toast('店里还没留电话')
+      return null
+    }
+    if (typeof wx !== 'undefined' && wx.makePhoneCall) wx.makePhoneCall({ phoneNumber: String(p) })
+    return null
   },
 
   clearAll() {

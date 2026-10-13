@@ -1,5 +1,5 @@
 {
-  "description": "小邻里超市 · 顾客端小程序（M5）。appid 为正式小程序 AppID（wx3f2d2aa52660b80f，公开信息）；未配置正式域名前，开发者工具里保持 urlCheck:false 以便连本机 8093 联调。",
+  "description": "啥都有快送 · 顾客端小程序（M5）。appid 为正式小程序 AppID（wx3f2d2aa52660b80f，公开信息）；未配置正式域名前，开发者工具里保持 urlCheck:false 以便连本机 8093 联调。构建产物 miniprogram_npm/ 已入库（Vant Weapp dist），换机后无需再「构建 npm」；ignoreUploadUnusedFiles 保证未用到的组件不打进包里。",
   "appid": "wx3f2d2aa52660b80f",
   "projectname": "sdy-mall",
   "compileType": "miniprogram",
@@ -10,17 +10,27 @@
     "es6": true,
     "enhance": true,
     "postcss": true,
-    "minified": false,
+    "minified": true,
+    "minifyWXSS": true,
+    "minifyWXML": true,
     "coverView": true,
     "nodeModules": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "ignoreUploadUnusedFiles": true,
     "checkSiteMap": true
   },
   "condition": {
     "miniprogram": {
       "list": [
         { "name": "首页", "pathName": "pages/index/index", "query": "", "scene": null },
+        { "name": "分类", "pathName": "pages/category/category", "query": "", "scene": null },
+        { "name": "搜索", "pathName": "pages/search/search", "query": "", "scene": null },
+        { "name": "商品详情", "pathName": "pages/goods/goods", "query": "code=6902083881234", "scene": null },
         { "name": "购物车", "pathName": "pages/cart/cart", "query": "", "scene": null },
         { "name": "订单", "pathName": "pages/orders/orders", "query": "", "scene": null },
+        { "name": "订单详情", "pathName": "pages/order/order", "query": "id=1", "scene": null },
+        { "name": "地址簿", "pathName": "pages/address/list", "query": "", "scene": null },
         { "name": "我的", "pathName": "pages/mine/mine", "query": "", "scene": null }
       ]
     }

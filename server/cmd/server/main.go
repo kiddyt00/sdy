@@ -337,22 +337,56 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 	})
 
 	// 商品档案删除（D16）：DELETE /api/products/{code}
-	// 约束由 store 层把关：库存必须先盘点为 0、不能有进行中的订单。
-	mux.HandleFunc("/api/products/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
+	// 商品分类（顾客端分类页，第 24 轮）：/api/products/categories?onSale=1
+	mux.HandleFunc("/api/products/categories", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
 		}
+		items, err := st.ListCategories(r.URL.Query().Get("onSale") == "1")
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
+	})
+
+	// 单个商品：只读详情（顾客端商品详情页）+ 删除（管理端）。
+	// 约束由 store 层把关：删除必须先盘点为 0、不能有进行中的订单。
+	mux.HandleFunc("/api/products/", func(w http.ResponseWriter, r *http.Request) {
 		code := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/products/"), "/")
 		if code == "" {
 			writeJSON(w, 400, map[string]string{"error": "缺少条码"})
 			return
 		}
-		if err := st.DeleteProduct(code); err != nil {
-			writeErr(w, err)
-			return
+		switch r.Method {
+		case http.MethodGet:
+			p, err := st.GetProduct(code)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			// 价格口径与列表完全一致：带 phone 按该顾客等级算有效价（D12/D24），页面只读 price。
+			phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+			tier := pricing.TierRetail
+			if phone != "" {
+				if tier, err = st.GetCustomerTier(phone); err != nil {
+					writeErr(w, err)
+					return
+				}
+			}
+			p.Tier = tier
+			p.Price = pricing.EffectivePrice(tier, p.SalePrice, p.WholesalePrice)
+			writeJSON(w, 200, p)
+		case http.MethodDelete:
+			if err := st.DeleteProduct(code); err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"ok": true, "code": code})
+		default:
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 		}
-		writeJSON(w, 200, map[string]any{"ok": true, "code": code})
 	})
 
 	// 订单：列表 / 下单 / 详情 / 状态流转

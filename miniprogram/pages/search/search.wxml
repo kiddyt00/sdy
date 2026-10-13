@@ -1,0 +1,62 @@
+<wxs src="../../utils/tools.wxs" module="tools" />
+<view class="spage">
+  <view class="sbar">
+    <view class="sbox">
+      <van-icon name="search" size="32rpx" color="#9ca3af" />
+      <input
+        class="sinput"
+        value="{{keyword}}"
+        placeholder="搜商品名 / 品牌 / 条码"
+        placeholder-class="sph"
+        confirm-type="search"
+        focus="{{true}}"
+        bindinput="onInput"
+        bindconfirm="onConfirm"
+      />
+      <van-icon wx:if="{{keyword}}" name="clear" size="32rpx" color="#c4c7cc" catchtap="onClear" />
+    </view>
+    <view class="scancel" bindtap="goIndex">取消</view>
+  </view>
+
+  <block wx:if="{{!searched}}">
+    <view class="ssec" wx:if="{{hist.length}}">
+      <view class="ssec-h">
+        <text>搜索历史</text>
+        <van-icon name="delete-o" size="34rpx" color="#9ca3af" catchtap="clearHist" />
+      </view>
+      <view class="swrap">
+        <view class="sword" wx:for="{{hist}}" wx:key="*this" data-w="{{item}}" bindtap="tapWord">{{item}}</view>
+      </view>
+    </view>
+
+    <view class="ssec">
+      <view class="ssec-h"><text>大家在找</text></view>
+      <view class="swrap">
+        <view class="sword hot" wx:for="{{hot}}" wx:key="*this" data-w="{{item}}" bindtap="tapWord">{{item}}</view>
+      </view>
+    </view>
+  </block>
+
+  <van-skeleton wx:elif="{{loading}}" title row="3" />
+
+  <van-empty wx:elif="{{empty}}" description="没找到这件商品" />
+
+  <view class="slist" wx:else>
+    <view class="scount">共 {{results.length}} 件</view>
+    <view class="grid">
+      <view class="gitem" wx:for="{{results}}" wx:key="code" data-code="{{item.code}}" bindtap="goDetail">
+        <view class="gthumb">
+          <image wx:if="{{item.img}}" class="gimg" src="{{item.img}}" mode="aspectFill" lazy-load />
+          <text wx:else>{{item.emoji}}</text>
+        </view>
+        <view class="gbody">
+          <view class="gname">{{item.name}}</view>
+          <view class="gspec">{{item.spec || item.brand || '—'}}</view>
+          <view class="gfoot">
+            <view class="gprice"><text class="gsym">¥</text>{{tools.fix2(item.price)}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,95 @@
+/* 商品详情 */
+.gpage { padding-bottom: 240rpx; }
+
+.hero {
+  width: 100%;
+  height: 600rpx;
+  background: #eff6ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+.hero-img { width: 100%; height: 100%; }
+.hero-emoji { font-size: 200rpx; line-height: 1; }
+.hero-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: rgba(22, 163, 74, .92);
+  color: #fff;
+  font-size: 22rpx;
+  padding: 6rpx 18rpx;
+  border-bottom-right-radius: 14rpx;
+}
+
+.pcard,
+.qcard,
+.scard {
+  background: #fff;
+  margin: 16rpx 24rpx;
+  border-radius: 20rpx;
+  padding: 24rpx;
+}
+.pline { display: flex; align-items: center; justify-content: space-between; }
+.pprice { color: #dc2626; font-weight: 700; font-size: 46rpx; line-height: 1; }
+.psym { font-size: 26rpx; }
+.punit { font-size: 22rpx; color: #9ca3af; font-weight: 400; margin-left: 6rpx; }
+.pori { font-size: 22rpx; color: #9ca3af; text-decoration: line-through; margin-top: 8rpx; }
+.pname { font-size: 34rpx; font-weight: 700; line-height: 48rpx; margin-top: 14rpx; }
+.pmeta { display: flex; flex-wrap: wrap; margin-top: 10rpx; }
+.pmeta text {
+  font-size: 22rpx;
+  color: #6b7280;
+  background: #f5f6f8;
+  border-radius: 8rpx;
+  padding: 4rpx 12rpx;
+  margin: 0 10rpx 10rpx 0;
+}
+.pstock { font-size: 24rpx; color: #16a34a; margin-top: 6rpx; }
+.pstock.zero { color: #dc2626; }
+
+.qcard { display: flex; align-items: center; justify-content: space-between; }
+.qlabel { font-size: 28rpx; font-weight: 600; }
+
+.scard .srow { display: flex; align-items: center; }
+.sname { font-size: 30rpx; font-weight: 600; margin-left: 12rpx; }
+.saddr { margin-top: 8rpx; }
+.shint { margin-top: 14rpx; line-height: 36rpx; }
+
+/* 底部：购物车小图标 + Vant 动作条（动作条自身 fixed，这里只做左图标） */
+.gbarbox {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  background: #fff;
+  box-shadow: 0 -4rpx 20rpx rgba(0, 0, 0, .06);
+  padding-left: 20rpx;
+  padding-bottom: constant(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 60;
+}
+.gbarbox van-goods-action { flex: 1; position: static; }
+.gcart {
+  position: relative;
+  width: 100rpx;
+  text-align: center;
+  padding: 12rpx 0;
+}
+.gcart-n {
+  position: absolute;
+  right: 16rpx;
+  top: 0;
+  min-width: 30rpx;
+  height: 30rpx;
+  line-height: 30rpx;
+  border-radius: 999rpx;
+  background: #dc2626;
+  color: #fff;
+  font-size: 20rpx;
+  padding: 0 6rpx;
+}

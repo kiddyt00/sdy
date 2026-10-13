@@ -250,6 +250,62 @@ fresh();
   ok(Mall.cartSummary().count === 0, '下单后购物车清空');
 }
 
+// ============ ⑩ 立即购买（不碰购物车） ============
+section('⑩ 立即购买（不碰购物车）');
+const COLA = '6901234567892';    // 2.5
+const WATER = '6902083881234';   // 1.8
+fresh();
+Mall.addToCart(WATER, 1);
+ok(Mall.getCart().length === 1, '购物车原有 1 行（农夫山泉）');
+Mall.setBuyNow([{ code: COLA, qty: 2 }]);
+{
+  const s = Mall.cartSummary();
+  ok(s.count === 2 && Math.abs(s.subtotal - 5) < 1e-6, '立即购买只算这一件：2×2.5=5');
+  ok(s.lines.length === 1 && s.lines[0].code === COLA, '结算视图里只有这一件');
+}
+const colaStock = Mall.getProduct(COLA).stock;
+const waterStock = Mall.getProduct(WATER).stock;
+const bnow = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '立即购买顾客', phone: '13800138000' } });
+ok(bnow.items.length === 1 && bnow.items[0].code === COLA && bnow.total === 5, '下单只下这一件，自提 5 元');
+ok(Mall.getProduct(COLA).stock === colaStock - 2, '只扣这一件的库存：' + colaStock + ' → ' + Mall.getProduct(COLA).stock);
+ok(Mall.getProduct(WATER).stock === waterStock, '购物车里那件库存没被扣');
+ok(Mall.peekBuyNow() === null, '下单后自动退出立即购买模式');
+ok(Mall.getCart().length === 1 && Mall.getCart()[0].code === WATER, '原购物车原封不动');
+ok(Mall.cartSummary().count === 1, '视图回到真实购物车');
+
+Mall.setBuyNow([{ code: COLA, qty: 1 }]);
+Mall.clearBuyNow();
+ok(Mall.peekBuyNow() === null && Mall.cartSummary().count === 1, 'clearBuyNow 只退出模式，不动购物车');
+
+Mall.setBuyNow([{ code: COLA, qty: 1 }]);
+Mall.addToCart(WATER, 1);
+ok(Mall.peekBuyNow() === null, '手动动购物车就退出立即购买模式（两套数据不打架）');
+ok(Mall.cartSummary().count === 2, '退出后算的是真实购物车（1+1）');
+Mall.setBuyNow([]);
+ok(Mall.peekBuyNow() === null, '空数组等于没开立即购买');
+Mall.setBuyNow([{ code: COLA, qty: 1 }]);
+ok(Mall.cartSummary().count === 1 && Mall.getCart()[0].code === COLA, '开启后结算只看到立即购买那一件');
+Mall.clearBuyNow();
+Mall.clearCart();
+
+// ============ ⑪ 订单状态文案（与小程序同口径） ============
+section('⑪ 订单状态文案');
+const rules = require('../miniprogram/utils/rules.js');
+fresh();
+const hintCases = [
+  { status: 'pending', deliveryType: 'delivery' },
+  { status: 'pending', deliveryType: 'pickup' },
+  { status: 'delivering', deliveryType: 'delivery' },
+  { status: 'ready', deliveryType: 'pickup' },
+  { status: 'done', deliveryType: 'delivery' },
+  { status: 'cancelled', deliveryType: 'pickup' }
+];
+hintCases.forEach((c) => {
+  ok(Mall.statusHint(c) === rules.statusHint(c) && Mall.statusHint(c) !== '',
+    '文案与小程序一致：' + c.status + '/' + c.deliveryType + ' → ' + Mall.statusHint(c));
+});
+ok(Mall.statusHint(null) === '', '空订单一句话也不编');
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

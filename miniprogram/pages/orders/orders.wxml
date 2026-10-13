@@ -1,26 +1,57 @@
-<view class="page">
-  <view class="bar">
+<wxs src="../../utils/tools.wxs" module="tools" />
+<view class="opage">
+  <view class="obar">
+    <view class="otitle">我的订单</view>
     <view class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
-    <view class="muted">共 {{orders.length}} 单</view>
   </view>
 
-  <view class="empty" wx:if="{{!orders.length && !loading}}">还没有订单，去首页逛逛吧</view>
+  <van-tabs active="{{activeTab}}" bind:change="onTabChange" color="#16a34a" line-width="40rpx" sticky>
+    <van-tab wx:for="{{tabs}}" wx:key="key" title="{{item.label}}" />
+  </van-tabs>
 
-  <view class="section" wx:for="{{orders}}" wx:key="id">
-    <view class="row">
-      <view class="muted">{{item.createdText}}</view>
-      <view class="pill st-{{item.status}}">{{item.statusText}}</view>
-    </view>
-    <view class="row"><view class="oid">{{item.id}}</view></view>
-    <view class="items">{{item.summary}}</view>
-    <view class="row">
-      <view class="muted">{{item.deliveryText}}{{item.address ? ' · ' + item.address : ''}}</view>
-      <view class="total">¥{{item.totalText}}</view>
-    </view>
-    <view class="row muted" style="font-size:22rpx">商品 ¥{{item.subtotalText}} + 配送费 ¥{{item.feeText}}</view>
-    <view class="ops">
-      <view class="btn btn-ghost" data-id="{{item.id}}" bindtap="onReorder">再来一单</view>
-      <view class="btn btn-ghost" wx:if="{{item.status === 'pending'}}" data-id="{{item.id}}" bindtap="onCancel">取消订单</view>
+  <van-skeleton wx:if="{{loading}}" title row="4" />
+
+  <van-empty wx:elif="{{empty}}" description="这里还没有订单">
+    <van-button round type="primary" size="small" bind:click="goIndex">去逛逛</van-button>
+  </van-empty>
+
+  <view class="olist" wx:else>
+    <view class="ocard" wx:for="{{orders}}" wx:key="id">
+      <view class="ohead" data-id="{{item.id}}" bindtap="goDetail">
+        <view class="oid">单号 {{item.id}}</view>
+        <view class="ostatus s-{{item.status}}">{{item.statusText}}</view>
+      </view>
+
+      <view class="oitems" data-id="{{item.id}}" bindtap="goDetail">
+        <view class="oitem" wx:for="{{item.items}}" wx:for-item="g" wx:key="code">
+          <view class="othumb">🛒</view>
+          <view class="oinfo">
+            <view class="oname">{{g.name}}</view>
+            <view class="ospec">¥{{tools.fix2(g.price)}} × {{g.qty}}</view>
+          </view>
+          <view class="oamt">¥{{tools.fix2(g.amount)}}</view>
+        </view>
+      </view>
+
+      <view class="ohint">{{item.hint}}</view>
+
+      <view class="ofoot">
+        <view class="ometa">
+          <text>{{item.createdText}}</text>
+          <text class="odot">·</text>
+          <text>{{item.deliveryText}}</text>
+          <text class="odot">·</text>
+          <text>{{item.count}} 件</text>
+        </view>
+        <view class="osum">合计 <text class="osum-n">¥{{item.totalText}}</text></view>
+      </view>
+
+      <view class="oacts">
+        <view class="obtn ghost" wx:if="{{item.canCancel}}" data-id="{{item.id}}" bindtap="onCancel">取消订单</view>
+        <view class="obtn primary" wx:if="{{item.canAdvance}}" data-id="{{item.id}}" bindtap="onAdvance">确认收货</view>
+        <view class="obtn line" wx:if="{{item.canReorder}}" data-id="{{item.id}}" bindtap="onReorder">再来一单</view>
+        <view class="obtn line" data-id="{{item.id}}" bindtap="goDetail">看详情</view>
+      </view>
     </view>
   </view>
 </view>

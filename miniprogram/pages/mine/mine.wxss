@@ -1,3 +1,108 @@
-.shop-name { font-size: 34rpx; font-weight: 700; }
-.link { border-bottom: 1rpx solid #f3f4f6; }
-.link:last-child { border-bottom: none; }
+/* 我的（第 24 轮重构） */
+.mpage { padding-bottom: 60rpx; }
+
+.mhead {
+  display: flex;
+  align-items: center;
+  padding: 40rpx 32rpx 48rpx;
+  background: linear-gradient(135deg, #16a34a, #22c55e);
+  border-bottom-left-radius: 32rpx;
+  border-bottom-right-radius: 32rpx;
+}
+.mavatar-btn {
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  background: rgba(255, 255, 255, .18);
+}
+.mavatar {
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 50%;
+  display: block;
+}
+.mavatar.ph {
+  line-height: 128rpx;
+  text-align: center;
+  font-size: 60rpx;
+}
+.mwho { flex: 1; padding-left: 26rpx; min-width: 0; }
+.mname { color: #fff; font-size: 36rpx; font-weight: 700; }
+.msub { color: rgba(255, 255, 255, .86); font-size: 23rpx; margin-top: 10rpx; }
+.mtier {
+  display: inline-block;
+  margin-top: 14rpx;
+  font-size: 22rpx;
+  color: #065f46;
+  background: #dcfce7;
+  border-radius: 999rpx;
+  padding: 4rpx 20rpx;
+}
+
+.mcard {
+  background: #fff;
+  border-radius: 20rpx;
+  margin: 20rpx 24rpx;
+  overflow: hidden;
+  padding: 6rpx 0;
+}
+.mcard.login { padding: 28rpx; }
+.ltitle { font-size: 28rpx; font-weight: 700; margin-bottom: 20rpx; }
+.linput {
+  background: #f5f6f8;
+  border-radius: 14rpx;
+  padding: 20rpx 24rpx;
+  font-size: 27rpx;
+  margin-bottom: 18rpx;
+}
+.lph { color: #b6bac2; }
+.lhint { font-size: 21rpx; color: #9ca3af; line-height: 32rpx; margin-top: 18rpx; }
+
+.mgrid {
+  display: flex;
+  background: #fff;
+  border-radius: 20rpx;
+  margin: 20rpx 24rpx;
+  padding: 26rpx 0;
+}
+.gcell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.gicon { position: relative; }
+.gdot {
+  position: absolute;
+  top: -10rpx;
+  right: -18rpx;
+  min-width: 30rpx;
+  height: 30rpx;
+  line-height: 30rpx;
+  border-radius: 999rpx;
+  background: #dc2626;
+  color: #fff;
+  font-size: 20rpx;
+  text-align: center;
+  padding: 0 6rpx;
+}
+.glabel { font-size: 23rpx; color: #4b5563; margin-top: 12rpx; }
+
+.dtitle { font-size: 27rpx; font-weight: 700; padding: 20rpx 24rpx 8rpx; }
+.drow { font-size: 22rpx; color: #9ca3af; padding: 0 24rpx 16rpx; word-break: break-all; }
+.dbtns {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 8rpx 20rpx 20rpx;
+}
+
+.mfoot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 20rpx;
+}
+.mf-ver { font-size: 22rpx; color: #b6bac2; }
+.mf-dev { font-size: 22rpx; color: #b6bac2; margin-top: 10rpx; text-decoration: underline; }

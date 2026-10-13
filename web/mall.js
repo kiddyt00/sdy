@@ -134,12 +134,25 @@ const Mall = (() => {
   }
 
   // ---------------- 购物车 ----------------
+  // 「立即购买」是一张临时单：结算时只算这一件、结算完自动消失，绝不写进真正的购物车（与小程序同语义）。
+  let buyNow = null;
+  function setBuyNow(lines) {
+    const list = (Array.isArray(lines) ? lines : [])
+      .map(l => ({ code: String(l.code || ''), qty: Math.max(1, +(l.qty) || 1) }))
+      .filter(l => l.code);
+    buyNow = list.length ? list : null;   // 空数组等于没开（免得成了一张「没有商品的单」）
+    return buyNow;
+  }
+  function peekBuyNow() { return buyNow ? buyNow.map(l => ({ code: l.code, qty: l.qty })) : null; }
+  function clearBuyNow() { buyNow = null; }
   function getCart() {
+    if (buyNow) return buyNow.map(l => ({ code: l.code, qty: l.qty }));
     const c = loadLS(KEYS.cart, []);
     return Array.isArray(c) ? c : [];
   }
   function saveCart(items) { saveLS(KEYS.cart, items); }
   function addToCart(code, qty) {
+    buyNow = null;   // 手动动购物车就退出「立即购买」模式，免得两套数据打架
     const p = getProduct(code);
     if (!p) throw new Error('商品不存在');
     if (!isOnSale(p)) throw new Error('「' + p.name + '」已下架，暂时不能购买');
@@ -157,6 +170,7 @@ const Mall = (() => {
     return cart;
   }
   function setQty(code, qty) {
+    buyNow = null;
     const p = getProduct(code);
     let cart = getCart();
     if (qty <= 0) cart = cart.filter(i => i.code !== code);
@@ -171,11 +185,15 @@ const Mall = (() => {
     return cart;
   }
   function removeItem(code) {
+    buyNow = null;
     const cart = getCart().filter(i => i.code !== code);
     saveCart(cart);
     return cart;
   }
-  function clearCart() { saveCart([]); }
+  function clearCart() {
+    if (buyNow) { buyNow = null; return; }   // 立即购买结算完只清这张临时单，购物车原样留着
+    saveCart([]);
+  }
 
   // 汇总：count / subtotal（含商品详情补全）
   function cartSummary() {
@@ -287,6 +305,16 @@ const Mall = (() => {
   function orderView(o) {
     return Object.assign({}, o, { statusLabel: STATUS_META[o.status].label, statusCls: STATUS_META[o.status].cls });
   }
+  // 订单状态的一句话解释：文案与小程序 miniprogram/utils/rules.js 的 statusHint 保持一致，别在这里另写一套
+  function statusHint(o) {
+    if (!o) return '';
+    if (o.status === 'pending') return o.deliveryType === 'delivery' ? '老板正在备货，稍后安排配送' : '老板正在备货，到店报手机号自提';
+    if (o.status === 'delivering') return '正在配送途中，请留意电话';
+    if (o.status === 'ready') return '已备好，到店报手机号即可取货';
+    if (o.status === 'done') return '这笔已完成，谢谢惠顾';
+    if (o.status === 'cancelled') return '这笔已取消，库存已回补';
+    return '';
+  }
 
   // ---------------- 收货地址簿（D18） ----------------
   // 与后端 server/internal/store 的 Address 同语义：按手机号归档、第一条自动默认、
@@ -382,6 +410,7 @@ const Mall = (() => {
 
   // ---------------- 测试辅助 ----------------
   function _resetForTest() {
+    buyNow = null;
     Object.keys(mem).forEach(k => delete mem[k]);
   }
 
@@ -402,6 +431,9 @@ const Mall = (() => {
     priceOf: priceOf,
     isWholesalePrice: isWholesalePrice,
     getCart: getCart,
+    setBuyNow: setBuyNow,
+    peekBuyNow: peekBuyNow,
+    clearBuyNow: clearBuyNow,
     addToCart: addToCart,
     setQty: setQty,
     removeItem: removeItem,
@@ -413,6 +445,7 @@ const Mall = (() => {
     cancelOrder: cancelOrder,
     advanceOrder: advanceOrder,
     orderView: orderView,
+    statusHint: statusHint,
     listAddresses: listAddresses,
     defaultAddress: defaultAddress,
     saveAddress: saveAddress,

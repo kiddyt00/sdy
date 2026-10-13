@@ -1,0 +1,42 @@
+<wxs src="../../utils/tools.wxs" module="tools" />
+<view class="apage">
+  <view class="abar">
+    <view class="atitle">收货地址</view>
+    <view class="asub">{{pick ? '点一条直接带回购物车' : '最多留几条常用的'}}</view>
+  </view>
+
+  <van-empty wx:if="{{!loggedIn}}" description="登录并绑定手机号后才能用地址簿">
+    <van-button round type="primary" size="small" bind:click="goMine">去登录</van-button>
+  </van-empty>
+
+  <van-skeleton wx:elif="{{loading}}" title row="3" />
+
+  <van-empty wx:elif="{{empty}}" description="还没有收货地址" />
+
+  <view class="alist" wx:else>
+    <view
+      class="acard {{item.isDefault ? 'def' : ''}}"
+      wx:for="{{list}}"
+      wx:key="id"
+      data-id="{{item.id}}"
+      bindtap="onPick"
+    >
+      <view class="amain">
+        <view class="aline">
+          <text class="acontact">{{item.contact}}</text>
+          <text class="adef" wx:if="{{item.isDefault}}">默认</text>
+        </view>
+        <view class="aaddr">{{item.address}}</view>
+      </view>
+      <view class="aops">
+        <text class="aop" wx:if="{{!item.isDefault}}" data-id="{{item.id}}" catchtap="onDefault">设默认</text>
+        <text class="aop" data-id="{{item.id}}" catchtap="onEdit">编辑</text>
+        <text class="aop del" data-id="{{item.id}}" catchtap="onDelete">删除</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="afoot">
+    <van-button round block type="primary" bind:click="onAdd">＋ 新增收货地址</van-button>
+  </view>
+</view>

@@ -48,8 +48,60 @@ function effectivePrice(tier, salePrice, wholesalePrice) {
   return round2(salePrice)
 }
 
+/* ---------------- 订单状态与动作（与 server 的 stateFlow 一致，第 24 轮） ---------------- */
+// 状态机：pending → delivering / ready → done；pending → cancelled。
+// 页面不再在 wxml 里写 status==='pending' 这种散落判断，一律走 orderActions()。
+const STATUS_LABELS = {
+  pending: '待处理',
+  delivering: '配送中',
+  ready: '待自提',
+  done: '已完成',
+  cancelled: '已取消'
+}
+const STATUS_TABS = [
+  { key: '', label: '全部' },
+  { key: 'pending', label: '待处理' },
+  { key: 'delivering', label: '配送中' },
+  { key: 'ready', label: '待自提' },
+  { key: 'done', label: '已完成' },
+  { key: 'cancelled', label: '已取消' }
+]
+const ACTION_LABELS = { cancel: '取消订单', advance: '确认收货', reorder: '再来一单' }
+
+function statusLabel(s) {
+  return STATUS_LABELS[s] || '未知状态'
+}
+// 这个状态能做什么（数组，模板按 key 判断是否渲染按钮）
+function orderActions(s) {
+  if (s === 'pending') return ['cancel']
+  if (s === 'delivering' || s === 'ready') return ['advance']
+  if (s === 'done' || s === 'cancelled') return ['reorder']
+  return []
+}
+function actionLabel(k) {
+  return ACTION_LABELS[k] || ''
+}
+// 动作对应的服务端状态目标（reorder 没有目标，只是把商品重新加购）
+function actionTarget(k) {
+  if (k === 'cancel') return 'cancelled'
+  if (k === 'advance') return 'done'
+  return ''
+}
+// 顾客端一句话进度说明
+function statusHint(o) {
+  if (!o) return ''
+  if (o.status === 'pending') return o.deliveryType === 'delivery' ? '老板正在备货，稍后安排配送' : '老板正在备货，到店报手机号自提'
+  if (o.status === 'delivering') return '正在配送途中，请留意电话'
+  if (o.status === 'ready') return '已备好，到店报手机号即可取货'
+  if (o.status === 'done') return '这笔已完成，谢谢惠顾'
+  if (o.status === 'cancelled') return '这笔已取消，库存已回补'
+  return ''
+}
+
 module.exports = {
   MIN_FREE, DELIVERY_FEE, round2, deliveryFee, feeHint,
   TIER_RETAIL, TIER_WHOLESALE, TIER_VIP,
-  normalizeTier, validTier, isWholesaleTier, tierLabel, effectivePrice
+  normalizeTier, validTier, isWholesaleTier, tierLabel, effectivePrice,
+  STATUS_LABELS, STATUS_TABS, ACTION_LABELS,
+  statusLabel, orderActions, actionLabel, actionTarget, statusHint
 }

@@ -1,34 +1,89 @@
+<wxs src="../../utils/tools.wxs" module="tools" />
 <view class="page">
-  <view class="bar">
+  <!-- 店铺条 -->
+  <view class="shopbar">
+    <view class="sb-l">
+      <view class="sb-name">{{shop.name}}</view>
+      <view class="sb-sub">{{online ? '送货上门 · 到店自提' : '本地演示模式（下单不会入库）'}}</view>
+    </view>
     <view class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
-    <input class="search" placeholder="搜商品名 / 品牌 / 条码" value="{{keyword}}" bindinput="onKeyword" bindconfirm="onSearch" confirm-type="search" />
+  </view>
+
+  <!-- 搜索 + 扫码（扫码只读：只查货，不加购） -->
+  <view class="searchbar">
+    <view class="sbox" bindtap="goSearch">
+      <van-icon name="search" size="30rpx" color="#9ca3af" />
+      <text class="sph">搜商品名 / 条码</text>
+    </view>
     <view class="scan" bindtap="onScan">扫码</view>
   </view>
 
-  <scroll-view class="chips" scroll-x enable-flex>
-    <view wx:for="{{categories}}" wx:key="*this" class="chip {{category === item ? 'on' : ''}}" data-cat="{{item}}" bindtap="onCategory">{{item}}</view>
+  <!-- 扫码 / 搜索后的筛选提示 -->
+  <view class="kwbar" wx:if="{{keyword}}">
+    <text class="kwt">筛选：{{keyword}}</text>
+    <text class="kwx" bindtap="clearKeyword">清除</text>
+  </view>
+
+  <van-notice-bar
+    wx:if="{{shop.address}}"
+    left-icon="location-o"
+    text="{{shop.address}}"
+    bind:click="goCart"
+  />
+
+  <!-- 分类 chips -->
+  <scroll-view class="chips" scroll-x show-scrollbar="{{false}}">
+    <view
+      wx:for="{{cats}}"
+      wx:key="name"
+      class="chip {{cat === item.name ? 'on' : ''}}"
+      data-cat="{{item.name}}"
+      bindtap="onCategory"
+    >{{item.name}}</view>
   </scroll-view>
 
-  <view class="hint" wx:if="{{!online}}">{{statusDetail}}</view>
+  <van-skeleton wx:if="{{loading}}" title row="6" />
 
-  <view class="list">
-    <view class="card" wx:for="{{products}}" wx:key="code">
-      <view class="thumb">{{item.emoji}}</view>
-      <view class="info">
-        <view class="name">{{item.name}}</view>
-        <view class="spec">{{item.spec}}{{item.brand ? ' · ' + item.brand : ''}}</view>
-        <view class="price">¥{{item.priceText}}<text class="unit"> /{{item.unit}}</text>
-          <text class="stock {{item.stock <= 0 ? 'zero' : ''}}">库存 {{item.stock}}</text>
+  <!-- 双列网格 -->
+  <view class="grid" wx:else>
+    <view
+      class="gitem"
+      wx:for="{{products}}"
+      wx:key="code"
+      data-code="{{item.code}}"
+      bindtap="goDetail"
+    >
+      <view class="gthumb">
+        <image wx:if="{{item.img}}" class="gimg" src="{{item.img}}" mode="aspectFill" lazy-load />
+        <text wx:else>{{item.emoji}}</text>
+        <view class="gtag out" wx:if="{{item.stock <= 0}}">缺货</view>
+        <view class="gtag" wx:elif="{{item.isWholesale}}">批发</view>
+      </view>
+      <view class="gbody">
+        <view class="gname">{{item.name}}</view>
+        <view class="gspec">{{item.spec || item.brand || item.category}}</view>
+        <view class="gfoot">
+          <view class="gprice">
+            <text class="gsym">¥</text>{{tools.fix2(item.salePrice)}}
+            <text class="gori" wx:if="{{item.tier === 'wholesale' || item.tier === 'vip'}}">¥{{tools.fix2(item.retailPrice)}}</text>
+          </view>
+          <view
+            class="gadd {{item.stock <= 0 ? 'dis' : ''}}"
+            data-code="{{item.code}}"
+            catchtap="onAdd"
+          >+</view>
         </view>
       </view>
-      <view class="btn btn-primary btn-mini {{item.stock <= 0 ? 'dis' : ''}}" data-code="{{item.code}}" bindtap="onAdd">加入</view>
     </view>
   </view>
 
-  <view class="empty" wx:if="{{!products.length}}">没有找到商品，换个词试试</view>
+  <van-empty wx:if="{{!loading && empty}}" description="没有找到商品，换个词试试" />
 
-  <view class="cartbar" wx:if="{{cartCount > 0}}">
-    <view class="cb-left"><text class="cb-num">{{cartCount}}</text> 件 · 合计 ¥{{cartAmountText}}</view>
-    <view class="cb-go" bindtap="goCart">去购物车</view>
+  <view class="more" wx:if="{{!loading && total > 0}}">{{hasMore ? '上拉看更多' : '—— 没有更多了 ——'}}</view>
+
+  <!-- 底部购物车条 -->
+  <view class="cartbar" wx:if="{{cartCount > 0}}" bindtap="goCart">
+    <view class="cb-left">购物车 <text class="cb-num">{{cartCount}}</text> 件 · ¥{{cartAmountText}}</view>
+    <view class="cb-go">去结算</view>
   </view>
 </view>

@@ -1,0 +1,62 @@
+<wxs src="../../utils/tools.wxs" module="tools" />
+<view class="dpage">
+  <van-skeleton wx:if="{{loading}}" title row="5" />
+
+  <van-empty wx:elif="{{err}}" description="{{err}}">
+    <van-button round type="primary" size="small" bind:click="goIndex">回首页</van-button>
+  </van-empty>
+
+  <block wx:elif="{{o}}">
+    <view class="dhead">
+      <view class="dstatus s-{{o.status}}">{{o.statusText}}</view>
+      <view class="dhint">{{o.hint}}</view>
+    </view>
+
+    <view class="dcard">
+      <view class="dsec-t">商品</view>
+      <view class="ditem" wx:for="{{o.items}}" wx:key="code">
+        <view class="dthumb">
+          <image wx:if="{{item.img}}" class="dimg" src="{{item.img}}" mode="aspectFill" />
+          <text wx:else>{{item.emoji}}</text>
+        </view>
+        <view class="dinfo">
+          <view class="dname">{{item.name}}</view>
+          <view class="dspec">{{item.spec || '—'}}</view>
+        </view>
+        <view class="dright">
+          <view class="dprice">¥{{tools.fix2(item.price)}}</view>
+          <view class="dqty">×{{item.qty}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="dcard">
+      <view class="dsec-t">收货信息</view>
+      <view class="drow"><text class="dk">收货人</text><text class="dv">{{o.contact || '—'}}</text></view>
+      <view class="drow"><text class="dk">手机号</text><text class="dv">{{o.phone || '—'}}</text></view>
+      <view class="drow"><text class="dk">方式</text><text class="dv">{{o.deliveryText}}</text></view>
+      <view class="drow" wx:if="{{o.address}}">
+        <text class="dk">地址</text>
+        <text class="dv">{{o.address}}</text>
+      </view>
+    </view>
+
+    <view class="dcard">
+      <view class="drow"><text class="dk">商品金额</text><text class="dv">¥{{tools.fix2(o.subtotal)}}</text></view>
+      <view class="drow"><text class="dk">配送费</text><text class="dv">{{o.feeText}}</text></view>
+      <view class="drow"><text class="dk">合计</text><text class="dv strong">¥{{tools.fix2(o.total)}}</text></view>
+      <view class="drow"><text class="dk">下单时间</text><text class="dv">{{o.createdText}}</text></view>
+      <view class="drow">
+        <text class="dk">订单号</text>
+        <text class="dv">{{o.id}} <text class="dcopy" bindtap="copyId">复制</text></text>
+      </view>
+    </view>
+
+    <view class="dacts">
+      <view class="dbtn ghost" wx:if="{{o.canCancel}}" bindtap="onCancel">取消订单</view>
+      <view class="dbtn primary" wx:if="{{o.canAdvance}}" bindtap="onAdvance">确认收货</view>
+      <view class="dbtn line" wx:if="{{o.canReorder}}" bindtap="onReorder">再来一单</view>
+      <view class="dbtn line" bindtap="callShop">联系店家</view>
+    </view>
+  </block>
+</view>

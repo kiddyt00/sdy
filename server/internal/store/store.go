@@ -444,6 +444,36 @@ func (s *Store) ListOnSaleProducts(keyword, category string) ([]Product, error) 
 	return s.listProducts(keyword, category, true)
 }
 
+// CategoryStat 分类及其商品件数（顾客端分类页用，第 24 轮 / D29）。
+type CategoryStat struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// ListCategories 列出分类与件数。顾客端只该看上架商品，所以 onSaleOnly=true；
+// 留空（含只有空格）的分类归到「未分类」，与建档时的归一化同口径（一处真源）。
+func (s *Store) ListCategories(onSaleOnly bool) ([]CategoryStat, error) {
+	q := `SELECT COALESCE(NULLIF(TRIM(category),''),'未分类') AS c, COUNT(*) FROM product`
+	if onSaleOnly {
+		q += ` WHERE on_sale = 1`
+	}
+	q += ` GROUP BY c ORDER BY COUNT(*) DESC, c ASC`
+	rows, err := s.db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CategoryStat{}
+	for rows.Next() {
+		var c CategoryStat
+		if err := rows.Scan(&c.Name, &c.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) listProducts(keyword, category string, onSaleOnly bool) ([]Product, error) {
 	q := `SELECT code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,
 		unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at FROM product`

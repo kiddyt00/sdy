@@ -1165,3 +1165,61 @@ func TestWxUserBind(t *testing.T) {
 		t.Errorf("坏手机号不该建档")
 	}
 }
+
+// 第 24 轮（D29）：分类列表按件数倒序，留空分类归「未分类」，onSaleOnly 只数上架商品。
+func TestListCategories(t *testing.T) {
+	st := newTestStore(t)
+
+	// 空库返回空切片（不是 nil，前端好判断）
+	if got, err := st.ListCategories(true); err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("空库应返回空切片: %v %v", got, err)
+	}
+
+	items := []Product{
+		{Code: "A1", Name: "可乐", Category: "饮料", SalePrice: 2.5, Stock: 10},
+		{Code: "A2", Name: "雪碧", Category: "饮料", SalePrice: 2.5, Stock: 10},
+		{Code: "A3", Name: "薯片", Category: "零食", SalePrice: 6, Stock: 10},
+		{Code: "A4", Name: "散装瓜子", Category: "", SalePrice: 9, Stock: 10},
+		{Code: "A5", Name: "矿泉水", Category: "   ", SalePrice: 1.5, Stock: 10},
+	}
+	for _, p := range items {
+		if _, err := st.UpsertProduct(p); err != nil {
+			t.Fatalf("写入商品失败: %v", err)
+		}
+	}
+
+	got, err := st.ListCategories(false)
+	if err != nil {
+		t.Fatalf("取分类失败: %v", err)
+	}
+	want := map[string]int{"饮料": 2, "未分类": 2, "零食": 1}
+	if len(got) != len(want) {
+		t.Fatalf("分类数不对: %+v", got)
+	}
+	for i, c := range got {
+		if want[c.Name] != c.Count {
+			t.Errorf("分类件数不对: %+v", c)
+		}
+		// 第一项必须是件数最多的（饮料 2 或 未分类 2，两者并列时按名字升序 → 未分类 在前）
+		if i == 0 && c.Count != 2 {
+			t.Errorf("首项应是件数最多的分类: %+v", got)
+		}
+	}
+	if got[0].Name != "未分类" {
+		t.Errorf("件数并列时按名称升序，「未分类」应排第一: %+v", got)
+	}
+
+	// 下架「零食」后，onSaleOnly=true 不再包含它
+	if _, err := st.SetProductsOnSale([]string{"A3"}, false); err != nil {
+		t.Fatalf("下架失败: %v", err)
+	}
+	got, err = st.ListCategories(true)
+	if err != nil {
+		t.Fatalf("取分类失败: %v", err)
+	}
+	for _, c := range got {
+		if c.Name == "零食" {
+			t.Errorf("下架商品不该出现在顾客端分类里: %+v", got)
+		}
+	}
+}

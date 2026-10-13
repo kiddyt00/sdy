@@ -1,13 +1,19 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/category/category",
     "pages/cart/cart",
     "pages/orders/orders",
-    "pages/mine/mine"
+    "pages/mine/mine",
+    "pages/search/search",
+    "pages/goods/goods",
+    "pages/order/order",
+    "pages/address/list",
+    "pages/address/edit"
   ],
   "window": {
     "navigationBarBackgroundColor": "#16a34a",
-    "navigationBarTitleText": "小邻里超市",
+    "navigationBarTitleText": "啥都有快送",
     "navigationBarTextStyle": "white",
     "backgroundTextStyle": "light",
     "backgroundColor": "#f3f4f6"
@@ -18,11 +24,45 @@
     "backgroundColor": "#ffffff",
     "borderStyle": "black",
     "list": [
-      { "pagePath": "pages/index/index", "text": "首页" },
-      { "pagePath": "pages/cart/cart", "text": "购物车" },
-      { "pagePath": "pages/orders/orders", "text": "订单" },
-      { "pagePath": "pages/mine/mine", "text": "我的" }
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/category/category",
+        "text": "分类"
+      },
+      {
+        "pagePath": "pages/cart/cart",
+        "text": "购物车"
+      },
+      {
+        "pagePath": "pages/orders/orders",
+        "text": "订单"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "text": "我的"
+      }
     ]
+  },
+  "usingComponents": {
+    "van-button": "@vant/weapp/button/index",
+    "van-cell": "@vant/weapp/cell/index",
+    "van-checkbox": "@vant/weapp/checkbox/index",
+    "van-empty": "@vant/weapp/empty/index",
+    "van-field": "@vant/weapp/field/index",
+    "van-goods-action": "@vant/weapp/goods-action/index",
+    "van-goods-action-button": "@vant/weapp/goods-action-button/index",
+    "van-icon": "@vant/weapp/icon/index",
+    "van-notice-bar": "@vant/weapp/notice-bar/index",
+    "van-skeleton": "@vant/weapp/skeleton/index",
+    "van-stepper": "@vant/weapp/stepper/index",
+    "van-swipe-cell": "@vant/weapp/swipe-cell/index",
+    "van-switch": "@vant/weapp/switch/index",
+    "van-tab": "@vant/weapp/tab/index",
+    "van-tabs": "@vant/weapp/tabs/index",
+    "van-tag": "@vant/weapp/tag/index"
   },
   "style": "v2",
   "sitemapLocation": "sitemap.json"

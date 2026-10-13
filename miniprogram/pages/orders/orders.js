@@ -1,17 +1,39 @@
-// 我的订单（顾客视角：看状态、待处理可取消、可再来一单）
+// 我的订单（顾客视角：状态 tab、看详情、待处理可取消、配送中/待自提可确认收货、可再来一单）
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
+const rules = require('../../utils/rules.js')
 
 Page({
   data: {
     online: false,
     statusLabel: '⏳ 探测中…',
     orders: [],
-    loading: true
+    loading: true,
+    tabs: rules.STATUS_TABS,
+    status: '',
+    activeTab: 0,
+    empty: false
   },
 
   onShow() {
+    this.takeTab()
     return this.refresh()
+  },
+
+  // 「我的」页的状态宫格把想看的 tab 存在本地，这里读走再清掉
+  takeTab() {
+    let key = ''
+    try {
+      key = wx.getStorageSync('sdy_mp_order_tab') || ''
+      wx.removeStorageSync('sdy_mp_order_tab')
+    } catch (e) {
+      key = ''
+    }
+    if (!key) return false
+    const idx = this.data.tabs.map((t) => t.key).indexOf(key)
+    if (idx < 0) return false
+    this.setData({ status: key, activeTab: idx, loading: true })
+    return true
   },
 
   onPullDownRefresh() {
@@ -25,17 +47,36 @@ Page({
       .refreshStatus()
       .then((st) => {
         this.setData({ online: st.online, statusLabel: st.label })
-        return api.listOrders()
+        return api.listOrders(this.data.status)
       })
       .then((list) => {
-        this.setData({ orders: list, loading: false })
+        this.setData({ orders: list, loading: false, empty: list.length === 0 })
         return list
       })
       .catch((e) => {
-        this.setData({ loading: false })
+        this.setData({ loading: false, empty: true })
         this.toast(e.message)
         return []
       })
+  },
+
+  onTab(e) {
+    this.setData({ status: e.currentTarget.dataset.key || '', loading: true })
+    return this.refresh()
+  },
+
+  // van-tabs：e.detail = { index, name, title }
+  onTabChange(e) {
+    const idx = Number((e.detail && e.detail.index) || 0) || 0
+    const t = this.data.tabs[idx] || { key: '' }
+    this.setData({ status: t.key, activeTab: idx, loading: true })
+    return this.refresh()
+  },
+
+  goDetail(e) {
+    const id = e.currentTarget.dataset.id
+    if (!id) return
+    wx.navigateTo({ url: '/pages/order/order?id=' + encodeURIComponent(id) })
   },
 
   onCancel(e) {
@@ -53,6 +94,21 @@ Page({
           return null
         })
     })
+  },
+
+  // 确认收货（配送中 / 待自提 → 已完成）
+  onAdvance(e) {
+    const id = e.currentTarget.dataset.id
+    return api
+      .advanceOrder(id, 'done')
+      .then(() => {
+        this.toast('已确认收货')
+        return this.refresh()
+      })
+      .catch((err) => {
+        this.toast(err.message)
+        return null
+      })
   },
 
   // 确认框（返回 Promise<boolean>，便于测试与复用）
@@ -83,6 +139,10 @@ Page({
     if (typeof wx !== 'undefined' && wx.switchTab) {
       setTimeout(() => { try { wx.switchTab({ url: '/pages/cart/cart' }) } catch (err) { /* 忽略 */ } }, 600)
     }
+  },
+
+  goIndex() {
+    if (typeof wx !== 'undefined' && wx.switchTab) wx.switchTab({ url: '/pages/index/index' })
   },
 
   toast(msg) {

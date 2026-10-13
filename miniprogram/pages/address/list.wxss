@@ -1,0 +1,48 @@
+/* 地址簿列表（第 24 轮） */
+.apage { padding: 0 24rpx 160rpx; }
+
+.abar { padding: 16rpx 4rpx 20rpx; }
+.atitle { font-size: 34rpx; font-weight: 700; }
+.asub { font-size: 22rpx; color: #9ca3af; margin-top: 8rpx; }
+
+.alist { padding-top: 6rpx; }
+.acard {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 18rpx;
+  padding: 24rpx;
+  margin-bottom: 18rpx;
+}
+.acard.def { border: 1rpx solid #16a34a; }
+.amain { flex: 1; min-width: 0; }
+.aline { display: flex; align-items: center; }
+.acontact { font-size: 30rpx; font-weight: 600; }
+.adef {
+  font-size: 20rpx;
+  color: #fff;
+  background: #16a34a;
+  border-radius: 6rpx;
+  padding: 2rpx 10rpx;
+  margin-left: 12rpx;
+}
+.aaddr { font-size: 25rpx; color: #6b7280; margin-top: 8rpx; word-break: break-all; }
+.aops { display: flex; align-items: center; flex: none; padding-left: 16rpx; }
+.aop {
+  font-size: 24rpx;
+  color: #6b7280;
+  padding: 8rpx 12rpx;
+}
+.aop.del { color: #dc2626; }
+
+.afoot {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 20rpx 32rpx;
+  padding-bottom: calc(20rpx + constant(safe-area-inset-bottom));
+  padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
+  background: #fff;
+  box-shadow: 0 -6rpx 20rpx rgba(17, 24, 39, .05);
+}

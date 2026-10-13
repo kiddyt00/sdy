@@ -36,6 +36,11 @@ __pycache__/
 # 本地工具链（Go SDK / 模块缓存，不入库）
 .tools/
 
+# ===== 小程序 npm =====
+# node_modules 不入库；构建产物 miniprogram/miniprogram_npm/ 入库（换机无需再「构建 npm」）
+node_modules/
+miniprogram/node_modules/
+
 # ===== 后端运行产物 / 本地环境 =====
 data/
 *.db

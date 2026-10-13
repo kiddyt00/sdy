@@ -1,60 +1,63 @@
-<view class="page">
-  <view class="section">
-    <view class="row">
-      <view class="shop-name">{{shop.name}}</view>
-      <view class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
+<view class="mpage">
+  <view class="mhead">
+    <button class="mavatar-btn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
+      <image wx:if="{{avatar}}" class="mavatar" src="{{avatar}}" mode="aspectFill" />
+      <view wx:else class="mavatar ph">🙂</view>
+    </button>
+    <view class="mwho">
+      <view class="mname">{{loggedIn ? (sessionName || '微信顾客') : '还没登录'}}</view>
+      <view class="msub">{{loggedIn ? sessionLabel : '登录后能看到自己的订单和批发价'}}</view>
+      <view class="mtier">{{tierText}}</view>
     </view>
-    <view class="muted">营业时间 {{shop.hours}}</view>
-    <view class="hint">{{statusDetail}}</view>
   </view>
 
-  <view class="section">
-    <view class="section-title">我的</view>
-    <view class="row link" bindtap="goOrders"><view>我的订单</view><view class="muted">›</view></view>
-    <view class="row link" bindtap="goCart"><view>购物车</view><view class="muted">{{cartCount}} 件 ›</view></view>
+  <view class="mcard login" wx:if="{{!loggedIn}}">
+    <view class="ltitle">微信登录 / 绑手机号</view>
+    <input class="linput" type="number" maxlength="11" value="{{phone}}" placeholder="11 位手机号（老板就是靠它建档给价的）" placeholder-class="lph" bindinput="onPhone" />
+    <input class="linput" value="{{nickname}}" maxlength="20" placeholder="称呼（选填，比如：王阿姨）" placeholder-class="lph" bindinput="onNickname" />
+    <van-button round block type="primary" loading="{{busy}}" bind:click="doLogin">微信一键登录</van-button>
+    <view class="lhint">手机号只用来对上店里的顾客档案，不会给你改价；等级与批发价由老板在后台设定。</view>
   </view>
 
-  <view class="section">
-    <view class="section-title">我的账号</view>
-    <view class="row">
-      <view>{{sessionLabel}}</view>
-      <view class="badge {{loggedIn ? 'ok' : 'off'}}">{{loggedIn ? '已登录' : '未登录'}}</view>
-    </view>
-    <view wx:if="{{bound}}" class="muted" style="margin-top:12rpx">
-      手机号 {{sessionPhone}} · 看的是{{tierText}}（价格由店里设定）
-    </view>
-    <block wx:if="{{!bound}}">
-      <view class="field" style="margin-top:16rpx">
-        <input class="input" type="number" maxlength="11" placeholder="手机号（11 位，老板靠它建档）" value="{{phone}}" bindinput="onPhone" />
+  <view class="mgrid">
+    <view class="gcell" wx:for="{{orderGrid}}" wx:key="key" data-key="{{item.key}}" bindtap="goOrdersWith">
+      <view class="gicon">
+        <van-icon name="{{item.icon}}" size="44rpx" color="#16a34a" />
+        <view class="gdot" wx:if="{{counts[item.key] > 0}}">{{counts[item.key]}}</view>
       </view>
-      <view class="field">
-        <input class="input" maxlength="20" placeholder="称呼（可选，如 王阿姨）" value="{{nickname}}" bindinput="onNickname" />
-      </view>
-    </block>
-    <view wx:if="{{!bound}}" class="btn btn-primary btn-block" bindtap="doLogin">{{busy ? '登录中…' : (loggedIn ? '绑定手机号' : '微信登录')}}</view>
-    <view wx:else class="btn btn-ghost btn-block" bindtap="doLogout">退出登录</view>
-    <view class="muted" style="margin-top:12rpx">
-      登录只是让店里知道「这台微信是谁」，省得每次重输手机号；绑定不会自动变成批发价——批发价与白名单由老板在管理端设定。
+      <view class="glabel">{{item.label}}</view>
     </view>
   </view>
 
-  <view class="section">
-    <view class="section-title">后端地址（开发用）</view>
-    <view class="field">
-      <input class="input" placeholder="http://127.0.0.1:8093" value="{{apiBase}}" bindinput="onBase" />
-    </view>
-    <view class="btn btn-primary btn-block" bindtap="saveBase">保存并重连</view>
-    <view class="muted" style="margin-top:12rpx">
-      开发：先在电脑上起 Go 后端，再在微信开发者工具「详情 → 本地设置」勾选「不校验合法域名」。
-      上线：这里会自动换成已备案的 HTTPS 域名，无需顾客设置。
+  <view class="mcard">
+    <van-cell title="全部订单" icon="orders-o" is-link bind:click="goOrders" />
+    <van-cell title="收货地址" icon="location-o" is-link bind:click="goAddress" />
+    <van-cell title="购物车" icon="shopping-cart-o" is-link bind:click="goCart" value="{{cartCount > 0 ? cartCount + ' 件' : ''}}" />
+    <van-cell title="联系店家" icon="phone-o" is-link bind:click="callShop" />
+  </view>
+
+  <view class="mcard">
+    <van-cell title="店铺" value="{{shop.name}}" />
+    <van-cell title="营业时间" value="{{shop.hours}}" />
+    <van-cell title="门店说明" label="{{shop.notice}}" />
+    <van-cell title="后端连接" is-link bind:click="toggleDev">
+      <view slot="value" class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
+    </van-cell>
+  </view>
+
+  <view class="mcard" wx:if="{{devMode}}">
+    <view class="dtitle">开发者选项</view>
+    <view class="drow">{{statusDetail}}</view>
+    <van-field value="{{apiBase}}" label="后端地址" placeholder="http://127.0.0.1:8093" bind:change="onBase" />
+    <view class="dbtns">
+      <van-button size="small" round type="primary" bind:click="saveBase">保存并重连</van-button>
+      <van-button size="small" round plain bind:click="clearAll">清空本地缓存</van-button>
+      <van-button wx:if="{{loggedIn}}" size="small" round plain bind:click="doLogout">退出登录</van-button>
     </view>
   </view>
 
-  <view class="section">
-    <view class="section-title">店铺说明</view>
-    <view class="muted">{{shop.notice}}</view>
-    <view class="btn btn-ghost btn-block" style="margin-top:16rpx" bindtap="clearAll">清空本地演示数据</view>
+  <view class="mfoot">
+    <text class="mf-ver">啥都有快送 · 小程序 0.3.0</text>
+    <text class="mf-dev" bindtap="toggleDev">开发者选项</text>
   </view>
-
-  <view class="muted" style="text-align:center;margin:24rpx 0">顾客端小程序 · M5 第一版（下单未接支付）</view>
 </view>

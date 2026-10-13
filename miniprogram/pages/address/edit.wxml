@@ -1,0 +1,38 @@
+<view class="epage">
+  <van-empty wx:if="{{!loggedIn}}" description="登录并绑定手机号后才能存地址">
+    <van-button round type="primary" size="small" bind:click="goMine">去登录</van-button>
+  </van-empty>
+
+  <block wx:else>
+    <view class="ecard">
+      <van-field
+        value="{{contact}}"
+        label="收货人"
+        placeholder="比如：王阿姨"
+        maxlength="20"
+        clearable
+        bind:change="onContact"
+      />
+      <van-field
+        value="{{address}}"
+        label="送货地址"
+        type="textarea"
+        placeholder="小区 / 楼栋 / 门牌，越详细越好"
+        maxlength="120"
+        rows="3"
+        autosize
+        show-word-limit
+        bind:change="onAddress"
+      />
+      <van-cell center title="设为默认地址">
+        <van-switch slot="right-icon" checked="{{isDefault}}" size="24px" active-color="#16a34a" bind:change="onDefault" />
+      </van-cell>
+    </view>
+
+    <view class="ehint">默认地址会在下单时自动带出来；第一条地址会自动成为默认。</view>
+
+    <view class="efoot">
+      <van-button round block type="primary" loading="{{saving}}" bind:click="save">保存</van-button>
+    </view>
+  </block>
+</view>

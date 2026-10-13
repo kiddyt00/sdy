@@ -1,0 +1,39 @@
+// WXS：模板内的纯格式化（WXS 只能写 ES5，不能 require js 文件）
+// 用法：<wxs src="../../utils/tools.wxs" module="tools" /> 然后 {{tools.price(item.price)}}
+// 只做「数字 → 文本」，任何业务规则都不放这里（规则只有 utils/rules.js 一处真源）。
+
+function fix2(n) {
+  var x = n * 1
+  if (x !== x || x === Infinity || x === -Infinity) return '0.00'
+  return x.toFixed(2)
+}
+
+function price(n) {
+  return '¥' + fix2(n)
+}
+
+// 购物车 / 订单里的「×2」
+function times(q) {
+  return '×' + (q * 1)
+}
+
+// 数量 + 单位，例：2 罐
+function qtyUnit(q, unit) {
+  return (q * 1) + (unit ? unit : '件')
+}
+
+// 长文本截断（列表页标题兜底，CSS 已用 line-clamp，这里只防超长串撑破布局）
+function clip(s, max) {
+  var t = s === null || s === undefined ? '' : s + ''
+  var m = max * 1 || 20
+  if (t.length <= m) return t
+  return t.substring(0, m) + '…'
+}
+
+module.exports = {
+  fix2: fix2,
+  price: price,
+  times: times,
+  qtyUnit: qtyUnit,
+  clip: clip
+}

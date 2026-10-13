@@ -1,16 +1,104 @@
-.oid { font-size: 24rpx; color: #6b7280; }
-.items { font-size: 27rpx; padding: 12rpx 0; }
-.total { color: #dc2626; font-weight: 700; font-size: 30rpx; }
-.ops { display: flex; justify-content: flex-end; gap: 16rpx; margin-top: 16rpx; }
-.pill {
+/* 我的订单（第 24 轮） */
+.opage { padding-bottom: 40rpx; }
+
+.obar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8rpx 28rpx 16rpx;
+}
+.otitle { font-size: 34rpx; font-weight: 700; }
+
+van-tabs { margin-bottom: 16rpx; }
+
+.olist { padding: 0 24rpx; }
+
+.ocard {
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 22rpx 24rpx;
+  margin-bottom: 20rpx;
+}
+.ohead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 14rpx;
+  border-bottom: 1rpx solid #f3f4f6;
+}
+.oid { font-size: 23rpx; color: #9ca3af; }
+.ostatus {
   font-size: 22rpx;
   padding: 6rpx 20rpx;
   border-radius: 999rpx;
   background: #f3f4f6;
   color: #4b5563;
 }
-.pill.st-pending { background: #fef3c7; color: #92400e; }
-.pill.st-delivering { background: #dbeafe; color: #1d4ed8; }
-.pill.st-ready { background: #ede9fe; color: #5b21b6; }
-.pill.st-done { background: #dcfce7; color: #166534; }
-.pill.st-cancelled { background: #f3f4f6; color: #9ca3af; }
+.ostatus.s-pending { background: #fef3c7; color: #92400e; }
+.ostatus.s-delivering { background: #dbeafe; color: #1d4ed8; }
+.ostatus.s-ready { background: #ede9fe; color: #5b21b6; }
+.ostatus.s-done { background: #dcfce7; color: #166534; }
+.ostatus.s-cancelled { background: #f3f4f6; color: #9ca3af; }
+
+.oitems { padding: 8rpx 0; }
+.oitem {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+}
+.othumb {
+  width: 84rpx;
+  height: 84rpx;
+  border-radius: 14rpx;
+  background: #eff6ff;
+  text-align: center;
+  line-height: 84rpx;
+  font-size: 40rpx;
+  flex: none;
+}
+.oinfo { flex: 1; padding: 0 18rpx; min-width: 0; }
+.oname {
+  font-size: 28rpx;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ospec { font-size: 22rpx; color: #9ca3af; margin-top: 6rpx; }
+.oamt { font-size: 26rpx; color: #374151; font-weight: 600; }
+
+.ohint {
+  font-size: 23rpx;
+  color: #92400e;
+  background: #fffbeb;
+  border-radius: 12rpx;
+  padding: 12rpx 18rpx;
+  margin: 8rpx 0;
+}
+
+.ofoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 12rpx;
+}
+.ometa { font-size: 22rpx; color: #9ca3af; }
+.odot { margin: 0 8rpx; }
+.osum { font-size: 24rpx; color: #374151; }
+.osum-n { font-size: 32rpx; font-weight: 700; color: #dc2626; }
+
+.oacts {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 18rpx;
+}
+.obtn {
+  font-size: 26rpx;
+  padding: 12rpx 30rpx;
+  border-radius: 999rpx;
+  margin-left: 16rpx;
+}
+.obtn.primary { background: #16a34a; color: #fff; }
+.obtn.ghost { background: #f3f4f6; color: #374151; }
+.obtn.line { border: 1rpx solid #d1d5db; color: #374151; }

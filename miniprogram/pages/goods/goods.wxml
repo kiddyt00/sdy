@@ -1,0 +1,90 @@
+<wxs src="../../utils/tools.wxs" module="tools" />
+<view class="gpage">
+  <van-skeleton wx:if="{{loading}}" title row="8" />
+
+  <van-empty wx:elif="{{err}}" description="{{err}}">
+    <van-button round type="primary" size="small" bind:click="goHome">回首页看看</van-button>
+  </van-empty>
+
+  <block wx:else>
+    <!-- 大图 -->
+    <view class="hero" bindtap="previewImg">
+      <image wx:if="{{p.img}}" class="hero-img" src="{{p.img}}" mode="aspectFill" />
+      <text wx:else class="hero-emoji">{{p.emoji}}</text>
+      <view class="hero-tag" wx:if="{{p.isWholesale}}">批发有优惠</view>
+    </view>
+
+    <!-- 价格卡 -->
+    <view class="pcard">
+      <view class="pline">
+        <view class="pprice">
+          <text class="psym">¥</text>{{tools.fix2(p.salePrice)}}
+          <text class="punit">/ {{p.unit}}</text>
+        </view>
+        <van-tag wx:if="{{tierHint}}" type="primary" plain>{{tierHint}}</van-tag>
+      </view>
+      <view class="pori" wx:if="{{(p.tier === 'wholesale' || p.tier === 'vip') && p.wholesalePrice > 0}}">
+        零售价 ¥{{tools.fix2(p.retailPrice)}}
+      </view>
+      <view class="pname">{{p.name}}</view>
+      <view class="pmeta">
+        <text wx:if="{{p.brand}}">{{p.brand}}</text>
+        <text wx:if="{{p.spec}}">{{p.spec}}</text>
+        <text>{{p.category}}</text>
+      </view>
+      <view class="pstock {{p.stock <= 0 ? 'zero' : ''}}">
+        {{p.stock > 0 ? '现货 ' + p.stock + p.unit : '暂时缺货，补货后再来'}}
+      </view>
+    </view>
+
+    <!-- 数量 -->
+    <view class="qcard">
+      <text class="qlabel">购买数量</text>
+      <van-stepper
+        wx:if="{{p.stock > 0}}"
+        value="{{qty}}"
+        min="1"
+        max="{{p.stock}}"
+        integer
+        button-size="30px"
+        bind:change="onStep"
+      />
+      <text wx:else class="muted">缺货中</text>
+    </view>
+
+    <!-- 店铺信息 -->
+    <view class="scard">
+      <view class="srow">
+        <van-icon name="shop-o" size="34rpx" color="#16a34a" />
+        <text class="sname">{{shop.name || '啥都有快送'}}</text>
+      </view>
+      <view class="saddr muted" wx:if="{{shop.address}}">{{shop.address}}</view>
+      <view class="saddr muted" wx:if="{{shop.phone}}">电话 {{shop.phone}}</view>
+      <view class="shint muted">下单后可选择送货上门或到店自提，缺货商品会被老板电话确认。</view>
+    </view>
+  </block>
+
+  <!-- 底部动作条 -->
+  <view class="gbarbox" wx:if="{{!loading && !err}}">
+    <view class="gcart" bindtap="goCart">
+      <van-icon name="cart-o" size="46rpx" color="#4b5563" />
+      <text class="gcart-n" wx:if="{{cartCount > 0}}">{{cartCount}}</text>
+    </view>
+    <van-goods-action>
+      <van-goods-action-button
+        color="#16a34a"
+        type="warning"
+        text="加入购物车"
+        disabled="{{p.stock <= 0}}"
+        bind:click="addCart"
+      />
+      <van-goods-action-button
+        color="#15803d"
+        type="danger"
+        text="{{p.stock > 0 ? '立即购买' : '缺货'}}"
+        disabled="{{p.stock <= 0}}"
+        bind:click="buyNow"
+      />
+    </van-goods-action>
+  </view>
+</view>

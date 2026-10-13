@@ -263,14 +263,14 @@ const online = {
     ok(html.indexOf(Admin.DEFAULT_STORE.name) >= 0, '票头用本地抬头（默认店名）');
     ok(html.indexOf('¥5.00') >= 0, '行金额按 2.50 × 2 计算');
     // 抬头保存后立即生效
-    env.els.stName.value = '小邻里超市';
+    env.els.stName.value = '啥都有快送';
     env.els.stPhone.value = '0571-88888888';
     env.els.stAddr.value = '幸福路 1 号';
     env.els.stFooter.value = '欢迎再来';
     ctx.saveStore();
-    ok(Admin.getStoreInfo().name === '小邻里超市', '抬头保存进本地设置');
+    ok(Admin.getStoreInfo().name === '啥都有快送', '抬头保存进本地设置');
     ctx.printOrder(o.id);
-    ok(env.els.printRoot.innerHTML.indexOf('小邻里超市') >= 0 && env.els.printRoot.innerHTML.indexOf('0571-88888888') >= 0, '再打印时票头已更新');
+    ok(env.els.printRoot.innerHTML.indexOf('啥都有快送') >= 0 && env.els.printRoot.innerHTML.indexOf('0571-88888888') >= 0, '再打印时票头已更新');
     // 批量打印待备货
     Mall.addToCart('6902083881234', 1);
     const o2 = Mall.createOrder({ deliveryType: 'delivery', customer: { name: '李四', phone: '13900000000', address: '幸福路2号' } });

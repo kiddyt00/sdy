@@ -1,16 +1,124 @@
-/* 小邻里超市 · 小程序共用样式（M5） */
+/* 啥都有快送 · 小程序共用样式（M5 / 第 24 轮 Vant 主题）
+   主题口径：品牌绿 #16a34a（与 web/assets/theme.css 同一套色）；
+   Vant Weapp 的样式变量统一在 page 上覆盖，改色只改这里。 */
+
 page {
-  background: #f3f4f6;
+  /* ---------- 品牌色 ---------- */
+  --brand: #16a34a;
+  --brand-dark: #15803d;
+  --brand-soft: #dcfce7;
+  --danger: #dc2626;
+  --price: #dc2626;
+  --muted: #6b7280;
+  --line: #f0f1f3;
+  --bg: #f5f6f8;
+
+  /* ---------- Vant 覆盖 ---------- */
+  --button-primary-background-color: #16a34a;
+  --button-primary-border-color: #16a34a;
+  --button-primary-color: #ffffff;
+  --button-border-radius: 999px;
+  --button-default-color: #374151;
+
+  --cell-text-color: #111827;
+  --cell-value-color: #6b7280;
+  --cell-border-color: #f0f1f3;
+  --cell-background-color: #ffffff;
+  --cell-group-background-color: #ffffff;
+
+  --search-background-color: #16a34a;
+  --search-content-background-color: #f5f6f8;
+  --search-input-text-color: #111827;
+  --search-placeholder-color: #9ca3af;
+  --search-action-text-color: #374151;
+
+  --tabs-nav-background-color: #ffffff;
+  --tab-text-color: #4b5563;
+  --tab-active-text-color: #16a34a;
+  --tabs-bottom-bar-color: #16a34a;
+
+  --stepper-button-icon-color: #16a34a;
+  --stepper-button-border-color: #16a34a;
+  --stepper-input-text-color: #111827;
+  --stepper-border-radius: 999px;
+
+  --checkbox-checked-icon-color: #16a34a;
+  --checkbox-border-color: #d1d5db;
+  --switch-on-background-color: #16a34a;
+
+  --submit-bar-background-color: #ffffff;
+  --submit-bar-price-color: #dc2626;
+  --submit-bar-price-integer-font-size: 36px;
+  --submit-bar-button-width: 220rpx;
+
+  --goods-action-button-primary-color: #16a34a;
+  --goods-action-button-danger-color: #dc2626;
+  --goods-action-icon-color: #4b5563;
+
+  --nav-bar-background-color: #16a34a;
+  --nav-bar-title-text-color: #ffffff;
+  --nav-bar-icon-color: #ffffff;
+  --nav-bar-text-color: #ffffff;
+
+  --sidebar-background-color: #f5f6f8;
+  --sidebar-selected-background-color: #ffffff;
+  --sidebar-selected-border-color: #16a34a;
+  --sidebar-selected-text-color: #16a34a;
+  --sidebar-text-color: #4b5563;
+
+  --tag-primary-color: #16a34a;
+  --tag-success-color: #16a34a;
+  --tag-danger-color: #dc2626;
+
+  --notice-bar-background-color: #fffbeb;
+  --notice-bar-text-color: #92400e;
+  --notice-bar-font-size: 24px;
+
+  --card-background-color: #ffffff;
+  --card-price-color: #dc2626;
+  --card-desc-color: #9ca3af;
+
+  --skeleton-row-background-color: #f0f1f3;
+  --skeleton-paragraph-background-color: #f0f1f3;
+
+  --divider-text-color: #9ca3af;
+  --divider-border-color: #f0f1f3;
+  --field-label-color: #4b5563;
+  --field-input-text-color: #111827;
+  --field-placeholder-text-color: #9ca3af;
+  --progress-color: #16a34a;
+  --loading-spinner-color: #16a34a;
+  --step-finish-line-color: #16a34a;
+  --step-finish-text-color: #111827;
+  --popup-round-border-radius: 24rpx;
+  --badge-background-color: #dc2626;
+
+  background: #f5f6f8;
   font-size: 28rpx;
   color: #111827;
-  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
+
+view, text, button, input, textarea, image, scroll-view { box-sizing: border-box; }
+
+/* 原生 button 的默认边框/背景会盖住自定义样式，全局抹平（Vant 组件内部自己管） */
+button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  line-height: normal;
+  font-size: inherit;
+  color: inherit;
+}
+button::after { border: none; }
 
 .page {
   padding: 20rpx 24rpx 160rpx;
 }
 
-/* 顶部：状态胶囊 + 搜索 */
+/* ---------- 顶部：状态胶囊 + 搜索（沿用旧样式名，页面已复用） ---------- */
 .bar {
   display: flex;
   align-items: center;
@@ -33,7 +141,6 @@ page {
   padding: 14rpx 24rpx;
   font-size: 26rpx;
 }
-/* 扫码找货（只读） */
 .scan {
   flex: none;
   background: #16a34a;
@@ -44,7 +151,7 @@ page {
   white-space: nowrap;
 }
 
-/* 分类 chips */
+/* ---------- 分类 chips（首页横滑 / 分类页） ---------- */
 .chips { white-space: nowrap; margin-bottom: 16rpx; }
 .chip {
   display: inline-block;
@@ -57,7 +164,7 @@ page {
 }
 .chip.on { background: #16a34a; color: #fff; }
 
-/* 商品卡 */
+/* ---------- 旧卡片样式（首页列表降级、我的页仍在用） ---------- */
 .card {
   display: flex;
   align-items: center;
@@ -75,6 +182,7 @@ page {
   line-height: 96rpx;
   font-size: 48rpx;
   flex: none;
+  overflow: hidden;
 }
 .info { flex: 1; padding: 0 20rpx; min-width: 0; }
 .name { font-size: 30rpx; font-weight: 600; }
@@ -84,7 +192,86 @@ page {
 .stock { font-size: 22rpx; color: #6b7280; font-weight: 400; margin-left: 12rpx; }
 .stock.zero { color: #dc2626; }
 
-/* 按钮 */
+/* ---------- 双列商品网格（首页 / 分类页 / 搜索页） ---------- */
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.gitem {
+  width: 340rpx;
+  background: #fff;
+  border-radius: 20rpx;
+  margin-bottom: 20rpx;
+  overflow: hidden;
+}
+.gthumb {
+  width: 340rpx;
+  height: 340rpx;
+  background: #eff6ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 88rpx;
+  color: #93c5fd;
+  position: relative;
+}
+.gthumb .gimg { width: 100%; height: 100%; }
+.gbody { padding: 16rpx 18rpx 20rpx; }
+/* 标题固定两行高度：不然一行/两行的卡片会高矮不齐，网格看起来就乱了 */
+.gname {
+  font-size: 27rpx;
+  font-weight: 600;
+  line-height: 38rpx;
+  height: 76rpx;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-all;
+}
+.gspec {
+  font-size: 22rpx;
+  color: #9ca3af;
+  margin-top: 6rpx;
+  height: 30rpx;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.gfoot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-top: 12rpx;
+}
+.gprice { color: #dc2626; font-weight: 700; font-size: 34rpx; line-height: 1; }
+.gprice .gsym { font-size: 22rpx; }
+.gprice .gori { font-size: 22rpx; color: #9ca3af; font-weight: 400; text-decoration: line-through; margin-left: 8rpx; }
+.gadd {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 999rpx;
+  background: #16a34a;
+  color: #fff;
+  font-size: 40rpx;
+  line-height: 52rpx;
+  text-align: center;
+}
+.gadd.dis { background: #e5e7eb; color: #9ca3af; }
+.gtag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: rgba(22, 163, 74, .92);
+  color: #fff;
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-bottom-right-radius: 12rpx;
+}
+.gtag.out { background: rgba(17, 24, 39, .72); }
+
+/* ---------- 按钮 ---------- */
 .btn {
   display: inline-block;
   text-align: center;
@@ -97,8 +284,9 @@ page {
 .btn-block { display: block; padding: 22rpx; font-size: 30rpx; border-radius: 16rpx; }
 .btn.dis { background: #e5e7eb; color: #9ca3af; }
 .btn-mini { flex: none; }
+.btn-line { border: 1rpx solid #d1d5db; color: #374151; background: #fff; }
 
-/* 底部结算条 */
+/* ---------- 底部结算条（旧首页在用；购物车页改用 van-submit-bar） ---------- */
 .cartbar {
   position: fixed;
   left: 24rpx;
@@ -111,6 +299,7 @@ page {
   border-radius: 999rpx;
   padding: 16rpx 16rpx 16rpx 32rpx;
   box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, .18);
+  z-index: 20;
 }
 .cartbar .cb-left { flex: 1; font-size: 26rpx; }
 .cartbar .cb-num { color: #fbbf24; font-weight: 700; }
@@ -121,7 +310,7 @@ page {
   font-size: 27rpx;
 }
 
-/* 通用 */
+/* ---------- 通用 ---------- */
 .section {
   background: #fff;
   border-radius: 20rpx;
@@ -142,3 +331,27 @@ page {
 }
 .field { margin-bottom: 16rpx; }
 .field-label { font-size: 24rpx; color: #6b7280; margin-bottom: 8rpx; }
+
+/* 分段标题条：6rpx 渐变竖条 + 标题（小程序线统一视觉） */
+.sechead {
+  display: flex;
+  align-items: center;
+  font-size: 30rpx;
+  font-weight: 600;
+  margin: 8rpx 0 18rpx;
+}
+.sechead::before {
+  content: '';
+  width: 6rpx;
+  height: 32rpx;
+  border-radius: 999rpx;
+  margin-right: 14rpx;
+  background: linear-gradient(180deg, #4ade80, #16a34a);
+}
+
+/* 吸顶容器（首页搜索 / 分类 tab 用） */
+.sticky { position: sticky; top: 0; z-index: 10; background: #f5f6f8; }
+
+/* 安全区（两种写法都写，兼容不同基础库） */
+.safe-pb { padding-bottom: constant(safe-area-inset-bottom); padding-bottom: env(safe-area-inset-bottom); }
+.safe-mb { margin-bottom: constant(safe-area-inset-bottom); margin-bottom: env(safe-area-inset-bottom); }

@@ -1,65 +1,113 @@
-<view class="page">
-  <view class="section" wx:if="{{!online}}">
-    <view class="row"><view>当前：{{statusLabel}}</view></view>
-    <view class="hint">后端没连上时，下单只记在手机本地（不会真的进系统）。请在「我的」里设置后端地址。</view>
+<wxs src="../../utils/tools.wxs" module="tools" />
+<view class="page cartpage">
+  <view class="chead">
+    <view class="ctitle">{{buyNow ? '立即购买' : '购物车'}}<text wx:if="{{!buyNow && cartCount > 0}}" class="cnum">（{{cartCount}} 件）</text></view>
+    <view class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
   </view>
 
-  <view class="empty" wx:if="{{empty}}">
-    购物车是空的
-    <view style="margin-top:24rpx"><view class="btn btn-primary" bindtap="goIndex">去逛逛</view></view>
-  </view>
+  <van-notice-bar
+    wx:if="{{buyNow}}"
+    left-icon="info-o"
+    text="这是「立即购买」，不会动购物车里的东西"
+  />
 
-  <block wx:if="{{!empty}}">
-    <view class="section">
-      <view class="section-title">商品（{{lines.length}} 种）</view>
-      <view class="line" wx:for="{{lines}}" wx:key="code">
-        <view class="thumb">{{item.emoji}}</view>
-        <view class="line-info">
-          <view class="name">{{item.name}}</view>
-          <view class="muted">{{item.spec}} · ¥{{item.priceText}}/{{item.unit}}</view>
-        </view>
-        <view class="stepper">
-          <view class="step" data-code="{{item.code}}" data-delta="-1" bindtap="onQty">−</view>
-          <view class="qty">{{item.qty}}</view>
-          <view class="step" data-code="{{item.code}}" data-delta="1" bindtap="onQty">+</view>
-        </view>
-        <view class="amount">¥{{item.amountText}}</view>
+  <van-empty wx:if="{{empty}}" description="购物车还是空的">
+    <van-button round type="primary" size="small" bind:click="goIndex">去逛逛</van-button>
+  </van-empty>
+
+  <block wx:else>
+    <view class="clist">
+      <view class="crow" wx:for="{{lines}}" wx:key="code">
+        <van-checkbox
+          wx:if="{{!buyNow}}"
+          value="{{item.checked}}"
+          data-code="{{item.code}}"
+          checked-color="#16a34a"
+          bind:change="onCheck"
+        />
+        <van-swipe-cell class="cgrow" right-width="{{128}}">
+          <view class="cinner">
+            <view class="cthumb">
+              <image wx:if="{{item.img}}" class="cimg" src="{{item.img}}" mode="aspectFill" />
+              <text wx:else>{{item.emoji}}</text>
+            </view>
+            <view class="cinfo">
+              <view class="cname">{{item.name}}</view>
+              <view class="cspec">{{item.spec || item.unit}}</view>
+              <view class="cfoot">
+                <view class="cprice">¥{{tools.fix2(item.price)}}<text class="cunit">/{{item.unit}}</text></view>
+                <van-stepper
+                  value="{{item.qty}}"
+                  min="1"
+                  integer
+                  button-size="26px"
+                  data-code="{{item.code}}"
+                  bind:change="onStep"
+                />
+              </view>
+            </view>
+          </view>
+          <view slot="right" class="cdel" data-code="{{item.code}}" bindtap="onRemove">删除</view>
+        </van-swipe-cell>
       </view>
-      <view class="row"><view class="muted" bindtap="onClear">清空购物车</view></view>
     </view>
 
+    <!-- 配送方式 -->
     <view class="section">
       <view class="section-title">配送方式</view>
-      <view class="kinds">
-        <view class="kind {{deliveryType === 'delivery' ? 'on' : ''}}" data-kind="delivery" bindtap="onDelivery">送货上门</view>
-        <view class="kind {{deliveryType === 'pickup' ? 'on' : ''}}" data-kind="pickup" bindtap="onDelivery">到店自提</view>
+      <view class="dways">
+        <view class="dway {{deliveryType === 'delivery' ? 'on' : ''}}" data-kind="delivery" bindtap="onDelivery">送货上门</view>
+        <view class="dway {{deliveryType === 'pickup' ? 'on' : ''}}" data-kind="pickup" bindtap="onDelivery">到店自提</view>
       </view>
-      <view class="muted" style="margin-top:12rpx">{{feeHint}}</view>
+      <view class="hint">{{feeHint}}</view>
     </view>
 
+    <!-- 收货信息 -->
     <view class="section">
       <view class="section-title">收货信息</view>
       <view class="field">
         <view class="field-label">收货人</view>
-        <input class="input" placeholder="姓名 / 称呼" value="{{name}}" bindinput="onName" />
+        <input class="input" value="{{name}}" placeholder="姓名" bindinput="onName" />
       </view>
       <view class="field">
-        <view class="field-label">手机号（11 位）</view>
-        <input class="input" type="number" maxlength="11" placeholder="方便老板联系" value="{{phone}}" bindinput="onPhone" />
+        <view class="field-label">手机号</view>
+        <input class="input" type="number" maxlength="11" value="{{phone}}" placeholder="11 位手机号" bindinput="onPhone" />
       </view>
       <view class="field" wx:if="{{deliveryType === 'delivery'}}">
         <view class="field-label">送货地址</view>
-        <input class="input" placeholder="小区 / 楼栋 / 门牌" value="{{address}}" bindinput="onAddress" />
+        <input class="input" value="{{address}}" placeholder="楼栋 / 门牌号" bindinput="onAddress" />
+        <view class="addrbtns">
+          <text class="btn btn-ghost btn-mini" bindtap="pickAddress">从地址簿选</text>
+          <text class="btn btn-line btn-mini" bindtap="saveToBook">存进地址簿</text>
+        </view>
       </view>
-      <view class="muted" wx:else>自提地址与时间由老板在订单里回复（熟客也可直接到店自取）。</view>
+      <view class="muted" wx:else>自提地址以店铺信息为准，到店报手机号即可。</view>
     </view>
 
-    <view class="section">
-      <view class="row"><view>商品小计</view><view>¥{{subtotalText}}</view></view>
-      <view class="row"><view>配送费</view><view>¥{{feeText}}</view></view>
-      <view class="row total"><view>合计</view><view>¥{{totalText}}</view></view>
-      <view class="btn btn-primary btn-block {{submitting ? 'dis' : ''}}" bindtap="submit">{{submitting ? '提交中…' : '提交订单'}}</view>
-      <view class="muted" style="margin-top:12rpx">提交后以店老板确认为准；第一版为到店付款 / 货到付款，微信支付待商户号开通。</view>
+    <view class="sumpad"></view>
+
+    <!-- 结算条 -->
+    <view class="cbar">
+      <view class="cbar-l">
+        <van-checkbox
+          wx:if="{{!buyNow}}"
+          value="{{allChecked}}"
+          checked-color="#16a34a"
+          bind:change="onCheckAll"
+        >全选</van-checkbox>
+        <text wx:else class="muted">共 {{lines.length}} 项</text>
+        <text class="clink" bindtap="goAddressBook" wx:if="{{loggedIn}}">地址簿</text>
+      </view>
+      <view class="cbar-r">
+        <view class="cbar-sum">
+          <text class="cbar-hint">{{feeHint}}</text>
+          <text class="cbar-n">¥{{totalText}}</text>
+        </view>
+        <view
+          class="cbar-go {{submitting ? 'dis' : ''}}"
+          bindtap="submit"
+        >{{submitting ? '提交中…' : '提交订单'}}</view>
+      </view>
     </view>
   </block>
 </view>

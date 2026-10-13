@@ -1,4 +1,4 @@
-// 小邻里超市 · 小程序端后端通道（M5）
+// 啥都有快送 · 小程序端后端通道（M5）
 // 与 web/sdy-api.js、barcode-demo/bd-api.js 同构：后端是唯一真源，
 // 探测不到后端就自动降级为「本地演示」，页面照常可点（只是数据不落库）。
 //
@@ -151,6 +151,16 @@ function num(v) {
   const n = Number(v)
   return isFinite(n) ? n : 0
 }
+
+// 商品图：后端存的是相对路径（assets/demo/kele.svg）或完整 URL，这里统一补成绝对地址。
+// 注意：小程序 `<image>` 加载网络图，需要在「downloadFile 合法域名」里配置同一个域名。
+function imgUrl(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  if (/^https?:\/\//i.test(s)) return s
+  return base() + '/' + s.replace(/^\/+/, '')
+}
+
 function mapProduct(p) {
   // 价格真源在服务端（D12/D24）：带 phone 请求时，服务端按顾客等级算好 price，
   // 小程序只读不换算；没带 phone（未登录）时一律零售价。
@@ -161,9 +171,12 @@ function mapProduct(p) {
     name: p.name || '',
     brand: p.brand || '',
     spec: p.spec || '',
-    category: p.category || '其他',
+    category: p.category || '未分类',
     unit: p.unit || '件',
     emoji: emojiFor(p.name),
+    img: imgUrl(p.img),
+    // salePrice 沿用老字段名存「有效价」；price 与服务端线格式同名，页面两个都能读
+    price: eff,
     salePrice: eff,
     retailPrice: retail,
     priceText: eff.toFixed(2),
@@ -171,6 +184,7 @@ function mapProduct(p) {
     wholesalePrice: num(p.wholesalePrice),
     tier: p.tier || '',
     stock: num(p.stock),
+    onSale: p.onSale !== false,
     syncStatus: p.syncStatus || '',
     server: true
   }
@@ -200,17 +214,51 @@ function localProducts(keyword) {
 
 // 商品列表；在线时顺便把服务端商品缓存到本地（断网也能看）
 // 顾客端只看上架商品（onSale=1，D23）；已登录就带 phone，让服务端按等级给价（D24）。
-function listProducts(keyword) {
-  if (!state.online) return Promise.resolve(localProducts(keyword))
+// category 传空 / '全部' 就是不筛分类（第 24 轮分类页用）。
+function listProducts(keyword, category) {
+  const cat = String(category || '').trim()
+  const useCat = cat && cat !== '全部'
+  if (!state.online) {
+    let list = localProducts(keyword)
+    if (useCat) list = list.filter((p) => (p.category || '未分类') === cat)
+    return Promise.resolve(list)
+  }
   const qs = ['onSale=1']
   if (keyword) qs.push('keyword=' + encodeURIComponent(keyword))
+  if (useCat) qs.push('category=' + encodeURIComponent(cat))
   const ph = boundPhone()
   if (ph) qs.push('phone=' + encodeURIComponent(ph))
   return request('GET', '/api/products?' + qs.join('&')).then((d) => {
     const items = (d.items || []).map(mapProduct)
-    if (!keyword) sset(LS_PRODUCTS_KEY, items)
+    if (!keyword && !useCat) sset(LS_PRODUCTS_KEY, items)
     return items
   })
+}
+
+// 单个商品详情（第 24 轮）。带 phone 时服务端按等级算有效价，口径与列表完全一致。
+function getProduct(code) {
+  const c = String(code == null ? '' : code).trim()
+  if (!c) return Promise.reject(new Error('商品条码为空'))
+  if (!state.online) {
+    const hit = localProducts('').filter((p) => p.code === c)[0]
+    return hit ? Promise.resolve(hit) : Promise.reject(new Error('商品不存在或已下架'))
+  }
+  const ph = boundPhone()
+  const qs = ph ? '?phone=' + encodeURIComponent(ph) : ''
+  return request('GET', '/api/products/' + encodeURIComponent(c) + qs).then(mapProduct)
+}
+
+// 分类与件数（顾客端只看上架商品）
+function listCategories() {
+  if (!state.online) {
+    const m = {}
+    localProducts('').forEach((p) => {
+      const k = p.category || '未分类'
+      m[k] = (m[k] || 0) + 1
+    })
+    return Promise.resolve(Object.keys(m).map((k) => ({ name: k, count: m[k] })))
+  }
+  return request('GET', '/api/products/categories?onSale=1').then((d) => d.items || [])
 }
 
 // ---------- 微信登录（第 23 轮 / D28） ----------
@@ -300,29 +348,40 @@ function mapOrder(o) {
   const items = (o.items || []).map((it) => ({
     code: String(it.code || ''),
     name: it.name || '',
+    // 订单行在服务端只存 code/name/price/qty，规格图这些只能按名字回推
+    spec: it.spec || '',
+    unit: it.unit || '件',
+    img: imgUrl(it.img),
+    emoji: emojiFor(it.name),
     price: num(it.price),
     qty: num(it.qty),
     amount: Math.round(num(it.price) * num(it.qty) * 100) / 100,
     amountText: (num(it.price) * num(it.qty)).toFixed(2)
   }))
-  const statusMap = {
-    pending: '待处理', delivering: '配送中', ready: '待自提', done: '已完成', cancelled: '已取消'
-  }
+  const status = o.status || 'pending'
+  const dt = o.deliveryType === 'delivery' ? 'delivery' : 'pickup'
+  const acts = rules.orderActions(status)
   return {
     id: String(o.id || ''),
     customerName: o.customerName || '',
+    contact: o.customerName || '',
     phone: o.phone || '',
     address: o.address || '',
-    deliveryType: o.deliveryType === 'delivery' ? 'delivery' : 'pickup',
-    deliveryText: o.deliveryType === 'delivery' ? '送货上门' : '到店自提',
+    deliveryType: dt,
+    deliveryText: dt === 'delivery' ? '送货上门' : '到店自提',
     subtotal: num(o.subtotal),
     subtotalText: num(o.subtotal).toFixed(2),
     deliveryFee: num(o.deliveryFee),
     total: num(o.total),
     totalText: num(o.total).toFixed(2),
     feeText: num(o.deliveryFee).toFixed(2),
-    status: o.status || 'pending',
-    statusText: statusMap[o.status] || o.status || '待处理',
+    status: status,
+    statusText: rules.statusLabel(status),
+    actions: acts,
+    canCancel: acts.indexOf('cancel') >= 0,
+    canAdvance: acts.indexOf('advance') >= 0,
+    canReorder: acts.indexOf('reorder') >= 0,
+    hint: rules.statusHint({ status: status, deliveryType: dt }),
     items: items,
     count: items.reduce((s, it) => s + it.qty, 0),
     summary: items.map((it) => it.name + '×' + it.qty).join('、'),
@@ -372,9 +431,28 @@ function createOrder(input) {
   return request('POST', '/api/orders', body).then((d) => ({ order: mapOrder(d), local: false }))
 }
 
-function listOrders() {
-  if (!state.online) return Promise.resolve(localOrders().map(mapOrder))
-  return request('GET', '/api/orders').then((d) => (d.items || []).map(mapOrder))
+// 订单列表；status 传空 = 全部（第 24 轮订单页状态 tab）
+function listOrders(status) {
+  const st = String(status || '').trim()
+  if (!state.online) {
+    const list = localOrders().map(mapOrder)
+    return Promise.resolve(st ? list.filter((o) => o.status === st) : list)
+  }
+  const qs = st ? '?status=' + encodeURIComponent(st) : ''
+  return request('GET', '/api/orders' + qs).then((d) => (d.items || []).map(mapOrder))
+}
+
+// 推进订单状态（顾客端只用「确认收货」→ done；取消请用 cancelOrder）
+function advanceOrder(id, to) {
+  if (!state.online) {
+    const list = localOrders()
+    const hit = list.filter((o) => o.id === id)[0]
+    if (!hit) return Promise.reject(new Error('订单不存在'))
+    hit.status = to
+    saveLocalOrders(list)
+    return Promise.resolve(mapOrder(hit))
+  }
+  return request('POST', '/api/orders/' + encodeURIComponent(id) + '/advance', { to: to }).then(mapOrder)
 }
 
 function getOrder(id) {
@@ -387,15 +465,55 @@ function getOrder(id) {
 
 // 顾客端只能取消自己的待处理订单（其余状态由店里在管理端推进）
 function cancelOrder(id) {
+  return advanceOrder(id, 'cancelled')
+}
+
+// ---------- 店铺信息（我的页 / 公告）：与 Web 端同一份 /api/settings ----------
+const LS_SETTINGS_KEY = 'sdy_mp_settings'
+function cachedSettings() {
+  const s = sget(LS_SETTINGS_KEY, null)
+  return s && typeof s === 'object' ? s : null
+}
+function getSettings() {
   if (!state.online) {
-    const list = localOrders()
-    const hit = list.filter((o) => o.id === id)[0]
-    if (!hit) return Promise.reject(new Error('订单不存在'))
-    hit.status = 'cancelled'
-    saveLocalOrders(list)
-    return Promise.resolve(mapOrder(hit))
+    return Promise.resolve(cachedSettings() || { name: config.STORE_NAME, phone: '', address: '', footer: '' })
   }
-  return request('POST', '/api/orders/' + encodeURIComponent(id) + '/advance', { to: 'cancelled' }).then(mapOrder)
+  return request('GET', '/api/settings').then((s) => {
+    const v = s && typeof s === 'object' ? s : {}
+    sset(LS_SETTINGS_KEY, v)
+    return v
+  })
+}
+
+// ---------- 地址簿（D18；后端早已就绪，小程序第 24 轮才接入） ----------
+// 地址按手机号归档，订单里的地址仍是下单当时的快照。
+function mapAddress(a) {
+  return {
+    id: String(a.id || ''),
+    contact: a.contact || '',
+    address: a.address || '',
+    isDefault: !!a.isDefault
+  }
+}
+function listAddresses() {
+  const ph = boundPhone()
+  if (!ph) return Promise.reject(new Error('请先登录并绑定手机号，才能用地址簿'))
+  if (!state.online) return Promise.resolve([])
+  return request('GET', '/api/addresses?phone=' + encodeURIComponent(ph)).then((d) => (d.items || []).map(mapAddress))
+}
+function saveAddress(a) {
+  const ph = boundPhone()
+  if (!ph) return Promise.reject(new Error('请先登录并绑定手机号，才能用地址簿'))
+  if (!state.online) return Promise.reject(new Error('后端未连接：地址簿要连上服务端才能保存'))
+  const body = { phone: ph, contact: a.contact, address: a.address, isDefault: !!a.isDefault }
+  if (a.id) body.id = Number(a.id)
+  return request('POST', '/api/addresses', body).then(mapAddress)
+}
+function deleteAddress(id) {
+  const ph = boundPhone()
+  if (!ph) return Promise.reject(new Error('请先登录并绑定手机号，才能用地址簿'))
+  if (!state.online) return Promise.reject(new Error('后端未连接：地址簿要连上服务端才能改'))
+  return request('DELETE', '/api/addresses/' + encodeURIComponent(id) + '?phone=' + encodeURIComponent(ph))
 }
 
 // 扫码找货（**只读**，D8）：只回答「这个条码是哪个商品」，绝不改库存、绝不自动加购。
@@ -426,6 +544,8 @@ module.exports = {
   probe: probe,
   status: status,
   listProducts: listProducts,
+  getProduct: getProduct,
+  listCategories: listCategories,
   resolveBarcode: resolveBarcode,
   wxLogin: wxLogin,
   session: session,
@@ -437,10 +557,18 @@ module.exports = {
   listOrders: listOrders,
   getOrder: getOrder,
   cancelOrder: cancelOrder,
+  advanceOrder: advanceOrder,
+  getSettings: getSettings,
+  cachedSettings: cachedSettings,
+  listAddresses: listAddresses,
+  saveAddress: saveAddress,
+  deleteAddress: deleteAddress,
   clearCache: clearCache,
   emojiFor: emojiFor,
+  imgUrl: imgUrl,
   _state: state,
   _mapProduct: mapProduct,
   _mapOrder: mapOrder,
+  _mapAddress: mapAddress,
   _local: { products: LOCAL_PRODUCTS }
 }

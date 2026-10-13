@@ -92,7 +92,7 @@ SEED_COURIERS = [
 
 # 门店抬头（D25，落库到 setting 表）：只在库里还是默认「家庭超市」时写入
 STORE = {
-    "name": "小邻里超市",
+    "name": "啥都有快送",
     "phone": "0591-88888888",
     "address": "福建省福州市水东洋便利店",
     "footer": "谢谢惠顾，欢迎再来！",
@@ -268,10 +268,14 @@ def main():
           % (len(cur_couriers), "、".join(c.get("name", "") for c in cur_couriers)))
 
     st, store = call(base, "GET", "/api/settings")
-    if (store.get("name") or "").strip() in ("", "家庭超市"):
+    # 「小邻里超市」是第 24 轮之前的旧品牌名，一并按默认值处理（第 24 轮改名：小邻里超市 → 啥都有快送）
+    if (store.get("name") or "").strip() in ("", "家庭超市", "小邻里超市"):
+        old = (store.get("name") or "").strip()
         st, body = call(base, "POST", "/api/settings", STORE)
         if 200 <= st < 300:
             store = body
+            if old == "小邻里超市":
+                print("🔤 门店抬头改名：小邻里超市 → %s" % STORE["name"])
         else:
             print("  ⚠️ 门店抬头保存失败：%s" % body.get("error"))
     else:

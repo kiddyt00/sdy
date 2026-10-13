@@ -1,0 +1,57 @@
+/* 搜索页（第 24 轮） */
+.spage { padding: 0 24rpx 40rpx; }
+
+.sbar {
+  display: flex;
+  align-items: center;
+  padding: 16rpx 0 8rpx;
+}
+.sbox {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 999rpx;
+  padding: 14rpx 24rpx;
+  min-width: 0;
+}
+.sinput {
+  flex: 1;
+  font-size: 28rpx;
+  margin: 0 14rpx;
+  min-width: 0;
+}
+.sph { color: #b6bac2; }
+.scancel {
+  font-size: 28rpx;
+  color: #16a34a;
+  padding-left: 24rpx;
+}
+
+.ssec { margin-top: 28rpx; }
+.ssec-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 27rpx;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 18rpx;
+}
+.swrap { display: flex; flex-wrap: wrap; }
+.sword {
+  font-size: 26rpx;
+  color: #4b5563;
+  background: #fff;
+  border-radius: 999rpx;
+  padding: 12rpx 26rpx;
+  margin: 0 18rpx 18rpx 0;
+}
+.sword.hot { color: #15803d; background: #dcfce7; }
+
+.scount {
+  font-size: 23rpx;
+  color: #9ca3af;
+  margin: 20rpx 0 16rpx;
+}
+.slist { margin-top: 8rpx; }

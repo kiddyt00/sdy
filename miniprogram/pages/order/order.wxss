@@ -1,0 +1,84 @@
+/* 订单详情页（第 24 轮） */
+.dpage { padding: 0 24rpx 60rpx; }
+
+.dhead {
+  background: linear-gradient(135deg, #16a34a, #22c55e);
+  border-radius: 20rpx;
+  padding: 30rpx 28rpx;
+  margin: 20rpx 0;
+}
+.dstatus { color: #fff; font-size: 36rpx; font-weight: 700; }
+.dhint { color: rgba(255, 255, 255, .88); font-size: 24rpx; margin-top: 12rpx; }
+
+.dcard {
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 22rpx 24rpx;
+  margin-bottom: 20rpx;
+}
+.dsec-t {
+  font-size: 27rpx;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 12rpx;
+}
+
+.ditem {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+}
+.dthumb {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 14rpx;
+  background: #eff6ff;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 44rpx;
+  color: #93c5fd;
+  overflow: hidden;
+}
+.dthumb .dimg { width: 100%; height: 100%; }
+.dinfo { flex: 1; padding: 0 18rpx; min-width: 0; }
+.dname { font-size: 28rpx; font-weight: 600; }
+.dspec { font-size: 22rpx; color: #9ca3af; margin-top: 6rpx; }
+.dright { text-align: right; }
+.dprice { font-size: 28rpx; color: #374151; font-weight: 600; }
+.dqty { font-size: 22rpx; color: #9ca3af; margin-top: 6rpx; }
+
+.drow {
+  display: flex;
+  align-items: flex-start;
+  padding: 10rpx 0;
+  font-size: 26rpx;
+}
+.dk { color: #9ca3af; width: 150rpx; flex: none; }
+.dv { color: #374151; flex: 1; }
+.dv.strong { color: #dc2626; font-weight: 700; font-size: 30rpx; }
+.dcopy {
+  color: #16a34a;
+  font-size: 22rpx;
+  margin-left: 14rpx;
+  border: 1rpx solid #16a34a;
+  border-radius: 999rpx;
+  padding: 2rpx 14rpx;
+}
+
+.dacts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-top: 10rpx;
+}
+.dbtn {
+  font-size: 27rpx;
+  padding: 16rpx 34rpx;
+  border-radius: 999rpx;
+  margin: 0 0 16rpx 16rpx;
+}
+.dbtn.primary { background: #16a34a; color: #fff; }
+.dbtn.ghost { background: #f3f4f6; color: #374151; }
+.dbtn.line { border: 1rpx solid #d1d5db; color: #374151; }

@@ -229,10 +229,10 @@ fresh();
 {
   const st = Admin.getStoreInfo();
   ok(st.name === Admin.DEFAULT_STORE.name && st.footer === Admin.DEFAULT_STORE.footer, '门店抬头有默认值（' + st.name + '）');
-  const s2 = Admin.setStoreInfo({ name: '  小邻里超市  ', phone: ' 13800000000 ', address: '幸福路 1 号', footer: '' });
-  ok(s2.name === '小邻里超市' && s2.phone === '13800000000', '抬头保存前 trim 空格');
+  const s2 = Admin.setStoreInfo({ name: '  啥都有快送  ', phone: ' 13800000000 ', address: '幸福路 1 号', footer: '' });
+  ok(s2.name === '啥都有快送' && s2.phone === '13800000000', '抬头保存前 trim 空格');
   ok(s2.footer === Admin.DEFAULT_STORE.footer, '票尾留空回落到默认文案');
-  ok(Admin.getStoreInfo().name === '小邻里超市', '抬头已持久化，下次打票生效');
+  ok(Admin.getStoreInfo().name === '啥都有快送', '抬头已持久化，下次打票生效');
   throws(() => Admin.setStoreInfo({ name: '   ' }), '店名为空 → 拦截');
   throws(() => Admin.setStoreInfo({ name: '一二三四五六七八九十一二三四五六七八九十一' }), '店名超 20 字 → 拦截');
 }
@@ -247,7 +247,7 @@ fresh();
   ok(r.items[0].amount === 5 && r.items[1].amount === 4.5, '行金额 = 单价 × 数量（2.50×2=5.00）');
   ok(r.subtotal === 9.5 && r.deliveryFee === Mall.calcDeliveryFee('delivery', 9.5) && r.total === 12.5, '小计 9.50 ＋ 配送 3.00 ＝ 应收 12.50');
   ok(Mall.calcDeliveryFee('delivery', 30) === 0, '满 30 免配送费（规则同源）');
-  ok(r.storeName === '小邻里超市' && r.statusLabel === '待备货', '抬头与订单状态带出（' + r.statusLabel + '）');
+  ok(r.storeName === '啥都有快送' && r.statusLabel === '待备货', '抬头与订单状态带出（' + r.statusLabel + '）');
   ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(r.time), '时间格式 YYYY-MM-DD HH:MM（' + r.time + '）');
   ok(r.text.indexOf('单号：' + o.id) >= 0 && r.text.indexOf('应收：¥12.50') >= 0, '纯文本小票含单号与应收');
   ok(r.text.indexOf('配送费：¥3.00') >= 0 && r.text.indexOf('方式：配送到家') >= 0, '纯文本含配送费与配送方式');

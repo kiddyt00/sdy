@@ -1,0 +1,26 @@
+/* 编辑地址（第 24 轮） */
+.epage { padding: 20rpx 24rpx 200rpx; }
+
+.ecard {
+  background: #fff;
+  border-radius: 18rpx;
+  overflow: hidden;
+}
+.ehint {
+  font-size: 22rpx;
+  color: #9ca3af;
+  line-height: 34rpx;
+  padding: 18rpx 10rpx 0;
+}
+
+.efoot {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 20rpx 32rpx;
+  padding-bottom: calc(20rpx + constant(safe-area-inset-bottom));
+  padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
+  background: #fff;
+  box-shadow: 0 -6rpx 20rpx rgba(17, 24, 39, .05);
+}

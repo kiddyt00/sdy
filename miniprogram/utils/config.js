@@ -1,4 +1,4 @@
-// 小邻里超市 · 小程序运行配置（上线前只需要改这一个文件）
+// 啥都有快送 · 小程序运行配置（上线前只需要改这一个文件）
 //
 // 小程序和 Web 端最大的不同：`wx.request` 只能请求「小程序后台 → 开发管理 → 服务器域名」
 // 里配置过的 **HTTPS** 域名（不能是 IP、不能带端口）。所以：
@@ -22,5 +22,5 @@ module.exports = {
   PROD_BASE_URL: PROD_BASE_URL,
   DEFAULT_BASE_URL: PROD_BASE_URL || DEV_BASE_URL,
   // 门店名（页面 fallback 用；真源仍是后端 /api/settings）
-  STORE_NAME: '小邻里超市'
+  STORE_NAME: '啥都有快送'
 }

@@ -311,7 +311,7 @@ func TestAdminCleanURL(t *testing.T) {
 
 	// 静态目录里放一个带标记的 admin.html，避免依赖真实页面内容
 	dir := t.TempDir()
-	page := []byte("<title>小邻里超市 · 经营管理台</title>")
+	page := []byte("<title>啥都有快送 · 经营管理台</title>")
 	if err := os.WriteFile(filepath.Join(dir, "admin.html"), page, 0o644); err != nil {
 		t.Fatalf("写测试页面失败: %v", err)
 	}
@@ -735,5 +735,73 @@ func TestWxLoginHTTPFlow(t *testing.T) {
 	// ⑨ secret 与 session_key 绝不外泄（D13）
 	if strings.Contains(seen.String(), secretForTest) || strings.Contains(seen.String(), "sk_must_not_leak") {
 		t.Errorf("响应体里出现了 secret / session_key：%s", seen.String())
+	}
+}
+
+// 第 24 轮（D29）：顾客端商品详情与分类列表。
+// 详情接口的钱口径必须与列表完全一致（D24/D12）：带 phone 按等级算有效价，页面只读 price。
+func TestProductDetailAndCategoriesHTTPFlow(t *testing.T) {
+	ts := newTestServer(t)
+
+	for _, p := range []string{
+		`{"code":"7201","name":"整箱可乐","salePrice":60,"wholesalePrice":52,"stock":10,"unit":"箱","category":"饮料","img":"/static/cola.jpg"}`,
+		`{"code":"7202","name":"薯片","salePrice":6,"stock":5,"unit":"袋","category":"零食"}`,
+	} {
+		if code, body := do(t, ts, http.MethodPost, "/api/products", p); code != 200 {
+			t.Fatalf("建档失败: %d %s", code, body)
+		}
+	}
+
+	// ① 详情：不带 phone = 零售价，且必须下发图片字段（小程序要显示商品图）
+	code, body := do(t, ts, http.MethodGet, "/api/products/7201", "")
+	if code != 200 || !strings.Contains(body, `"tier":"retail"`) || !strings.Contains(body, `"price":60`) ||
+		!strings.Contains(body, `"img":"/static/cola.jpg"`) {
+		t.Fatalf("详情应回零售价与图片: %d %s", code, body)
+	}
+
+	// ② 详情：批发顾客 → 批发价（与列表同一口径）
+	if code, body = do(t, ts, http.MethodPost, "/api/customers/tier",
+		`{"phone":"13800001111","name":"王老板","tier":"wholesale"}`); code != 200 {
+		t.Fatalf("设等级失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/products/7201?phone=13800001111", ""); code != 200 ||
+		!strings.Contains(body, `"tier":"wholesale"`) || !strings.Contains(body, `"price":52`) {
+		t.Fatalf("批发顾客详情应回批发价: %d %s", code, body)
+	}
+	// 陌生手机号 → 零售价（查不到人不是错误）
+	if code, body = do(t, ts, http.MethodGet, "/api/products/7201?phone=13900000000", ""); code != 200 ||
+		!strings.Contains(body, `"price":60`) {
+		t.Fatalf("陌生手机号应回零售价: %d %s", code, body)
+	}
+
+	// ③ 详情：未知条码 404、方法不支持 405
+	if code, _ = do(t, ts, http.MethodGet, "/api/products/9999", ""); code != 404 {
+		t.Errorf("未知条码应 404，实际 %d", code)
+	}
+	if code, _ = do(t, ts, http.MethodPost, "/api/products/7201", "{}"); code != 405 {
+		t.Errorf("POST 详情应 405，实际 %d", code)
+	}
+
+	// ④ 分类列表：默认只算上架商品，且每个分类带件数
+	if code, body = do(t, ts, http.MethodGet, "/api/products/categories?onSale=1", ""); code != 200 ||
+		!strings.Contains(body, `"name":"饮料"`) || !strings.Contains(body, `"name":"零食"`) ||
+		!strings.Contains(body, `"count":1`) {
+		t.Fatalf("分类列表应含饮料与零食及件数: %d %s", code, body)
+	}
+	// 下架一个分类 → 该分类从顾客端列表消失
+	if code, body = do(t, ts, http.MethodPost, "/api/products/onsale", `{"codes":["7202"],"onSale":false}`); code != 200 {
+		t.Fatalf("下架失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/products/categories?onSale=1", ""); code != 200 ||
+		strings.Contains(body, `"name":"零食"`) {
+		t.Errorf("下架后「零食」不应在列表: %d %s", code, body)
+	}
+	// 不带 onSale=1 → 全部商品（含下架），给管理端留口子
+	if code, body = do(t, ts, http.MethodGet, "/api/products/categories", ""); code != 200 ||
+		!strings.Contains(body, `"name":"零食"`) {
+		t.Errorf("不带 onSale 应含全部: %d %s", code, body)
+	}
+	if code, _ = do(t, ts, http.MethodPost, "/api/products/categories", "{}"); code != 405 {
+		t.Errorf("POST 分类应 405，实际 %d", code)
 	}
 }

@@ -24,11 +24,26 @@ function mkWx(routes) {
     _calls: calls,
     toasts: [],
     tabs: [],
+    navs: [],
+    titles: [],
+    previews: [],
+    badges: [],
+    clipboard: [],
+    calls2: [],
+    back: 0,
     getStorageSync: (k) => (k in kv ? kv[k] : ''),
     setStorageSync: (k, v) => { kv[k] = v },
     removeStorageSync: (k) => { delete kv[k] },
     showToast: function (o) { this.toasts.push(o && o.title) },
     switchTab: function (o) { this.tabs.push(o && o.url) },
+    navigateTo: function (o) { this.navs.push(o && o.url) },
+    navigateBack: function () { this.back++ },
+    setNavigationBarTitle: function (o) { this.titles.push(o && o.title) },
+    previewImage: function (o) { this.previews.push(o && o.urls) },
+    setTabBarBadge: function (o) { this.badges.push(o) },
+    removeTabBarBadge: function (o) { this.badges.push({ removed: o && o.index }) },
+    setClipboardData: function (o) { this.clipboard.push(o && o.data) },
+    makePhoneCall: function (o) { this.calls2.push(o && o.phoneNumber) },
     stopPullDownRefresh: () => {},
     login: function (o) {
       this._calls.push({ method: 'LOGIN', path: 'wx.login', data: null })
@@ -93,19 +108,61 @@ async function main() {
   /* ---------- ① 工程结构 ---------- */
   section('① 小程序工程结构')
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'app.json'), 'utf8'))
-  ok(appJson.pages.length === 4, 'app.json 声明 4 个页面')
-  ok(appJson.tabBar.list.length === 4, 'tabBar 4 个入口')
+  ok(appJson.pages.length === 10, 'app.json 声明 10 个页面')
+  ok(appJson.tabBar.list.length === 5, 'tabBar 5 个入口')
   let allOk = true
   appJson.pages.forEach((p) => {
-    ;['.js', '.wxml', '.json'].forEach((ext) => { if (!exists(p + ext)) { allOk = false; console.log('    缺文件：' + p + ext) } })
+    ;['.js', '.wxml', '.json', '.wxss'].forEach((ext) => { if (!exists(p + ext)) { allOk = false; console.log('    缺文件：' + p + ext) } })
   })
-  ok(allOk, '每个页面都有 .js / .wxml / .json')
+  ok(allOk, '每个页面都有 .js / .wxml / .json / .wxss')
   ok(appJson.tabBar.list.every((t) => appJson.pages.indexOf(t.pagePath) >= 0), 'tabBar 指向的页面都在 pages 里')
   JSON.parse(fs.readFileSync(path.join(ROOT, 'project.config.json'), 'utf8'))
   ok(true, 'project.config.json 是合法 JSON')
   ok(JSON.parse(fs.readFileSync(path.join(ROOT, 'sitemap.json'), 'utf8')).rules.length > 0, 'sitemap.json 合法')
   const appJs = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8')
   ok(appJs.indexOf('refreshStatus') > 0, 'app.js 暴露 refreshStatus（页面靠它探测后端）')
+
+  /* ---------- ①.1 Vant 接入（手搓 miniprogram_npm，必须在盘上） ---------- */
+  section('①.1 Vant Weapp 接入')
+  ok(exists('miniprogram_npm/@vant/weapp/button/index.wxml'), 'miniprogram_npm 里有 Vant 实体（手搓构建）')
+  ok(!!appJson.usingComponents && Object.keys(appJson.usingComponents).length >= 12,
+    'app.json 全局声明了 ' + Object.keys(appJson.usingComponents || {}).length + ' 个 Vant 组件')
+  let vMiss = []
+  Object.keys(appJson.usingComponents || {}).forEach((tag) => {
+    const rel = appJson.usingComponents[tag].replace(/^@vant\/weapp\//, 'miniprogram_npm/@vant/weapp/')
+    ;['.js', '.json', '.wxml'].forEach((ext) => { if (!exists(rel + ext)) vMiss.push(rel + ext) })
+  })
+  ok(vMiss.length === 0, '每个声明过的 van-* 在 miniprogram_npm 里都有实体' + (vMiss.length ? '（缺 ' + vMiss.slice(0, 3).join(' / ') + '）' : ''))
+  ok((appJson.usingComponents || {})['van-button'] === '@vant/weapp/button/index', 'usingComponents 用官方 @vant/weapp/<name>/index 路径')
+
+  // 模板里出现的 van-* 必须声明过，否则真机/工具里是 "component not found" 白屏
+  const declared = Object.keys(appJson.usingComponents || {})
+  const usedTags = {}
+  const readWxmls = [''].concat(appJson.pages).map((p) => (p ? p + '.wxml' : 'app.wxml')).filter((f) => exists(f))
+  readWxmls.forEach((f) => {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8')
+    const m = src.match(/<van-[a-z0-9-]+/g) || []
+    m.forEach((t) => { usedTags[t.slice(1)] = (usedTags[t.slice(1)] || 0) + 1 })
+  })
+  const undeclared = Object.keys(usedTags).filter((t) => declared.indexOf(t) < 0)
+  ok(undeclared.length === 0, '页面里用到的 ' + Object.keys(usedTags).length + ' 个 van-* 都已在 app.json 声明' + (undeclared.length ? '（漏 ' + undeclared.join(',') + '）' : ''))
+
+  // wxs 引用要真的存在（tools.wxs 负责价格格式化）
+  let wxsMiss = []
+  readWxmls.forEach((f) => {
+    const src = fs.readFileSync(path.join(ROOT, f), 'utf8')
+    ;(src.match(/<wxs[^>]*src="([^"]+)"/g) || []).forEach((line) => {
+      const rel = line.match(/src="([^"]+)"/)[1].replace(/^\.\.\/\.\.\//, '').replace(/^\.\//, '')
+      if (!exists(rel)) wxsMiss.push(f + ' → ' + rel)
+    })
+  })
+  ok(wxsMiss.length === 0, 'wxs 引用都存在' + (wxsMiss.length ? '（缺 ' + wxsMiss.join(', ') + '）' : ''))
+
+  // 品牌主题：app.wxss 把 Vant 主色改成了店里那支绿
+  const appWxss = fs.readFileSync(path.join(ROOT, 'app.wxss'), 'utf8')
+  ok(appWxss.indexOf('--brand: #16a34a') > 0, 'app.wxss 定义了品牌绿')
+  ok(appWxss.indexOf('--button-primary-background-color: #16a34a') > 0, 'Vant 主按钮被改成品牌绿')
+  ok(appWxss.indexOf('button::after') > 0, '抹平了原生 button 的默认边框')
 
   /* ---------- ② 首页 ---------- */
   section('② 首页（离线上线都可用）')
@@ -226,7 +283,7 @@ async function main() {
   await mine.onShow()
   ok(mine.data.statusLabel.indexOf('本地演示') >= 0, '显示当前状态')
   ok(mine.data.statusDetail.indexOf('不会入库') > 0, '说明离线下单不入库')
-  ok(mine.data.shop.name === '小邻里超市', '店铺信息就位')
+  ok(mine.data.shop.name === '啥都有快送', '店铺信息就位')
   mine.onBase({ detail: { value: 'http://192.168.1.9:8093' } })
   await mine.saveBase()
   ok(api.base() === 'http://192.168.1.9:8093', '保存后 base 生效：' + api.base())
@@ -267,6 +324,160 @@ async function main() {
   ok(acc.data.loggedIn === false && acc.data.bound === false, '退出后回到未登录')
   ok(global.wx.toasts.indexOf('已退出登录') >= 0, '退出有明确提示')
   ok(acc.data.bound === false, '退出后回到可换号再登的状态')
+
+  /* ---------- ⑦ 商品详情（浏览 → 详情 → 加购 / 立即购买） ---------- */
+  section('⑦ 商品详情页')
+  global.wx = mkWx(OFFLINE)
+  await api.probe() // 真机上 app.onLaunch 先探一次，页面才知道离线还是在线
+  const goods = loadPage('pages/goods/goods.js')
+  await goods.onLoad({ code: '6901234567892' })
+  ok(goods.data.p && goods.data.p.name === '可口可乐', '离线也能看详情（本地演示商品）')
+  ok(goods.data.tierText === '零售' && goods.data.tierHint === '', '零售顾客看不到「按批发价」这类话')
+  ok(global.wx.titles.indexOf('可口可乐') >= 0, '标题改成商品名')
+  goods.onStep({ detail: 3 })
+  ok(goods.data.qty === 3, '步进器数量：3')
+  goods.addCart()
+  ok(store.cartCount() === 3, '详情页加购 3 件')
+  ok(global.wx.toasts.indexOf('已加入购物车') >= 0, '加购有明确提示')
+  // 超库存要拦住
+  store.clearCart()
+  goods.onStep({ detail: 999 })
+  goods.addCart()
+  ok(store.cartCount() === 0 && String(global.wx.toasts[global.wx.toasts.length - 1]).indexOf('只剩') >= 0, '超过库存不让加：' + global.wx.toasts[global.wx.toasts.length - 1])
+  // 立即购买：直通结算（tab 页不能 navigateTo）
+  goods.onStep({ detail: 2 })
+  goods.buyNow()
+  ok(global.wx.tabs.indexOf('/pages/cart/cart') >= 0, '立即购买跳到购物车')
+  const bn = store.takeBuyNow()
+  ok(bn.length === 1 && bn[0].qty === 2, '立即购买把那一件带进结算')
+  ok(bn[0].price === 2.5, '结算单价用服务端算好的有效价（D24）')
+
+  global.wx = mkWx(OFFLINE)
+  store.setBuyNow([{ code: '6901234567892', name: '可口可乐', price: 2.5, qty: 2, unit: '罐' }])
+  const bc = loadPage('pages/cart/cart.js')
+  await bc.onShow()
+  ok(bc.data.buyNow === true && bc.data.lines.length === 1 && bc.data.lines[0].qty === 2, '购物车进入「立即购买」模式，只结算那一件')
+  ok(store.cartCount() === 0, '立即购买不污染购物车')
+
+  /* ---------- ⑧ 分类页 ---------- */
+  section('⑧ 分类页（左分类 + 右商品）')
+  global.wx = mkWx(OFFLINE)
+  const cate = loadPage('pages/category/category.js')
+  await cate.onShow()
+  ok(cate.data.cats.length === 5, '离线按商品自身分类归出 5 类')
+  await cate.onSelect({ currentTarget: { dataset: { name: '饮料' } } })
+  ok(cate.data.products.length === 2 && cate.data.products.every((p) => p.category === '饮料'), '选「饮料」→ 2 件')
+  cate.onAdd({ currentTarget: { dataset: { code: '6901234567892' } } })
+  ok(store.cartCount() === 1, '分类页可以直接加购')
+  cate.onAdd({ currentTarget: { dataset: { code: '不存在的码' } } })
+  ok(store.cartCount() === 1, '不存在的条码不会加进购物车')
+  cate.goDetail({ currentTarget: { dataset: { code: '6901234567892' } } })
+  ok(global.wx.navs.indexOf('/pages/goods/goods?code=6901234567892') >= 0, '点商品进详情')
+  cate.goSearch()
+  ok(global.wx.navs.indexOf('/pages/search/search') >= 0, '分类页能进搜索')
+
+  /* ---------- ⑨ 搜索页 ---------- */
+  section('⑨ 搜索页（历史 + 防抖 + 结果）')
+  global.wx = mkWx(OFFLINE)
+  const sea = loadPage('pages/search/search.js')
+  sea.onLoad()
+  await sea.onShow()
+  ok(sea.data.hot.length > 0, '热门词就位')
+  sea.onInput({ detail: { value: '可乐' } })
+  const hit = await sea.doSearch(true)
+  ok(hit.length === 1 && hit[0].name === '可口可乐', '搜「可乐」命中可口可乐')
+  ok(sea.data.hist[0] === '可乐', '搜索词写进历史第一条')
+  await sea.doSearch(true)
+  ok(sea.data.hist.filter((x) => x === '可乐').length === 1, '重复搜同一个词不会堆历史')
+  sea.onInput({ detail: { value: '莫须有的商品' } })
+  const none = await sea.doSearch(false)
+  ok(none.length === 0 && sea.data.empty === true, '搜不到时给空态')
+  sea.onClear()
+  ok(sea.data.keyword === '' && sea.data.searched === false, '清空输入回到热门/历史')
+  sea.tapWord({ currentTarget: { dataset: { w: '啤酒' } } })
+  ok(sea.data.keyword === '啤酒', '点热门词直接搜')
+  sea.goDetail({ currentTarget: { dataset: { code: '6901001100113' } } })
+  ok(global.wx.navs.indexOf('/pages/goods/goods?code=6901001100113') >= 0, '搜索结果进详情')
+  sea.clearHist()
+  ok(sea.data.hist.length === 0, '历史可以一键清空')
+
+  /* ---------- ⑩ 订单详情 ---------- */
+  section('⑩ 订单详情页')
+  global.wx = mkWx(OFFLINE)
+  const made = await api.createOrder({
+    customerName: '张三', phone: '13800138000', deliveryType: 'pickup',
+    items: [{ code: '6901234567892', name: '可口可乐', price: 2.5, qty: 2 }]
+  })
+  const oid2 = made.order.id
+  const od = loadPage('pages/order/order.js')
+  od.onLoad({ id: oid2 })
+  await od.onShow()
+  ok(od.data.o && od.data.o.id === oid2, '按订单号查到详情')
+  ok(od.data.o.statusText === '待处理', '状态文案：待处理')
+  ok(od.data.o.canCancel === true && od.data.o.canAdvance === false, '待处理只给「取消订单」')
+  ok(od.data.o.items[0].emoji && od.data.o.items[0].emoji.length > 0, '订单行没有图就用名字回推 emoji')
+  od.copyId()
+  ok(global.wx.clipboard[0] === oid2, '订单号可复制')
+  await od.onCancel()
+  ok(od.data.o.statusText === '已取消', '取消后详情同步为已取消')
+  ok(od.data.o.canReorder === true, '已取消的单可以「再来一单」')
+  od.onReorder()
+  ok(store.cartCount() === 2, '再来一单把 2 件放回购物车')
+
+  /* ---------- ⑪ 地址簿 ---------- */
+  section('⑪ 地址簿（手机号即身份）')
+  global.wx = mkWx(OFFLINE)
+  const noLogin = loadPage('pages/address/list.js')
+  noLogin.onLoad({ pick: '1' })
+  await noLogin.onShow()
+  ok(noLogin.data.loggedIn === false && noLogin.data.list.length === 0, '没绑手机号：如实说不给用')
+
+  const ADDR_ROUTES = ONLINE.concat([
+    LOGIN_ROUTE,
+    { method: 'GET', path: '/api/addresses', body: { items: [{ id: 7, phone: '13800001111', contact: '王阿姨', address: '幸福小区 3 栋 201', isDefault: true }], total: 1 } },
+    { method: 'POST', path: '/api/addresses', body: { id: 8, phone: '13800001111', contact: '李叔', address: '幸福小区 5 栋 102', isDefault: false } },
+    { method: 'DELETE', re: /^\/api\/addresses\/\d+$/, body: { ok: true, id: 7 } }
+  ])
+  global.wx = mkWx(ADDR_ROUTES)
+  await api.probe()
+  await api.wxLogin({ phone: '13800001111', nickname: '王阿姨' })
+  const ab = loadPage('pages/address/list.js')
+  ab.onLoad({ pick: '1' })
+  await ab.onShow()
+  ok(ab.data.loggedIn === true, '绑过号就能看地址簿')
+  ok(ab.data.list.length === 1 && ab.data.list[0].contact === '王阿姨', '地址来自服务端')
+  ok(ab.data.list[0].id === '7', 'id 统一成字符串（dataset 传参不会丢）')
+  ab.onAdd()
+  ok(global.wx.navs.indexOf('/pages/address/edit') >= 0, '能进新增地址')
+  ab.onEdit({ currentTarget: { dataset: { id: '7' } } })
+  ok(global.wx.navs.indexOf('/pages/address/edit?id=7') >= 0, '能进编辑地址')
+  ab.onPick({ currentTarget: { dataset: { id: '7' } } })
+  ok(global.wx.back === 1, '挑完地址自动回上一页')
+  const picked = store.takePickedAddress()
+  ok(picked && picked.contact === '王阿姨', '选中的地址交给购物车回填')
+  await ab.onDelete({ currentTarget: { dataset: { id: '7' } } })
+  ok(global.wx._calls.filter((c) => c.method === 'DELETE' && c.path.indexOf('/api/addresses/7') === 0).length === 1, '删除真的打到 DELETE /api/addresses/7')
+  ok(global.wx.toasts.indexOf('已删除') >= 0, '删除有回执：' + JSON.stringify(global.wx.toasts))
+
+  const ed = loadPage('pages/address/edit.js')
+  ed.onLoad({})
+  await ed.onShow()
+  await ed.save()
+  ok(global.wx.toasts.indexOf('请填写收货人') >= 0, '收货人必填')
+  ed.onContact({ detail: { value: '一二三四五六七八九十一二三四五六七八九十一' } })
+  await ed.save()
+  ok(global.wx.toasts.indexOf('收货人不能超过 20 字') >= 0, '收货人 20 字上限（与后端一致）')
+  ed.onContact({ detail: { value: '李叔' } })
+  await ed.save()
+  ok(global.wx.toasts.indexOf('请填写送货地址') >= 0, '地址必填')
+  ed.onAddress({ detail: { value: '幸福小区 5 栋 102' } })
+  ed.onDefault({ detail: true })
+  ok(ed.data.isDefault === true, '默认地址开关')
+  await ed.save()
+  ok(global.wx.toasts.indexOf('已保存') >= 0, '保存成功有回执')
+  const savedBody = global.wx._calls.filter((c) => c.method === 'POST' && c.path === '/api/addresses').pop()
+  ok(savedBody && savedBody.data.contact === '李叔' && savedBody.data.isDefault === true, '提交的 body 带收货人/地址/默认标记')
+  ok(savedBody.data.phone === '13800001111', '提交时自动带上登录手机号（手机号即身份）')
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

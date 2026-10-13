@@ -1,0 +1,147 @@
+/* 分类页（第 24 轮） */
+.cpage {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #f5f6f8;
+}
+
+.cbar { padding: 16rpx 24rpx; }
+.csearch {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 999rpx;
+  padding: 14rpx 24rpx;
+}
+.cph { font-size: 27rpx; color: #b6bac2; margin-left: 14rpx; }
+
+.cbody {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.cside {
+  width: 190rpx;
+  flex: none;
+  background: #eef0f3;
+}
+.csitem {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 30rpx 10rpx;
+  font-size: 26rpx;
+  color: #4b5563;
+  position: relative;
+}
+.csitem.on {
+  background: #fff;
+  color: #16a34a;
+  font-weight: 700;
+}
+.csitem.on::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  margin-top: -24rpx;
+  width: 6rpx;
+  height: 48rpx;
+  border-radius: 0 6rpx 6rpx 0;
+  background: linear-gradient(180deg, #22c55e, #16a34a);
+}
+.csname { line-height: 1.3; text-align: center; }
+.csnum { font-size: 20rpx; color: #b6bac2; margin-top: 6rpx; }
+
+.cmain {
+  flex: 1;
+  padding: 12rpx 20rpx 40rpx;
+  box-sizing: border-box;
+}
+
+.crow {
+  display: flex;
+  background: #fff;
+  border-radius: 18rpx;
+  padding: 18rpx;
+  margin-bottom: 18rpx;
+}
+.cthumb {
+  width: 170rpx;
+  height: 170rpx;
+  border-radius: 14rpx;
+  background: #eff6ff;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 68rpx;
+  color: #93c5fd;
+  overflow: hidden;
+}
+.cthumb .cimg { width: 100%; height: 100%; }
+.cinfo {
+  flex: 1;
+  padding-left: 18rpx;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cname {
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 38rpx;
+  max-height: 76rpx;
+  overflow: hidden;
+}
+.cspec {
+  font-size: 22rpx;
+  color: #9ca3af;
+  margin-top: 8rpx;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cfoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cprice { color: #dc2626; font-weight: 700; font-size: 34rpx; line-height: 1; }
+.cprice .csym { font-size: 22rpx; }
+.cadd {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #fff;
+  text-align: center;
+  line-height: 56rpx;
+  font-size: 34rpx;
+}
+.cadd.dis { background: #e5e7eb; color: #9ca3af; font-size: 22rpx; }
+
+.ccart {
+  position: fixed;
+  right: 32rpx;
+  bottom: 60rpx;
+  min-width: 96rpx;
+  height: 96rpx;
+  border-radius: 999rpx;
+  background: #16a34a;
+  box-shadow: 0 12rpx 28rpx rgba(22, 163, 74, .32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 26rpx;
+}
+.ccart-n {
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 700;
+  margin-left: 10rpx;
+}
