@@ -165,6 +165,13 @@ async function main() {
   ok(appWxss.indexOf('--button-primary-background-color: #16a34a') > 0, 'Vant 主按钮被改成品牌绿')
   ok(appWxss.indexOf('button::after') > 0, '抹平了原生 button 的默认边框')
 
+  // 原生 input 自带 1.4rem(=56rpx) 默认高度，再叠上下 padding 会被 box-sizing 压成 24rpx
+  // 内容区 → 字只露上半截（老板在购物车三个输入框里看到的）。必须写死 height + line-height。
+  const inputCss = (appWxss.match(/\.input\s*\{[\s\S]*?\}/) || [''])[0]
+  ok(/height:\s*80rpx/.test(inputCss), '.input 写死高度（原生 input 默认高度不够）')
+  ok(/line-height:\s*78rpx/.test(inputCss), '.input 写死 line-height（字才不会只露上半截）')
+  ok(/padding:\s*0\s+20rpx/.test(inputCss), '.input 纵向 padding 归零（高度交给 height 管）')
+
   /* ---------- ② 首页 ---------- */
   section('② 首页（离线上线都可用）')
   global.wx = mkWx(OFFLINE)
@@ -212,9 +219,9 @@ async function main() {
   const indexWxml = fs.readFileSync(path.join(ROOT, 'pages/index/index.wxml'), 'utf8')
   ok(indexWxml.indexOf('sdot') > 0 && indexWxml.indexOf('statusLabel') < 0, '首页店铺条只有状态圆点，不显示状态文案')
   ok(indexWxml.indexOf('后端已连接') < 0 && indexWxml.indexOf('class="badge') < 0, '首页不再出现「后端已连接」胶囊')
-  // 全页面扫一遍：顾客端不许出现连接状态这类开发文案（后端地址只留在「我的」页长按版本号后的调试面板里）
+  // 全页面扫一遍：顾客端不许出现连接状态这类开发文案（第 25 轮收口⑤后，顾客端连调试面板都没有了）
   const appJsonAll = JSON.parse(fs.readFileSync(path.join(ROOT, 'app.json'), 'utf8'))
-  const devWords = ['后端已连接', '后端连接', '探测中', 'statusLabel', '开发者选项']
+  const devWords = ['后端已连接', '后端连接', '探测中', 'statusLabel', '开发者选项', '调试面板']
   const offenders = []
   appJsonAll.pages.forEach((p) => {
     const wxml = fs.readFileSync(path.join(ROOT, p + '.wxml'), 'utf8')
@@ -305,17 +312,14 @@ async function main() {
   ok(tabLabels.length === 6 && tabLabels[5] === '已取消', '状态标签仍是 6 个（全部 → 已取消）：' + tabLabels.join(' / '))
 
   /* ---------- ⑤ 我的 ---------- */
-  section('⑤ 我的（连接状态 + 后端地址）')
+  section('⑤ 我的（连接状态 + 登录区）')
   global.wx = mkWx(OFFLINE)
   const mine = loadPage('pages/mine/mine.js')
   await mine.onShow()
   ok(mine.data.online === false, '离线：连接状态为 false（页面上只显示灰点）')
-  ok(mine.data.statusDetail.indexOf('不会入库') > 0, '开发者选项里才说明离线下单不入库')
+  ok(mine.data.statusDetail === undefined && mine.data.apiBase === undefined && mine.data.devMode === undefined,
+    '页面 data 里不再留调试面板字段（devMode / statusDetail / apiBase）')
   ok(mine.data.shop.name === '啥都有快送', '店铺信息就位')
-  mine.onBase({ detail: { value: 'http://192.168.1.9:8093' } })
-  await mine.saveBase()
-  ok(api.base() === 'http://192.168.1.9:8093', '保存后 base 生效：' + api.base())
-  ok(global.wx.toasts.indexOf('保存了，但还没连上') >= 0, '保存后仍连不上会如实提示')
   mine.goOrders()
   ok(global.wx.tabs.indexOf('/pages/orders/orders') >= 0, '我的 → 订单 tab')
   // 第 25 轮（D31）：头像必须是正圆——button 的默认 padding / 行高 / ::after 边框不重置就会变成椭圆
@@ -328,21 +332,38 @@ async function main() {
   const avatarBtns = mineWxml.split('open-type="chooseAvatar"').length - 1
   ok(avatarBtns === 1, '头像只显示一处，不重复：chooseAvatar 出现 ' + avatarBtns + ' 次')
   ok(mineWxss.indexOf('.lavbtn') < 0 && mineWxss.indexOf('.lav ') < 0, '登录卡里的第二个头像样式已清掉')
-  // 第 25 轮第二次修椭圆：可见的一层必须是纯 view/image，button 只当透明点击层。
-  // （把 button 当可见圆形容器，它自带的 padding / 行高 / ::after 边框就会把盒子撑扁。）
-  ok(mineWxml.indexOf('mavatar-wrap') > 0 && mineWxml.indexOf('mavatar-hit') > 0 && mineWxml.indexOf('mavatar-btn') < 0,
-    '头像＝纯 view 圆容器 + 透明 button 点击层（形状不再由 button 决定）')
-  ok(/\.mavatar-hit[\s\S]*?opacity:\s*0/.test(mineWxss), '点击层 button 是透明的，自身形状不影响观感')
+  // 第 25 轮收口④：头像不再可点（去掉「更换头像」）——可见的圆容器是纯 view/image，
+  // 身上不再挂 button；chooseAvatar 挪到绿色框里的登录按钮上（微信唯一允许拿真实头像的入口）。
+  ok(mineWxml.indexOf('mavatar-wrap') > 0 && mineWxml.indexOf('mavatar-hit') < 0 && mineWxml.indexOf('mavatar-btn') < 0,
+    '头像＝纯 view 圆容器（不再套 button、不能点）')
+  ok(mineWxss.indexOf('.mavatar-hit') < 0, '透明点击层样式已删除')
+  ok(!/mavatar-wrap[\s\S]{0,240}open-type/.test(mineWxml), '圆头像身上没有任何 open-type（点它不弹头像选择器）')
+  ok(/class="lbtn"[^>]*open-type="chooseAvatar"[^>]*bindchooseavatar="onChooseAvatar"/.test(mineWxml),
+    '登录按钮本身就是微信头像选择按钮（选头像与登录合成一步）')
+  ok(mineWxml.indexOf('换头像') < 0 && mineWxml.indexOf('点头像') < 0, '页面不再有任何「换头像」的说法')
+  // 独立登录卡删掉，登录行搬进绿色框（老板：「有点功能冗余，直接把登录做在绿色框就行了」）
+  ok(mineWxml.indexOf('mcard login') < 0 && mineWxml.indexOf('class="linput"') < 0 && mineWxss.indexOf('.linput') < 0,
+    '绿色框下面那张「微信登录」卡已删除（功能冗余）')
+  ok(mineWxml.indexOf('class="mlogin"') > mineWxml.indexOf('class="mhead"') &&
+     mineWxml.indexOf('class="mlogin"') < mineWxml.indexOf('class="mgrid"'),
+    '登录行 .mlogin 就在绿色框 .mhead 里面')
+  ok(mineWxml.indexOf('class="mrow"') > 0, '身份行 .mrow（头像 + 昵称 + 状态点）')
   ok(mineWxml.indexOf('保存头像昵称') < 0 && mineWxml.indexOf('微信头像昵称') < 0,
     '没有「微信头像昵称」卡与保存按钮：登录即用微信头像昵称')
-  // 第 25 轮收口③：开发面板不许有可见入口（老板原话：「我的最底下的开发者选项不能显示」）。
-  // 面板本身还在（长按底部版本号才切换），但顾客端看不到「开发者选项」这四个字。
+  // 第 25 轮收口③⑤：调试面板整块删除——顾客端不许有任何开发入口。
+  // （老板先要求「开发者选项」不能显示，再要求「长按版本号进面板」这个功能也不要了。）
   ok(mineWxml.indexOf('开发者选项') < 0 && mineWxml.indexOf('mf-dev') < 0 && mineWxss.indexOf('.mf-dev') < 0,
     '「我的」页不再出现可见的「开发者选项」入口')
-  ok(/class="mfoot"[^>]*bindlongpress="toggleDev"/.test(mineWxml), '长按底部版本号才进调试面板')
-  const exitAt = mineWxml.indexOf('>退出登录<')
-  ok(exitAt > 0 && exitAt < mineWxml.indexOf('wx:if="{{devMode}}"'),
-    '「退出登录」挪到顾客区（不再只藏在调试面板里，否则顾客没法退出）')
+  ok(mineWxml.indexOf('bindlongpress') < 0 && mineWxml.indexOf('toggleDev') < 0 && mineWxml.indexOf('devMode') < 0,
+    '长按版本号进调试面板的入口也删掉了（老板：这个功能也不需要）')
+  ok(mineWxml.indexOf('调试面板') < 0 && mineWxml.indexOf('dtitle') < 0 && mineWxss.indexOf('.dtitle') < 0 &&
+     mineWxml.indexOf('statusDetail') < 0 && mineWxml.indexOf('后端地址') < 0,
+    '调试面板整块删除（含后端地址输入框与状态详情）')
+  ok(typeof mine.toggleDev !== 'function' && typeof mine.onBase !== 'function' &&
+     typeof mine.saveBase !== 'function' && typeof mine.clearAll !== 'function',
+    '页面也不再暴露调试面板的方法')
+  ok(mineWxml.indexOf('>退出登录<') > 0 && mineWxml.indexOf('class="mcard exit"') > 0,
+    '「退出登录」留在顾客区（它是顾客的正常功能）')
 
   /* ---------- ⑥ 我的：微信登录（不绑手机号） ---------- */
   section('⑥ 我的（微信登录：只要 openid + 头像昵称）')
@@ -369,16 +390,20 @@ async function main() {
   ok(acc.data.tierText === '零售', '等级由服务端下发（登录不提权）')
   ok(acc.data.busy === false, '登录成功后复位 busy')
   ok(global.wx.toasts.filter((t) => String(t).indexOf('登录成功') === 0).length === 1, '有且只有一次登录成功提示')
-  // 头像：chooseAvatar 给的是本机临时路径，真机上先落本地（存不下也无所谓）
+  // 第 25 轮收口④：登录按钮＝头像按钮——选完头像立刻登录（不再有「更换头像」这个独立动作）
+  const beforeLogin = global.wx._calls.filter((c) => c.path === '/api/wx/login').length
   const av = await acc.onChooseAvatar({ detail: { avatarUrl: 'wxfile://tmp_av.png' } })
-  ok(acc.data.avatar === 'wxfile://tmp_av.png' && av === 'wxfile://tmp_av.png', '选中头像后立刻显示')
+  ok(!!av && av.openid === 'o_page_1', '选完头像自动完成登录（拿到 openid）')
+  ok(global.wx._calls.filter((c) => c.path === '/api/wx/login').length === beforeLogin + 1, '选头像那一下只发一次登录请求')
+  ok(acc.data.avatar === 'wxfile://tmp_av.png', '选中头像后立刻显示')
   ok(global.wx._kv['sdy_mp_avatar'] === 'wxfile://tmp_av.png', '头像落到本机缓存，重启不丢')
-  // 第 25 轮：没有「保存头像昵称」入口——点头像即选即存，登录后自动回传服务端
-  ok(typeof acc.saveProfile !== 'function', '页面不再暴露 saveProfile（没有保存按钮）')
-  const beforeProfile = global.wx._calls.filter((c) => c.path === '/api/wx/profile').length
+  ok(typeof acc.saveProfile !== 'function' && typeof acc.pushProfile !== 'function', '页面没有「保存头像昵称」的方法（没有保存入口）')
+  const wf = global.wx._calls.filter((c) => c.path === '/api/wx/login').pop()
+  ok(wf && wf.data.nickname === '阿明', '登录 body 带上昵称：' + JSON.stringify(wf && wf.data.nickname))
+  ok(wf && !wf.data.avatar, '本机路径（wxfile://）不回传服务端：服务端只认 http(s)')
   await acc.onChooseAvatar({ detail: { avatarUrl: 'https://mall.shadouyou.cloud/a.png' } })
-  const afterProfile = global.wx._calls.filter((c) => c.path === '/api/wx/profile').length
-  ok(afterProfile === beforeProfile + 1, '登录后换微信头像自动回传服务端，不用手动保存：' + beforeProfile + ' → ' + afterProfile)
+  const httpLogin = global.wx._calls.filter((c) => c.path === '/api/wx/login').pop()
+  ok(httpLogin && httpLogin.data.avatar === 'https://mall.shadouyou.cloud/a.png', 'http(s) 头像随登录一起交给服务端')
   // 下单时记住手机号（手机号是价格身份与地址簿钥匙，D24/D31）
   ok(api.boundPhone() === '', '下单前会话里没有手机号')
   api.rememberPhone('13800001111')
@@ -386,6 +411,9 @@ async function main() {
   // 退出登录
   await acc.doLogout()
   ok(acc.data.loggedIn === false, '退出后回到未登录')
+  ok(acc.data.avatar === '' && !global.wx._kv['sdy_mp_avatar'],
+    '退出登录后头像必须清掉（绿色框里不许再挂着上一个人的头像）')
+  ok(acc.data.nickname === '', '退出登录后昵称也清掉')
   ok(global.wx.toasts.indexOf('已退出登录') >= 0, '退出有明确提示')
 
   /* ---------- ⑦ 商品详情（浏览 → 详情 → 加购 / 立即购买） ---------- */

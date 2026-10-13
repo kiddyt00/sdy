@@ -1,23 +1,26 @@
 <view class="mpage">
   <view class="mhead">
-    <view class="mavatar-wrap">
-      <image wx:if="{{avatar}}" class="mavatar" src="{{avatar}}" mode="aspectFill" />
-      <view wx:else class="mavatar ph">🙂</view>
-      <button class="mavatar-hit" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar"></button>
+    <view class="mrow">
+      <view class="mavatar-wrap">
+        <image wx:if="{{avatar}}" class="mavatar" src="{{avatar}}" mode="aspectFill" />
+        <view wx:else class="mavatar ph">🙂</view>
+      </view>
+      <view class="mwho">
+        <view class="mname">{{loggedIn ? (sessionName || '微信顾客') : '还没登录'}}</view>
+        <view class="msub">{{loggedIn ? sessionLabel : '微信登录，自动用你的微信头像'}}</view>
+        <view class="mtier">{{tierText}}</view>
+      </view>
+      <view class="mdot {{online ? 'ok' : 'off'}}"></view>
     </view>
-    <view class="mwho">
-      <view class="mname">{{loggedIn ? (sessionName || '微信顾客') : '还没登录'}}</view>
-      <view class="msub">{{loggedIn ? sessionLabel : '点头像即可用微信头像'}}</view>
-      <view class="mtier">{{tierText}}</view>
-    </view>
-    <view class="mdot {{online ? 'ok' : 'off'}}"></view>
-  </view>
 
-  <view class="mcard login" wx:if="{{!loggedIn}}">
-    <view class="ltitle">微信登录</view>
-    <input class="linput" type="nickname" value="{{nickname}}" maxlength="20" placeholder="微信昵称（点上面头像可选微信头像）" placeholder-class="lph" bindinput="onNickname" />
-    <van-button round block type="primary" loading="{{busy}}" bind:click="doLogin">微信一键登录</van-button>
-    <view class="lhint">登录后就用你的微信头像和昵称，不用再填、也不用保存。登录不用手机号——手机号只在下单填收货信息时用，等级与批发价由老板在后台设定。</view>
+    <!-- 登录就做在绿色框里（不再有下面那张独立的登录卡）。
+         微信唯一允许拿到真实头像的入口是 button 的 chooseAvatar 能力，
+         所以登录按钮本身就是头像按钮：点一下 → 选「使用微信头像」→ 顺手把登录做完。 -->
+    <view class="mlogin" wx:if="{{!loggedIn}}">
+      <input class="lnick" type="nickname" value="{{nickname}}" maxlength="20" placeholder="微信昵称（可留空）" placeholder-class="lnick-ph" bindinput="onNickname" />
+      <button class="lbtn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar" disabled="{{busy}}">{{busy ? '登录中…' : '微信一键登录'}}</button>
+      <view class="ltip">点按钮 → 第一项「使用微信头像」→ 就用你的微信头像登录，以后进来自动带出来。手机号只在下单填收货信息时用。</view>
+    </view>
   </view>
 
   <view class="mgrid">
@@ -47,18 +50,7 @@
     <view class="mexit" bindtap="doLogout">退出登录</view>
   </view>
 
-  <view class="mcard" wx:if="{{devMode}}">
-    <view class="dtitle">调试面板</view>
-    <view class="drow">{{statusDetail}}</view>
-    <van-field value="{{apiBase}}" label="后端地址" placeholder="http://127.0.0.1:8093" bind:change="onBase" />
-    <view class="dbtns">
-      <van-button size="small" round type="primary" bind:click="saveBase">保存并重连</van-button>
-      <van-button size="small" round plain bind:click="clearAll">清空本地缓存</van-button>
-      <van-button wx:if="{{loggedIn}}" size="small" round plain bind:click="doLogout">退出登录</van-button>
-    </view>
-  </view>
-
-  <view class="mfoot" bindlongpress="toggleDev">
+  <view class="mfoot">
     <text class="mf-ver">啥都有快送 · 小程序 0.4.0</text>
   </view>
 </view>

@@ -1,8 +1,10 @@
 // 我的：微信登录（头像昵称）/ 订单状态概览 / 地址簿（第 24 轮重构；第 25 轮 D31 改造）
-// D31 三条口径：① 登录只认微信（openid），**不绑手机号**——手机号是下单时填的收货信息；
+// D31 口径：① 登录只认微信（openid），**不绑手机号**——手机号是下单时填的收货信息；
 // ② 头像昵称只能用微信官方的「头像昵称填写能力」让用户自己选（微信 2022-10-25 起不再静默下发，
 //    wx.getUserProfile 只会给灰头像 + 「微信用户」）；③ 没有「保存头像昵称」入口——
-//    点头像即选即存，登录时随 body 一起提交，之后永远带出来。
+//    登录按钮本身就是头像按钮（点一次同时选头像 + 登录），之后永远带出来；
+// ④ **顾客端没有任何开发入口**——原先长按版本号进的「调试面板」已按老板要求整块删除，
+//    后端地址只在 utils/config.js 里配置，页面 data 里不再留 devMode / statusDetail / apiBase。
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
 const rules = require('../../utils/rules.js')
@@ -19,8 +21,6 @@ function avatarForServer(path) {
 Page({
   data: {
     online: false,
-    statusDetail: '',
-    apiBase: '',
     cartCount: 0,
     // 登录态（第 23 轮 / D28；第 25 轮 D31：不再有 phone / bound）
     loggedIn: false,
@@ -31,7 +31,6 @@ Page({
     nickname: '',
     busy: false,
     avatar: '',
-    devMode: false,
     counts: { pending: 0, delivering: 0, ready: 0, done: 0 },
     orderGrid: [
       { key: 'pending', label: '待处理', icon: 'tosend' },
@@ -48,7 +47,7 @@ Page({
 
   onShow() {
     this.syncSession()
-    this.setData({ apiBase: api.base(), cartCount: store.cartCount() })
+    this.setData({ cartCount: store.cartCount() })
     this.loadAvatar()
     return this.refresh().then((st) => {
       this.loadCounts()
@@ -97,22 +96,20 @@ Page({
     })
   },
 
-  // open-type="chooseAvatar" 回传用户选的头像（登录前后都能点）
+  // 登录按钮就是 open-type="chooseAvatar" 按钮（第 25 轮收口④）：
+  // 微信不允许静默拿真实头像，官方唯一入口就是这个选择器（第一项「使用微信头像」），
+  // 所以「选头像」和「登录」合成一步——选完头像立刻用同一份昵称/头像去换 openid。
   onChooseAvatar(e) {
     const url = (e.detail && e.detail.avatarUrl) || ''
-    if (!url) return Promise.resolve('')
+    if (!url) return Promise.resolve(null)
     return this.persistAvatar(url).then((saved) => {
       this.setData({ avatar: saved })
-      try {
-        wx.setStorageSync(AVATAR_KEY, saved)
-      } catch (err) { /* 忽略 */ }
-      // 已登录：顺手同步给服务端（只有 http(s) 地址服务端才用得上）。
-      // 失败不打扰用户——本机已经换好了，下次登录还会带出来。
-      const forServer = avatarForServer(saved)
-      if (this.data.loggedIn && forServer) {
-        return this.pushProfile({ avatar: forServer }).catch(() => saved)
+      if (saved) {
+        try {
+          wx.setStorageSync(AVATAR_KEY, saved)
+        } catch (err) { /* 忽略 */ }
       }
-      return saved
+      return this.doLogin()
     })
   },
 
@@ -143,19 +140,16 @@ Page({
       })
   },
 
-  // 已登录时把头像昵称同步给服务端（服务端空值＝保留原值）；没有单独「保存」入口，全自动
-  pushProfile(patch) {
-    return api.saveProfile(patch).then((s) => {
-      this.syncSession()
-      return s
-    })
-  },
-
   doLogout() {
     return this.confirm('退出登录', '只是让这台手机忘掉登录状态；订单、档案与价格不受影响。').then((yes) => {
       if (!yes) return null
       api.clearSession()
-      this.setData({ nickname: '' })
+      // 退出登录必须把头像也清掉：上一版的头像存在本机缓存里，退出后还挂在绿色框上，
+      // 老板一眼就看成「退出了还显示我的微信头像」。存储一起删，免得换个人登录先闪出上一个人的头像。
+      try {
+        wx.removeStorageSync(AVATAR_KEY)
+      } catch (err) { /* 忽略 */ }
+      this.setData({ nickname: '', avatar: '' })
       this.syncSession()
       this.loadCounts()
       this.toast('已退出登录')
@@ -169,8 +163,6 @@ Page({
       .then((st) => {
         this.setData({
           online: st.online,
-          statusDetail: st.detail,
-          apiBase: st.base,
           cartCount: store.cartCount()
         })
         const s = getApp().globalData && getApp().globalData.settings
@@ -182,21 +174,6 @@ Page({
         }
         return st
       })
-  },
-
-  onBase(e) {
-    this.setData({ apiBase: e.detail.value })
-  },
-
-  saveBase() {
-    api.setBase(this.data.apiBase)
-    return this.refresh().then(() => {
-      this.toast(this.data.online ? '已连接后端' : '保存了，但还没连上')
-    })
-  },
-
-  toggleDev() {
-    this.setData({ devMode: !this.data.devMode })
   },
 
   // 订单状态条：把想看的 tab 存下来，切到订单页读走（tab 页不能带参数）
@@ -239,16 +216,6 @@ Page({
     }
     if (typeof wx !== 'undefined' && wx.makePhoneCall) wx.makePhoneCall({ phoneNumber: String(p) })
     return null
-  },
-
-  clearAll() {
-    return this.confirm('清空本地数据', '只会清手机上的缓存与购物车；服务端商品和订单不受影响。').then((yes) => {
-      if (!yes) return null
-      api.clearCache()
-      store.clearCart()
-      this.toast('已清空本地演示数据')
-      return this.refresh()
-    })
   },
 
   // 确认框（返回 Promise<boolean>）

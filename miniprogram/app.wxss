@@ -324,11 +324,16 @@ button::after { border: none; }
 .muted { color: #6b7280; font-size: 24rpx; }
 .hint { color: #92400e; background: #fffbeb; border-radius: 12rpx; padding: 14rpx 18rpx; font-size: 23rpx; margin-top: 12rpx; }
 .empty { text-align: center; color: #9ca3af; font-size: 26rpx; padding: 80rpx 0; }
+/* 原生 input 自带默认高度（1.4rem = 56rpx），再叠上下 padding 会被 box-sizing
+   压成「内容区只有 24rpx」→ 字只露上半截（第 25 轮老板报的购物车三输入框）。
+   口径：**给原生 input 写死 height + line-height，纵向 padding 归零**。 */
 .input {
   background: #f9fafb;
   border: 1rpx solid #e5e7eb;
   border-radius: 12rpx;
-  padding: 16rpx 20rpx;
+  height: 80rpx;
+  line-height: 78rpx;
+  padding: 0 20rpx;
   font-size: 27rpx;
 }
 .field { margin-bottom: 16rpx; }

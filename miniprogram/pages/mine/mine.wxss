@@ -1,18 +1,19 @@
-/* 我的（第 24 轮重构；第 25 轮 D31：头像真圆、登录不绑手机号） */
+/* 我的（第 24 轮重构；第 25 轮 D31：头像真圆、登录不绑手机号）
+   第 25 轮收口④：登录搬进绿色框（删掉下面那张独立登录卡）、头像不再可点（去掉「更换头像」）、
+   退出登录后头像必须清空——所以 .mhead 改成纵向两段：身份行 .mrow + 登录行 .mlogin。 */
 .mpage { padding-bottom: 60rpx; }
 
 .mhead {
-  display: flex;
-  align-items: center;
   padding: 40rpx 32rpx 48rpx;
   background: linear-gradient(135deg, #16a34a, #22c55e);
   border-bottom-left-radius: 32rpx;
   border-bottom-right-radius: 32rpx;
 }
+/* 身份行：头像 + 昵称/等级 + 连接小点（且只在这一行） */
+.mrow { display: flex; align-items: center; }
 /* 头像必须是正圆。第 25 轮踩过两次坑：只要把原生 button 当可见圆形容器，
    它自带的 padding / 行高 / ::after 边框就会把 128rpx 的盒子撑扁成椭圆。
-   现在的做法是「看得见的一层是纯 view/image，button 只做透明点击层」，
-   椭圆问题从根上消失（button 是透明的，形状再怪也看不见）。 */
+   现在头像这一层是纯 view/image（不再套 button，也不再可点），椭圆问题从根上消失。 */
 .mavatar-wrap {
   position: relative;
   width: 128rpx;
@@ -32,19 +33,6 @@
   line-height: 128rpx;
   text-align: center;
   font-size: 60rpx;
-}
-/* 透明点击层：open-type="chooseAvatar" 必须挂在 button 上；opacity:0 不影响点按 */
-.mavatar-hit {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 128rpx;
-  height: 128rpx;
-  padding: 0;
-  margin: 0;
-  border: none;
-  background: transparent;
-  opacity: 0;
 }
 .mwho { flex: 1; padding-left: 26rpx; min-width: 0; }
 .mname { color: #fff; font-size: 36rpx; font-weight: 700; }
@@ -78,17 +66,33 @@
   overflow: hidden;
   padding: 6rpx 0;
 }
-.mcard.login { padding: 28rpx; }
-.ltitle { font-size: 28rpx; font-weight: 700; margin-bottom: 20rpx; }
-.linput {
-  background: #f5f6f8;
-  border-radius: 14rpx;
-  padding: 20rpx 24rpx;
+/* 绿色框里的登录行：昵称输入（微信会给真实昵称建议）+ 登录按钮（同时也是微信头像选择按钮） */
+.mlogin { margin-top: 30rpx; }
+.lnick {
+  height: 76rpx;
+  line-height: 76rpx;
+  background: rgba(255, 255, 255, .95);
+  border-radius: 38rpx;
+  padding: 0 32rpx;
   font-size: 27rpx;
-  margin-bottom: 18rpx;
+  color: #1f2937;
 }
-.lph { color: #b6bac2; }
-.lhint { font-size: 21rpx; color: #9ca3af; line-height: 32rpx; margin-top: 18rpx; }
+.lnick-ph { color: #9ca3af; }
+.lbtn {
+  margin-top: 18rpx;
+  height: 84rpx;
+  line-height: 84rpx;
+  padding: 0;
+  border: none;
+  border-radius: 42rpx;
+  background: #fff;
+  color: #15803d;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+.lbtn::after { border: none; }
+.lbtn[disabled] { background: #fff; color: #15803d; opacity: .65; }
+.ltip { margin-top: 18rpx; font-size: 21rpx; line-height: 34rpx; color: rgba(255, 255, 255, .9); }
 
 .mgrid {
   display: flex;
@@ -120,14 +124,6 @@
 }
 .glabel { font-size: 23rpx; color: #4b5563; margin-top: 12rpx; }
 
-.dtitle { font-size: 27rpx; font-weight: 700; padding: 20rpx 24rpx 8rpx; }
-.drow { font-size: 22rpx; color: #9ca3af; padding: 0 24rpx 16rpx; word-break: break-all; }
-.dbtns {
-  display: flex;
-  flex-wrap: wrap;
-  padding: 8rpx 20rpx 20rpx;
-}
-
 .mfoot {
   display: flex;
   flex-direction: column;
@@ -135,8 +131,8 @@
   padding-top: 20rpx;
 }
 .mf-ver { font-size: 22rpx; color: #b6bac2; }
-/* 退出登录（第 25 轮收口③）：从「开发者选项」里挪出来，顾客该有的正常入口；
-   开发面板本身不再有任何可见入口，长按上面那行版本号才切换。 */
+/* 退出登录（第 25 轮收口③）：从「开发者选项」里挪出来，顾客该有的正常入口。
+   第 25 轮收口⑤：调试面板（含长按版本号入口）已按老板要求整块删除——顾客端没有任何开发入口。 */
 .mexit {
   text-align: center;
   font-size: 28rpx;
