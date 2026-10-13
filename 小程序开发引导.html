@@ -44,30 +44,35 @@
 <div class="badges">
   <span class="bg-green">面向：老板本人操作微信后台</span>
   <span class="bg-blue">配套：我在代码侧同步开工</span>
-  <span class="bg-orange">前置：营业执照 + 域名 + 备案</span>
-  <span class="bg-gray">2026-10-12 更新（第 21 轮：账号已注册、代码侧已开工）</span>
+  <span class="bg-green">前置已齐：营业执照 + 已备案域名 + HTTPS</span>
+  <span class="bg-gray">2026-10-13 更新（第 22 轮：AppID 已到手、域名 HTTPS 已上线，只等你三步）</span>
 </div>
 
 <div class="callout green">
-<b>当前进度（2026-10-12 第 21 轮更新）：</b>
+<b>当前进度（2026-10-13 第 22 轮更新）：</b>
 ✅ 小程序账号<b>已注册</b>（业务：小程序注册，主体 <b>海宁啥都有网络科技有限公司</b>，对公账户小额打款验证<b>成功</b>，0.32 元 3 个工作日内退回）——<b>提醒</b>：你走的是<b>免费的对公打款验证</b>，只能证明主体真实；<b>微信支付要求 AppID 是「已通过微信认证」的</b>，所以拿到 AppID 后<b>还要另办付费「微信认证」</b>（¥300/年，以后台为准，步骤 1 里那条红框就是这个意思）→
 ✅ 代码侧已完成：骨架由归档<b>恢复为正式目录</b> <code>miniprogram/</code>、主题色对齐品牌绿 <code>#16a34a</code>、新增<b>唯一域名配置点</b> <code>miniprogram/utils/config.js</code>、新增<b>只读扫码找货</b> <code>wx.scanCode</code>（三套测试 73 / 57 / 24 全绿）。<br>
-⏳ <b>现在只等你两样东西</b>：① <b>已备案的域名</b>（把域名告诉我 + 在域名解析里加一条 A 记录指向 <code>124.223.16.159</code>）；② <b>AppID</b>（主体审核放号后，路径 <code>开发与服务 → 开发管理 → 开发设置 → AppID(小程序ID)</code>）。这两样到手后：我配 HTTPS 证书 + 小程序后台「服务器域名」→ 真机预览 → 你办微信认证 + 关联商户号 → 我接微信登录与支付。
+✅ <b>域名已备案 + HTTPS 已上线（第 22 轮）</b>：<code>https://mall.shadouyou.cloud</code>（用服务器上既有的 acme.sh 签发 ZeroSSL ECC 证书，80 自动 301 到 HTTPS，每日自动续期），顾客端 <code>/</code>、管理端 <code>/admin</code>、接口 <code>/api/*</code> 全部 200；小程序 <code>miniprogram/utils/config.js</code> 的 <code>PROD_BASE_URL</code> 已填该域名（三套测试 73 / 57 / 24 全绿 + 生产只读探针通过）。<br>
+✅ <b>AppID 已到手并落地</b>：<code>wx3f2d2aa52660b80f</code> 已填进 <code>miniprogram/project.config.json</code>；AppSecret 只在本地 <code>.wx_secret.env</code> 与服务器 <code>.env</code>，<b>不进 git、不进数据库</b>。<br>
+✅ <b>小程序后台 <code>request 合法域名</code> 已配置</b>：<code>https://mall.shadouyou.cloud</code>（2026-10-13，步骤 5）——<b>真机预览的条件已齐</b>。<br>
+⏳ <b>只差两步</b>：① 办<b>微信认证</b>（¥300/年，支付前置，步骤 1）；② 关联<b>微信支付商户号</b>（步骤 8）。这两步到位后我接支付与订阅消息；<b>微信登录（不依赖认证）第 23 轮先做</b>。
 </div>
 
 <div class="callout blue">
 <b>这份文档怎么用：</b>微信侧的事你只能自己做（要用你的营业执照、法人身份证、对公账户、法人微信），我在代码侧同时开工。
 每一步都标了<b>谁做</b>：<span class="who you">你做</span> 微信/腾讯云后台的点按，<span class="who me">我做</span> 代码与服务器，
-<span class="who both">一起</span> 需要你我对着界面确认。全程<b>三步并行</b>，最慢的是备案，所以<b>今天先把备案启动</b>。
+<span class="who both">一起</span> 需要你我对着界面确认。第 22 轮起<b>小程序账号、已备案域名、HTTPS 证书都已就位</b>，剩下的都在微信后台点按：配服务器域名 → 微信认证 → 关联商户号。
 </div>
 
 <div class="callout green">
-<b>▶ 今天先做这三件事（其余都可以等）</b>
-<ol>
-  <li><b>注册小程序账号</b>：<a href="https://mp.weixin.qq.com/" target="_blank">mp.weixin.qq.com</a> → 立即注册 → 小程序。材料：一个<b>没注册过公众平台</b>的邮箱、营业执照、法人身份证、法人微信。约 20 分钟。</li>
-  <li><b>买域名 + 提交备案</b>：域名 30–80 元/年；备案免费但<b>要等 1–20 个工作日</b>，是全流程的关键路径。服务器已有（124.223.16.159 腾讯云），可以直接在腾讯云备案系统申请。约 30 分钟提交，然后等。</li>
-  <li><b>把 AppID 发我</b>：登录后 <span class="path">开发与服务 → 开发管理 → 开发设置 → AppID(小程序ID)</span>，把 AppID（形如 <code>wx</code> 开头 18 位）发我。<b>AppSecret 也可以一起发，但只在本地保存、绝不入库、不进 git。</b></li>
-</ol>
+<b>▶ 只剩这几件事（第 22 轮更新）</b>
+<ul>
+  <li>✅ <b>已完成（第 21–22 轮）</b>：注册小程序账号（主体 <b>海宁啥都有网络科技有限公司</b>）；买到并<b>备案</b>域名 <code>mall.shadouyou.cloud</code>；服务器上装好 <b>HTTPS 证书</b>（acme.sh + ZeroSSL ECC、80 自动 301、每日自动续期）；拿到 <b>AppID</b> <code>wx3f2d2aa52660b80f</code> 并填进代码。</li>
+  <li>✅ ① <b>配服务器域名</b>（步骤 5）<b>已完成（2026-10-13）</b>：<code>request 合法域名</code> = <code>https://mall.shadouyou.cloud</code>。接下来用微信开发者工具打开 <code>miniprogram/</code> 点「预览」即可真机打开；若要<b>我远程上传体验版</b>，请在后台把「代码上传」的 IP 白名单加上我这边的出口 IP（用你电脑上的工具自己上传则不需要）。</li>
+  <li>⬜ ② <b>办微信认证</b>（步骤 1 第 5 条，¥300/年，以后台显示为准）：微信支付的前置条件——免费的对公打款验证<b>不能</b>替代它；认证通常 1–3 个工作日。</li>
+  <li>⬜ ③ <b>关联微信支付商户号</b>（步骤 8）：认证通过后，商户平台 <span class="path">产品中心 → APPID授权管理 → +关联AppID</span> 提交 <code>wx3f2d2aa52660b80f</code>，再回小程序后台 <span class="path">微信支付 → 商户号管理</span> 确认。<b>关联后不支持解绑</b>，提交前确认主体。</li>
+  <li>⬜ ④ <b>回传两样资料</b>：营业执照「<b>营业期限</b>」一栏原文（资质有效期照抄：写「长期」就选长期有效，有截止日就填截止日）+ 手上是《食品经营许可证》还是《仅销售预包装食品备案凭证》——<b>持证主体必须与小程序主体一致</b>。</li>
+</ul>
 </div>
 
 <h2>0. 先确认两件事（决定走哪条路）</h2>
@@ -150,10 +155,10 @@
 </div>
 
 <div class="step">
-<h3>步骤 4 · 域名 + ICP 备案 + HTTPS<span class="who you">你做</span><span class="who me">我做</span></h3>
-<div class="callout gray">
-这是<b>全流程最慢、也最容易被忽略</b>的一步。小程序<b>只允许请求已备案的 HTTPS 域名</b>，不允许 IP、不允许 http。
-我们的后端现在跑在 <code>http://124.223.16.159</code>（没有域名）——所以<b>现在真机连不上，只能在开发者工具里预览</b>。
+<h3>步骤 4 · 域名 + ICP 备案 + HTTPS<span class="who you">你做</span><span class="who me">我做</span><span class="tag done">✅ 已完成（2026-10-13 第 22 轮）</span></h3>
+<div class="callout green">
+<b>已完成：</b>域名 <code>mall.shadouyou.cloud</code> 已备案（沿用 <code>shadouyou.cloud</code> 的备案）、A 记录已指向生产服务器，服务器上用 <b>acme.sh</b> 签发 ZeroSSL ECC 证书并装好站点：<b>80 自动 301 到 HTTPS</b>、每日自动续期、顾客端 <code>/</code> 与管理端 <code>/admin</code> 均 200。
+下面保留原始步骤说明，方便以后换域名时照做。
 </div>
 <ol>
   <li><b>买域名</b>：腾讯云 / 阿里云都可，<b>建议在腾讯云买</b>（服务器也是腾讯云，备案更顺）。域名要<b>实名认证</b>（约 1–3 天）。</li>
@@ -173,7 +178,7 @@
 <ol>
   <li><b>AppID(小程序ID)</b>：页面顶部，18 位 <code>wx</code> 开头 → 发我。</li>
   <li><b>AppSecret(小程序密钥)</b>：点「生成 / 重置」后<b>只显示一次</b>，立刻复制发我（我只写进服务器 <code>.env</code>，<b>不进 git、不进数据库、不写进任何前端</b>）。用于服务端 <code>code2session</code> 换取用户身份。</li>
-  <li><b>服务器域名</b>：把我们的域名填进 <span class="path">request 合法域名</span> → <code>https://你的域名</code>。
+  <li><b>服务器域名</b><span class="tag done">✅ 已在后台配置（2026-10-13）</span>：<span class="path">request 合法域名</span> 已填 <code>https://mall.shadouyou.cloud</code>。
       知识点（官方：<a href="https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html" target="_blank">网络 · 使用说明</a>）：
       <ul>
         <li>必须 <b>HTTPS</b>、域名<b>已 ICP 备案</b>；不能是 IP、不能是 <code>localhost</code>、不能带非标准端口。</li>
@@ -247,20 +252,20 @@
 </div>
 
 <h2>3. 代码侧我要做的事（你不必动手，但可以对着验收）<span class="who me">我做</span></h2>
-<p>小程序骨架当初已经写好并归档在 <code>archive/miniprogram/</code>（4 个页面：首页 / 购物车 / 订单 / 我的）。<b>第 21 轮已由归档恢复为正式目录 <code>miniprogram/</code></b>，并把不依赖 AppID / 域名的部分全部做完（下表 ✅ 项）；剩下的 ⬜ 项都卡在「AppID」或「已备案域名」这两样上。</p>
+<p>小程序骨架当初已经写好并归档在 <code>archive/miniprogram/</code>（4 个页面：首页 / 购物车 / 订单 / 我的）。<b>第 21 轮已由归档恢复为正式目录 <code>miniprogram/</code></b>，并把不依赖 AppID / 域名的部分全部做完；<b>第 22 轮 AppID 与「已备案域名 + HTTPS」两样都已到位</b>（<code>project.config.json</code> 已填真 AppID、<code>utils/config.js</code> 的 <code>PROD_BASE_URL</code> 已填域名、三套测试 73 / 57 / 24 全绿）。下表 ⬜ 项是接下来真正要写的代码：微信登录、支付、订阅消息与真机验证。</p>
 <table>
 <tr><th>#</th><th>改什么</th><th>文件 / 位置</th><th>状态</th></tr>
 <tr><td>1</td><td>把骨架从归档恢复为正式目录</td><td><code>archive/miniprogram/</code> → <code>miniprogram/</code></td><td>✅ 第 21 轮完成（<code>git mv</code>，28 个文件，不复制代码）</td></tr>
-<tr><td>2</td><td>AppID 从游客换成真 AppID</td><td><code>miniprogram/project.config.json</code>（当前 <code>"appid":"touristappid"</code>）</td><td>⬜ <b>等你的 AppID</b></td></tr>
+<tr><td>2</td><td>AppID 从游客换成真 AppID</td><td><code>miniprogram/project.config.json</code>（第 22 轮已填 <code>"appid":"wx3f2d2aa52660b80f"</code>）</td><td>✅ 第 22 轮完成（<code>urlCheck:false</code> 只用于开发期连本机；域名已在后台配置）</td></tr>
 <tr><td>3</td><td>主题色对齐品牌绿</td><td><code>miniprogram/app.json</code>（旧蓝 <code>#2563eb</code> → <code>#16a34a</code>，含 tabBar 选中色）</td><td>✅ 第 21 轮完成（7 处）</td></tr>
-<tr><td>4</td><td>接口地址指向备案域名</td><td><b>已改为唯一配置点</b> <code>miniprogram/utils/config.js</code>（<code>PROD_BASE_URL</code>，<code>api.js</code> 的 <code>DEFAULT_BASE</code> 只读它）</td><td>✅ 机制完成，⬜ 只差把 <code>PROD_BASE_URL</code> 填成你的备案域名</td></tr>
+<tr><td>4</td><td>接口地址指向备案域名</td><td><b>唯一配置点</b> <code>miniprogram/utils/config.js</code>（<code>PROD_BASE_URL</code>，<code>api.js</code> 的 <code>DEFAULT_BASE</code> 只读它）</td><td>✅ 第 22 轮完成（<code>PROD_BASE_URL</code> = <code>https://mall.shadouyou.cloud</code>，三套测试断言随之放宽并通过）</td></tr>
 <tr><td>5</td><td>扫码换成 <code>wx.scanCode</code></td><td>首页搜索栏「扫码」→ <code>api.resolveBarcode</code> → 服务端 <code>/api/barcode/resolve</code></td><td>✅ 第 21 轮完成（<b>只读</b>：只筛商品，绝不加购 / 改库存，守 D8）</td></tr>
-<tr><td>6</td><td>新增后端微信接口</td><td><code>server/cmd/server/main.go</code>：<code>POST /api/wx/login</code>（code2session）、<code>POST /api/wx/pay</code>（下单 + prepay_id + 签名）、<code>POST /api/wx/notify</code>（支付回调验签 + 更新订单）</td><td>⬜ 等 AppID 到位后做（AppSecret / 商户密钥只在服务端，D13）</td></tr>
-<tr><td>7</td><td>登录与身份打通</td><td>openid ↔ 现有「手机号即身份」的顾客档案（<code>customer</code> 表）</td><td>⬜ 待做</td></tr>
+<tr><td>6</td><td>新增后端微信接口</td><td><code>server/cmd/server/main.go</code>：<code>POST /api/wx/login</code>（code2session）、<code>POST /api/wx/pay</code>（下单 + prepay_id + 签名）、<code>POST /api/wx/notify</code>（支付回调验签 + 更新订单）</td><td>⬜ <code>/api/wx/login</code> 不依赖认证，<b>第 23 轮先做</b>；<code>/pay</code> + <code>/notify</code> 等微信认证与商户号（AppSecret / 商户密钥只在服务端，D13）</td></tr>
+<tr><td>7</td><td>登录与身份打通</td><td>openid ↔ 现有「手机号即身份」的顾客档案（<code>customer</code> 表）</td><td>⬜ 第 23 轮（openid 记在 <code>wx_user</code>，业务身份仍是手机号，守 D24）</td></tr>
 <tr><td>8</td><td>价格规则同源</td><td><code>miniprogram/utils/rules.js</code> ↔ <code>server/internal/pricing/pricing.go</code></td><td>✅ 口径已同源并各有测试锁死（D24：有效价 / 运费 / 比价防线）</td></tr>
 <tr><td>9</td><td>订阅消息下发</td><td>备货完成 / 配送中 / 已送达</td><td>⬜ 待做（需认证 + 模板 ID）</td></tr>
 <tr><td>10</td><td>手机号快速验证组件</td><td><code>getPhoneNumber</code> 替换手输手机号</td><td>⬜ 待做（需认证，按官方计费规则，以后台为准）</td></tr>
-<tr><td>11</td><td>回归测试</td><td><code>test-api</code> 73 / <code>test-pages</code> 57 / <code>test-integration</code> 24（原 62 / 47 / 21）</td><td>✅ 第 21 轮三套全绿；⬜ 真机验证等域名 + AppID</td></tr>
+<tr><td>11</td><td>回归测试</td><td><code>test-api</code> 73 / <code>test-pages</code> 57 / <code>test-integration</code> 24（原 62 / 47 / 21）</td><td>✅ 第 22 轮三套全绿 + 对生产域名跑通只读探针；⬜ 真机验证待上传体验版（服务器域名已配）</td></tr>
 </table>
 
 <h2>4. 你要回传给我的清单（照这个发就行）</h2>
@@ -269,6 +274,7 @@
 <tr><td>1</td><td>小程序 <b>AppID</b></td><td>开发与服务 → 开发管理 → 开发设置</td><td>否</td></tr>
 <tr><td>2</td><td>小程序 <b>AppSecret</b></td><td>同上（只显示一次）</td><td><b>是</b>：只写服务器 <code>.env</code></td></tr>
 <tr><td>3</td><td><b>备案域名</b></td><td>腾讯云备案控制台 / 域名控制台</td><td>否</td></tr>
+<tr><td colspan="4" style="background:#f0fdf4"><b>✅ 第 22 轮已收到</b>：① AppID <code>wx3f2d2aa52660b80f</code>（已填进代码）② AppSecret（只写本地 <code>.wx_secret.env</code> 与服务器 <code>.env</code>，未入库未进 git）③ 已备案域名 <code>mall.shadouyou.cloud</code>（HTTPS 已上线、小程序后台 <code>request 合法域名</code> 已配置）。<b>下面 4–9 项是接下来真正要拿的东西。</b></td></tr>
 <tr><td>4</td><td>商户号 <b>mchid</b></td><td>微信支付商户平台</td><td>半敏感</td></tr>
 <tr><td>5</td><td><b>APIv3 密钥</b></td><td>商户平台 → 账户中心 → API 安全</td><td><b>是</b></td></tr>
 <tr><td>6</td><td><b>商户 API 证书</b>（<code>apiclient_cert.pem</code> / <code>apiclient_key.pem</code>）</td><td>商户平台 → API 安全 → API 证书</td><td><b>是</b></td></tr>
@@ -287,9 +293,9 @@
 <table>
 <tr><th>项</th><th>费用</th><th>时间</th><th>谁</th></tr>
 <tr><td>域名</td><td>约 30–80 元/年</td><td>即时买，实名 1–3 天</td><td>你</td></tr>
-<tr><td>ICP 备案</td><td>0 元</td><td><b>1–20 个工作日（关键路径）</b></td><td>你</td></tr>
-<tr><td>HTTPS 证书</td><td>0 元（免费 DV 证书）</td><td>当天</td><td>我 + 你（腾讯云申请）</td></tr>
-<tr><td>微信认证</td><td>以后台为准（历史 300 元/年）</td><td>1–3 个工作日</td><td>你</td></tr>
+<tr><td>ICP 备案</td><td>0 元</td><td>✅ 第 22 轮已完成（沿用已有备案）</td><td>你</td></tr>
+<tr><td>HTTPS 证书</td><td>0 元（免费 DV 证书）</td><td>✅ 第 22 轮已完成（服务器既有 acme.sh + ZeroSSL ECC，自动续期）</td><td>我</td></tr>
+<tr><td>微信认证</td><td>以后台为准（历史 300 元/年）</td><td>⬜ <b>唯一还花钱的卡点</b>，1–3 个工作日</td><td>你</td></tr>
 <tr><td>微信支付商户号</td><td>无开户费；交易费率按类目（零售常见 0.6%，以商户平台为准）</td><td>1–5 个工作日</td><td>你</td></tr>
 <tr><td>服务器</td><td>已有（124.223.16.159）</td><td>—</td><td>—</td></tr>
 <tr><td>小程序开发与联调</td><td>0（我）</td><td>恢复 + 联调 + 提审约 3–5 个工作日</td><td>我</td></tr>
@@ -299,17 +305,18 @@
 ⚠️ <b>本页所有金额与时限均以微信 / 腾讯云后台当前实际显示为准</b>，我没有逐年核实官方费率的变动。
 </div>
 
-<h2>6. 不动微信、今天就能验证的事（过渡方案）</h2>
+<h2>6. 现在就能验证的事（不用等微信认证）</h2>
 <ul>
-  <li><b>现在就能给家人看界面</b>：小程序骨架可以在<b>微信开发者工具</b>里直接跑（工具勾「不校验合法域名」），我在你电脑上演示一遍，家人也能用「预览」扫码看到，但<b>真机正式用必须等备案域名</b>。</li>
-  <li><b>Web 端照旧可用</b>：<code>http://124.223.16.159/</code>（顾客端）与 <code>/admin</code>（管理端）现在是活的，界面优化反馈继续走这条路，不受小程序进度影响。</li>
-  <li><b>并行动作</b>：你去办账号 / 备案 / 商户号，我在这些等待时间里继续做 Web 端的功能（当前刚完成第 20 轮库存审计落库）。</li>
+  <li><b>真机预览的条件已经齐了（第 22 轮）</b>：小程序后台 <code>request 合法域名</code> 已配好 → 用「微信开发者工具」打开仓库里的 <code>miniprogram/</code>（AppID 已填）→ 点「<b>预览</b>」生成二维码 → 家人手机扫码即可打开（<b>不需要审核、不需要发布、不需要微信认证</b>）。若要我远程「上传体验版」，需要你在后台把<b>代码上传的 IP 白名单</b>加上我这边的出口 IP；用你电脑上的开发者工具自己上传更简单。</li>
+  <li><b>登录能做到哪一步</b>：微信登录（<code>code2session</code> 换 openid）<b>不依赖微信认证</b>，第 23 轮我先打通它（openid 只用于认人，业务身份仍是手机号，守 D24）；<b>只有收款（微信支付）与订阅消息才需要微信认证</b>。</li>
+  <li><b>Web 端主入口已换 HTTPS</b>：<code>https://mall.shadouyou.cloud/</code>（顾客端）与 <code>/admin</code>（管理端）现在是活的，IP 直连入口保留备用；界面优化反馈继续走这条路，不受小程序进度影响。</li>
+  <li><b>并行动作</b>：你去办微信认证 / 商户号，我在等待时间里做微信登录打通 + Web 端剩余加固（管理端登录鉴权、备份回滚演练）。</li>
 </ul>
 
 <h2>7. 常见坑速查</h2>
 <table>
 <tr><th>症状</th><th>原因</th><th>怎么办</th></tr>
-<tr><td>真机请求失败、工具里却正常</td><td>服务器域名没配 / 不是 HTTPS / 域名未备案 / 域名带端口</td><td>按步骤 5 配 <code>request 合法域名</code>，重新编译</td></tr>
+<tr><td>真机请求失败、工具里却正常</td><td>服务器域名没配 / 不是 HTTPS / 域名未备案 / 域名带端口（本项第 22 轮已配好，若又失败先看这里）</td><td>按步骤 5 配 <code>request 合法域名</code>，重新编译</td></tr>
 <tr><td>商户号绑不上 AppID</td><td>小程序未通过微信认证</td><td>先做认证（步骤 1）</td></tr>
 <tr><td>拉不起收银台 / 报签名错误</td><td>APIv3 密钥或商户证书不对、回调域名没配</td><td>核对步骤 7 的三样东西</td></tr>
 <tr><td>手机号组件报错</td><td>隐私指引未通过 / 主体不支持</td><td>先过隐私指引（步骤 6）</td></tr>

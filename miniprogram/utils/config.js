@@ -11,9 +11,11 @@
 
 const DEV_BASE_URL = 'http://127.0.0.1:8093'
 
-// TODO(上线)：填已备案的 HTTPS 域名，例如 'https://shop.example.com'
+// 生产域名（2026-10-13 第 22 轮上线，acme.sh/ZeroSSL ECC 证书，HTTP 自动 301 到 HTTPS）
+// 已备案：沿用 shadouyou.cloud 的备案，子域名即可；微信侧要求 HTTPS + 不得带端口。
+// 开发者工具里想临时连本机后端，控制台执行 api.setBase('http://127.0.0.1:8093') 即可。
 // 留空时自动退回 DEV_BASE_URL，保证开发者工具开箱能跑。
-const PROD_BASE_URL = ''
+const PROD_BASE_URL = 'https://mall.shadouyou.cloud'
 
 module.exports = {
   DEV_BASE_URL: DEV_BASE_URL,

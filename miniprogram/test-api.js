@@ -193,7 +193,9 @@ async function main() {
   ok(global.wx._kv['sdy_api_base'] === 'http://192.168.1.9:8093', '地址写入本地存储（下次启动生效）')
   api.setBase('')
   ok(api.base() === api.DEFAULT_BASE, '清空后回到默认地址：' + api.DEFAULT_BASE)
-  ok(api.DEFAULT_BASE.indexOf('8093') > 0, '默认地址指向本机 Go 后端 8093')
+  // 生产域名一旦填上（第 22 轮 mall.shadouyou.cloud），默认地址就是 HTTPS 域名而不是本机 8093
+  ok(api.DEFAULT_BASE.indexOf('8093') > 0 || /^https:\/\//.test(api.DEFAULT_BASE),
+    '默认地址要么是本机 8093，要么是 HTTPS 生产域名：' + api.DEFAULT_BASE)
 
   /* ---------- ⑦ 运行配置 + 扫码找货（只读，D8） ---------- */
   section('⑦ 运行配置与扫码找货（只读）')
