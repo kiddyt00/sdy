@@ -87,6 +87,7 @@ let captured = null
 global.Page = (def) => { captured = def }
 const api = require('./utils/api.js')
 const store = require('./utils/store.js')
+const rules = require('./utils/rules.js')
 global.getApp = () => ({ globalData: {}, refreshStatus: () => api.probe() })
 
 function loadPage(rel) {
@@ -211,9 +212,9 @@ async function main() {
   const indexWxml = fs.readFileSync(path.join(ROOT, 'pages/index/index.wxml'), 'utf8')
   ok(indexWxml.indexOf('sdot') > 0 && indexWxml.indexOf('statusLabel') < 0, '首页店铺条只有状态圆点，不显示状态文案')
   ok(indexWxml.indexOf('后端已连接') < 0 && indexWxml.indexOf('class="badge') < 0, '首页不再出现「后端已连接」胶囊')
-  // 全页面扫一遍：顾客端不许出现连接状态这类开发文案（后端地址只留在「我的 → 开发者选项」）
+  // 全页面扫一遍：顾客端不许出现连接状态这类开发文案（后端地址只留在「我的」页长按版本号后的调试面板里）
   const appJsonAll = JSON.parse(fs.readFileSync(path.join(ROOT, 'app.json'), 'utf8'))
-  const devWords = ['后端已连接', '后端连接', '探测中', 'statusLabel']
+  const devWords = ['后端已连接', '后端连接', '探测中', 'statusLabel', '开发者选项']
   const offenders = []
   appJsonAll.pages.forEach((p) => {
     const wxml = fs.readFileSync(path.join(ROOT, p + '.wxml'), 'utf8')
@@ -294,6 +295,14 @@ async function main() {
   orders = loadPage('pages/orders/orders.js')
   await orders.onShow()
   ok(orders.data.orders.length === 1 && orders.data.orders[0].id === 'M1', '在线：订单来自服务端')
+  // 第 25 轮收口③：6 个状态标签（全部→已取消）不许顶出屏幕。
+  // Vant 默认 swipe-threshold=5，6 个标签会走「横向滚动」分支（每格 22% → 溢出），改成 6 让它等分。
+  const ordersWxml = fs.readFileSync(path.join(ROOT, 'pages/orders/orders.wxml'), 'utf8')
+  const ordersWxss = fs.readFileSync(path.join(ROOT, 'pages/orders/orders.wxss'), 'utf8')
+  ok(/swipe-threshold="\{\{6\}\}"/.test(ordersWxml), '订单状态条 6 个标签等分排下（swipe-threshold=6），不横向溢出')
+  ok(/van-tabs\s*\{[\s\S]*?--tab-font-size:\s*23rpx/.test(ordersWxss), '标签字号压到 23rpx，六格排得更紧凑')
+  const tabLabels = rules.STATUS_TABS.map((t) => t.label)
+  ok(tabLabels.length === 6 && tabLabels[5] === '已取消', '状态标签仍是 6 个（全部 → 已取消）：' + tabLabels.join(' / '))
 
   /* ---------- ⑤ 我的 ---------- */
   section('⑤ 我的（连接状态 + 后端地址）')
@@ -326,6 +335,14 @@ async function main() {
   ok(/\.mavatar-hit[\s\S]*?opacity:\s*0/.test(mineWxss), '点击层 button 是透明的，自身形状不影响观感')
   ok(mineWxml.indexOf('保存头像昵称') < 0 && mineWxml.indexOf('微信头像昵称') < 0,
     '没有「微信头像昵称」卡与保存按钮：登录即用微信头像昵称')
+  // 第 25 轮收口③：开发面板不许有可见入口（老板原话：「我的最底下的开发者选项不能显示」）。
+  // 面板本身还在（长按底部版本号才切换），但顾客端看不到「开发者选项」这四个字。
+  ok(mineWxml.indexOf('开发者选项') < 0 && mineWxml.indexOf('mf-dev') < 0 && mineWxss.indexOf('.mf-dev') < 0,
+    '「我的」页不再出现可见的「开发者选项」入口')
+  ok(/class="mfoot"[^>]*bindlongpress="toggleDev"/.test(mineWxml), '长按底部版本号才进调试面板')
+  const exitAt = mineWxml.indexOf('>退出登录<')
+  ok(exitAt > 0 && exitAt < mineWxml.indexOf('wx:if="{{devMode}}"'),
+    '「退出登录」挪到顾客区（不再只藏在调试面板里，否则顾客没法退出）')
 
   /* ---------- ⑥ 我的：微信登录（不绑手机号） ---------- */
   section('⑥ 我的（微信登录：只要 openid + 头像昵称）')

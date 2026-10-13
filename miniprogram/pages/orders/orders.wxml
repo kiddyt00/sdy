@@ -5,7 +5,7 @@
     <view class="cdot {{online ? 'ok' : 'off'}}"></view>
   </view>
 
-  <van-tabs active="{{activeTab}}" bind:change="onTabChange" color="#16a34a" line-width="40rpx" sticky>
+  <van-tabs active="{{activeTab}}" bind:change="onTabChange" color="#16a34a" line-width="40rpx" swipe-threshold="{{6}}" sticky>
     <van-tab wx:for="{{tabs}}" wx:key="key" title="{{item.label}}" />
   </van-tabs>
 

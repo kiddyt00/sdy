@@ -43,8 +43,12 @@
     <van-cell title="门店说明" label="{{shop.notice}}" />
   </view>
 
+  <view class="mcard exit" wx:if="{{loggedIn}}">
+    <view class="mexit" bindtap="doLogout">退出登录</view>
+  </view>
+
   <view class="mcard" wx:if="{{devMode}}">
-    <view class="dtitle">开发者选项</view>
+    <view class="dtitle">调试面板</view>
     <view class="drow">{{statusDetail}}</view>
     <van-field value="{{apiBase}}" label="后端地址" placeholder="http://127.0.0.1:8093" bind:change="onBase" />
     <view class="dbtns">
@@ -54,8 +58,7 @@
     </view>
   </view>
 
-  <view class="mfoot">
+  <view class="mfoot" bindlongpress="toggleDev">
     <text class="mf-ver">啥都有快送 · 小程序 0.4.0</text>
-    <text class="mf-dev" bindtap="toggleDev">开发者选项</text>
   </view>
 </view>

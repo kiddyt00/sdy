@@ -135,4 +135,11 @@
   padding-top: 20rpx;
 }
 .mf-ver { font-size: 22rpx; color: #b6bac2; }
-.mf-dev { font-size: 22rpx; color: #b6bac2; margin-top: 10rpx; text-decoration: underline; }
+/* 退出登录（第 25 轮收口③）：从「开发者选项」里挪出来，顾客该有的正常入口；
+   开发面板本身不再有任何可见入口，长按上面那行版本号才切换。 */
+.mexit {
+  text-align: center;
+  font-size: 28rpx;
+  color: #dc2626;
+  padding: 26rpx 0;
+}

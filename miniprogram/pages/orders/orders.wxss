@@ -9,7 +9,14 @@
 }
 .otitle { font-size: 34rpx; font-weight: 700; }
 
-van-tabs { margin-bottom: 16rpx; }
+/* 第 25 轮收口③：6 个状态标签（全部→已取消）在 750rpx 里必须排得下。
+   Vant 默认 swipe-threshold=5，6 个标签会走「横向滚动」分支（每个 22% 宽 → 溢出屏幕），
+   改成 6 让它等分；再用 CSS 变量把字号压小，六等分后每格约 125rpx、文字约 69rpx，不挤不裁。 */
+van-tabs {
+  --tab-font-size: 23rpx;
+  --tabs-line-height: 78rpx;
+  margin-bottom: 16rpx;
+}
 
 .olist { padding: 0 24rpx; }
 
