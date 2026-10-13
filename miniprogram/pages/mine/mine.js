@@ -1,6 +1,8 @@
 // 我的：微信登录（头像昵称）/ 订单状态概览 / 地址簿（第 24 轮重构；第 25 轮 D31 改造）
-// D31 两条口径：① 登录只认微信（openid），**不绑手机号**——手机号是下单时填的收货信息；
-// ② 头像昵称只能用微信官方的「头像昵称填写能力」让用户自己选（微信 2022 起不再静默下发）。
+// D31 三条口径：① 登录只认微信（openid），**不绑手机号**——手机号是下单时填的收货信息；
+// ② 头像昵称只能用微信官方的「头像昵称填写能力」让用户自己选（微信 2022-10-25 起不再静默下发，
+//    wx.getUserProfile 只会给灰头像 + 「微信用户」）；③ 没有「保存头像昵称」入口——
+//    点头像即选即存，登录时随 body 一起提交，之后永远带出来。
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
 const rules = require('../../utils/rules.js')
@@ -28,7 +30,6 @@ Page({
     tierText: '零售',
     nickname: '',
     busy: false,
-    saving: false,
     avatar: '',
     devMode: false,
     counts: { pending: 0, delivering: 0, ready: 0, done: 0 },
@@ -69,11 +70,15 @@ Page({
     })
   },
 
+  // 头像优先用本机记住的（chooseAvatar 存下来的永久文件）；
+  // 换了手机 / 清过缓存就从服务端带回来的地址补上（服务端只存得下 http(s)）
   loadAvatar() {
+    let a = ''
     try {
-      const a = wx.getStorageSync(AVATAR_KEY)
-      if (a) this.setData({ avatar: a })
+      a = wx.getStorageSync(AVATAR_KEY) || ''
     } catch (e) { /* 忽略 */ }
+    if (!a) a = avatarForServer((api.session() || {}).avatar)
+    if (a) this.setData({ avatar: a })
   },
 
   // 把 chooseAvatar 给的临时文件存成小程序本地永久文件，否则重启后头像就白了
@@ -101,9 +106,12 @@ Page({
       try {
         wx.setStorageSync(AVATAR_KEY, saved)
       } catch (err) { /* 忽略 */ }
-      // 已登录：顺手同步给服务端（只有 http(s) 地址服务端才用得上）
+      // 已登录：顺手同步给服务端（只有 http(s) 地址服务端才用得上）。
+      // 失败不打扰用户——本机已经换好了，下次登录还会带出来。
       const forServer = avatarForServer(saved)
-      if (this.data.loggedIn && forServer) return this.pushProfile({ avatar: forServer })
+      if (this.data.loggedIn && forServer) {
+        return this.pushProfile({ avatar: forServer }).catch(() => saved)
+      }
       return saved
     })
   },
@@ -135,35 +143,12 @@ Page({
       })
   },
 
-  // 已登录时保存头像昵称（服务端空值＝保留原值）
+  // 已登录时把头像昵称同步给服务端（服务端空值＝保留原值）；没有单独「保存」入口，全自动
   pushProfile(patch) {
     return api.saveProfile(patch).then((s) => {
       this.syncSession()
       return s
     })
-  },
-
-  saveProfile() {
-    if (!this.data.loggedIn) {
-      this.toast('先登录再保存头像昵称')
-      return Promise.resolve(null)
-    }
-    if (this.data.saving) return Promise.resolve(null)
-    this.setData({ saving: true })
-    return this.pushProfile({
-      nickname: String(this.data.nickname || '').trim(),
-      avatar: avatarForServer(this.data.avatar)
-    })
-      .then(() => {
-        this.setData({ saving: false })
-        this.toast('已保存，下次进来自动带出来')
-        return null
-      })
-      .catch((e) => {
-        this.setData({ saving: false })
-        this.toast(e.message)
-        return null
-      })
   },
 
   doLogout() {

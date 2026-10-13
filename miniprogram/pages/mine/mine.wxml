@@ -1,12 +1,13 @@
 <view class="mpage">
   <view class="mhead">
-    <button class="mavatar-btn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
+    <view class="mavatar-wrap">
       <image wx:if="{{avatar}}" class="mavatar" src="{{avatar}}" mode="aspectFill" />
       <view wx:else class="mavatar ph">🙂</view>
-    </button>
+      <button class="mavatar-hit" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar"></button>
+    </view>
     <view class="mwho">
       <view class="mname">{{loggedIn ? (sessionName || '微信顾客') : '还没登录'}}</view>
-      <view class="msub">{{loggedIn ? sessionLabel : '点头像可选微信头像'}}</view>
+      <view class="msub">{{loggedIn ? sessionLabel : '点头像即可用微信头像'}}</view>
       <view class="mtier">{{tierText}}</view>
     </view>
     <view class="mdot {{online ? 'ok' : 'off'}}"></view>
@@ -14,16 +15,9 @@
 
   <view class="mcard login" wx:if="{{!loggedIn}}">
     <view class="ltitle">微信登录</view>
-    <input class="linput" type="nickname" value="{{nickname}}" maxlength="20" placeholder="微信昵称（选填）" placeholder-class="lph" bindinput="onNickname" />
+    <input class="linput" type="nickname" value="{{nickname}}" maxlength="20" placeholder="微信昵称（点上面头像可选微信头像）" placeholder-class="lph" bindinput="onNickname" />
     <van-button round block type="primary" loading="{{busy}}" bind:click="doLogin">微信一键登录</van-button>
-    <view class="lhint">点头像可换微信头像；登录不用手机号——手机号只在下单填收货信息时用，等级与批发价由老板在后台设定。</view>
-  </view>
-
-  <view class="mcard" wx:if="{{loggedIn}}">
-    <view class="ltitle">微信头像昵称</view>
-    <input class="linput" type="nickname" value="{{nickname}}" maxlength="20" placeholder="微信昵称" placeholder-class="lph" bindinput="onNickname" />
-    <van-button size="small" round type="primary" loading="{{saving}}" bind:click="saveProfile">保存头像昵称</van-button>
-    <view class="lhint">点头像可换微信头像；手机号不在登录里绑——下单时填的收货手机号，就是老板给你算价、发货的凭据。</view>
+    <view class="lhint">登录后就用你的微信头像和昵称，不用再填、也不用保存。登录不用手机号——手机号只在下单填收货信息时用，等级与批发价由老板在后台设定。</view>
   </view>
 
   <view class="mgrid">

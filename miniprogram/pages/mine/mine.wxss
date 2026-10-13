@@ -9,24 +9,19 @@
   border-bottom-left-radius: 32rpx;
   border-bottom-right-radius: 32rpx;
 }
-/* 头像必须是正圆：button 自带 padding / 行高 / ::after 边框，
-   不重置的话 128rpx 的盒子会被撑成长方形，border-radius:50% 就成了椭圆（第 25 轮修复）。 */
-.mavatar-btn {
+/* 头像必须是正圆。第 25 轮踩过两次坑：只要把原生 button 当可见圆形容器，
+   它自带的 padding / 行高 / ::after 边框就会把 128rpx 的盒子撑扁成椭圆。
+   现在的做法是「看得见的一层是纯 view/image，button 只做透明点击层」，
+   椭圆问题从根上消失（button 是透明的，形状再怪也看不见）。 */
+.mavatar-wrap {
+  position: relative;
   width: 128rpx;
   height: 128rpx;
-  min-width: 128rpx;
-  padding: 0;
-  margin: 0;
-  border: none;
+  flex: none;
   border-radius: 50%;
   overflow: hidden;
-  flex: none;
-  line-height: 1;
-  font-size: 0;
-  box-sizing: border-box;
   background: rgba(255, 255, 255, .18);
 }
-.mavatar-btn::after { border: none; }
 .mavatar {
   width: 128rpx;
   height: 128rpx;
@@ -37,6 +32,19 @@
   line-height: 128rpx;
   text-align: center;
   font-size: 60rpx;
+}
+/* 透明点击层：open-type="chooseAvatar" 必须挂在 button 上；opacity:0 不影响点按 */
+.mavatar-hit {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 128rpx;
+  height: 128rpx;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  opacity: 0;
 }
 .mwho { flex: 1; padding-left: 26rpx; min-width: 0; }
 .mname { color: #fff; font-size: 36rpx; font-weight: 700; }

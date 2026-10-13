@@ -319,7 +319,13 @@ async function main() {
   const avatarBtns = mineWxml.split('open-type="chooseAvatar"').length - 1
   ok(avatarBtns === 1, '头像只显示一处，不重复：chooseAvatar 出现 ' + avatarBtns + ' 次')
   ok(mineWxss.indexOf('.lavbtn') < 0 && mineWxss.indexOf('.lav ') < 0, '登录卡里的第二个头像样式已清掉')
-  ok(mineWxss.indexOf('box-sizing: border-box') > 0 && mineWxss.indexOf('.mavatar-btn::after') > 0, '头像按钮重置了 button 默认样式（真圆）')
+  // 第 25 轮第二次修椭圆：可见的一层必须是纯 view/image，button 只当透明点击层。
+  // （把 button 当可见圆形容器，它自带的 padding / 行高 / ::after 边框就会把盒子撑扁。）
+  ok(mineWxml.indexOf('mavatar-wrap') > 0 && mineWxml.indexOf('mavatar-hit') > 0 && mineWxml.indexOf('mavatar-btn') < 0,
+    '头像＝纯 view 圆容器 + 透明 button 点击层（形状不再由 button 决定）')
+  ok(/\.mavatar-hit[\s\S]*?opacity:\s*0/.test(mineWxss), '点击层 button 是透明的，自身形状不影响观感')
+  ok(mineWxml.indexOf('保存头像昵称') < 0 && mineWxml.indexOf('微信头像昵称') < 0,
+    '没有「微信头像昵称」卡与保存按钮：登录即用微信头像昵称')
 
   /* ---------- ⑥ 我的：微信登录（不绑手机号） ---------- */
   section('⑥ 我的（微信登录：只要 openid + 头像昵称）')
@@ -350,10 +356,12 @@ async function main() {
   const av = await acc.onChooseAvatar({ detail: { avatarUrl: 'wxfile://tmp_av.png' } })
   ok(acc.data.avatar === 'wxfile://tmp_av.png' && av === 'wxfile://tmp_av.png', '选中头像后立刻显示')
   ok(global.wx._kv['sdy_mp_avatar'] === 'wxfile://tmp_av.png', '头像落到本机缓存，重启不丢')
-  // 已登录时保存头像昵称
-  await acc.saveProfile()
-  ok(global.wx.toasts.indexOf('已保存，下次进来自动带出来') >= 0, '保存头像昵称有反馈：' + JSON.stringify(global.wx.toasts))
-  ok(acc.data.saving === false, '保存后复位 saving')
+  // 第 25 轮：没有「保存头像昵称」入口——点头像即选即存，登录后自动回传服务端
+  ok(typeof acc.saveProfile !== 'function', '页面不再暴露 saveProfile（没有保存按钮）')
+  const beforeProfile = global.wx._calls.filter((c) => c.path === '/api/wx/profile').length
+  await acc.onChooseAvatar({ detail: { avatarUrl: 'https://mall.shadouyou.cloud/a.png' } })
+  const afterProfile = global.wx._calls.filter((c) => c.path === '/api/wx/profile').length
+  ok(afterProfile === beforeProfile + 1, '登录后换微信头像自动回传服务端，不用手动保存：' + beforeProfile + ' → ' + afterProfile)
   // 下单时记住手机号（手机号是价格身份与地址簿钥匙，D24/D31）
   ok(api.boundPhone() === '', '下单前会话里没有手机号')
   api.rememberPhone('13800001111')
