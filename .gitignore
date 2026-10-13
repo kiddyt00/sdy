@@ -44,3 +44,11 @@ data/
 .env
 server/bin/
 .preview/
+
+cert.txt
+.cert.txt
+private.wx*.key
+*.wx*.key
+.private.wx*.key
+apiclient_*.pem
+apiclient_*.p12
