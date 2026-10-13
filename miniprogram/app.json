@@ -6,7 +6,7 @@
     "pages/mine/mine"
   ],
   "window": {
-    "navigationBarBackgroundColor": "#2563eb",
+    "navigationBarBackgroundColor": "#16a34a",
     "navigationBarTitleText": "小邻里超市",
     "navigationBarTextStyle": "white",
     "backgroundTextStyle": "light",
@@ -14,7 +14,7 @@
   },
   "tabBar": {
     "color": "#6b7280",
-    "selectedColor": "#2563eb",
+    "selectedColor": "#16a34a",
     "backgroundColor": "#ffffff",
     "borderStyle": "black",
     "list": [

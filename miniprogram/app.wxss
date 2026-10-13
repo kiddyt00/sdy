@@ -33,6 +33,16 @@ page {
   padding: 14rpx 24rpx;
   font-size: 26rpx;
 }
+/* 扫码找货（只读） */
+.scan {
+  flex: none;
+  background: #16a34a;
+  color: #fff;
+  font-size: 24rpx;
+  padding: 12rpx 22rpx;
+  border-radius: 999rpx;
+  white-space: nowrap;
+}
 
 /* 分类 chips */
 .chips { white-space: nowrap; margin-bottom: 16rpx; }
@@ -45,7 +55,7 @@ page {
   font-size: 25rpx;
   color: #4b5563;
 }
-.chip.on { background: #2563eb; color: #fff; }
+.chip.on { background: #16a34a; color: #fff; }
 
 /* 商品卡 */
 .card {
@@ -82,7 +92,7 @@ page {
   font-size: 26rpx;
   padding: 12rpx 28rpx;
 }
-.btn-primary { background: #2563eb; color: #fff; }
+.btn-primary { background: #16a34a; color: #fff; }
 .btn-ghost { background: #f3f4f6; color: #374151; }
 .btn-block { display: block; padding: 22rpx; font-size: 30rpx; border-radius: 16rpx; }
 .btn.dis { background: #e5e7eb; color: #9ca3af; }
@@ -105,7 +115,7 @@ page {
 .cartbar .cb-left { flex: 1; font-size: 26rpx; }
 .cartbar .cb-num { color: #fbbf24; font-weight: 700; }
 .cartbar .cb-go {
-  background: #2563eb;
+  background: #16a34a;
   border-radius: 999rpx;
   padding: 14rpx 32rpx;
   font-size: 27rpx;

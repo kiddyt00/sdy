@@ -39,6 +39,6 @@
   border-radius: 16rpx;
   color: #4b5563;
 }
-.kind.on { border-color: #2563eb; color: #2563eb; background: #eff6ff; }
+.kind.on { border-color: #16a34a; color: #16a34a; background: #eff6ff; }
 
 .row.total { font-size: 32rpx; font-weight: 700; color: #dc2626; }

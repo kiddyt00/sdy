@@ -1,7 +1,7 @@
 /* =====================================================================
  * 小程序后端通道（utils/api.js + utils/store.js + utils/rules.js）测试
  *   假 wx（storage + request），覆盖：离线降级 / 在线读写 / 下单 body /
- *   订单映射 / 配送费规则 / 购物车合并 / 后端地址优先级
+ *   订单映射 / 配送费规则 / 购物车合并 / 后端地址优先级 / 运行配置 / 扫码找货
  * 运行：node miniprogram/test-api.js
  * ===================================================================== */
 'use strict'
@@ -194,6 +194,38 @@ async function main() {
   api.setBase('')
   ok(api.base() === api.DEFAULT_BASE, '清空后回到默认地址：' + api.DEFAULT_BASE)
   ok(api.DEFAULT_BASE.indexOf('8093') > 0, '默认地址指向本机 Go 后端 8093')
+
+  /* ---------- ⑦ 运行配置 + 扫码找货（只读，D8） ---------- */
+  section('⑦ 运行配置与扫码找货（只读）')
+  const config = require('./utils/config.js')
+  ok(api.DEFAULT_BASE === config.DEFAULT_BASE_URL, '后端默认地址只有一个真源：utils/config.js')
+  ok(config.DEFAULT_BASE_URL === (config.PROD_BASE_URL || config.DEV_BASE_URL), '默认地址 = 生产域名 || 开发地址')
+  ok(config.PROD_BASE_URL === '' || config.PROD_BASE_URL.indexOf('https://') === 0, '生产域名要么留空、要么是 HTTPS（小程序硬要求）')
+  ok(config.DEV_BASE_URL.indexOf('8093') > 0, '开发地址指向本机 Go 后端 8093')
+
+  global.wx = wxOffline
+  await api.probe()
+  const cartBefore = store.cartCount()
+  let hit = await api.resolveBarcode('6901234567892')
+  ok(hit.found === true && hit.name === '可口可乐', '离线扫码命中本地演示商品：' + hit.name)
+  ok(hit.source === 'product', '离线命中来源 source=product')
+  const miss = await api.resolveBarcode('9999999999999')
+  ok(miss.found === false && miss.source === 'not_found', '离线未建档条码如实返回 not_found')
+  let bad = ''
+  await api.resolveBarcode('   ').catch((e) => { bad = e.message })
+  ok(bad === '条码为空', '空条码直接报错：' + bad)
+  ok(store.cartCount() === cartBefore, '扫码只读：购物车件数不变（D8）')
+
+  global.wx = mkWx(
+    ROUTES.concat([
+      { method: 'GET', re: /^\/api\/barcode\/resolve$/, body: { code: '6902083881234', found: true, name: '农夫山泉', spec: '550ml 瓶', source: 'lib' } }
+    ])
+  )
+  await api.probe()
+  hit = await api.resolveBarcode('6902083881234')
+  ok(hit.found === true && hit.name === '农夫山泉' && hit.source === 'lib', '在线扫码走后端解析链并透传 source=lib')
+  const resolveCall = global.wx._calls[global.wx._calls.length - 1]
+  ok(resolveCall.method === 'GET' && resolveCall.path.indexOf('/api/barcode/resolve?code=6902083881234') === 0, '请求形如 GET /api/barcode/resolve?code=…')
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

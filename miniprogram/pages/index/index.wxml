@@ -2,6 +2,7 @@
   <view class="bar">
     <view class="badge {{online ? 'ok' : 'off'}}">{{statusLabel}}</view>
     <input class="search" placeholder="搜商品名 / 品牌 / 条码" value="{{keyword}}" bindinput="onKeyword" bindconfirm="onSearch" confirm-type="search" />
+    <view class="scan" bindtap="onScan">扫码</view>
   </view>
 
   <scroll-view class="chips" scroll-x enable-flex>

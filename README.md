@@ -4,7 +4,7 @@
 
 - **为什么做**：牵牛花抽成与账期不可控、顾客数据沉淀在平台侧；自建后佣金归零、顾客可私域运营，前台价格与配送规则由自己定。
 - **卖给谁**：门店周边固定客群（熟客 + 微信群），MVP 范围限**常温 + 酒水**。
-- **形态**：以 **Web 端商城**为主（手机浏览器即可下单，无需下载），微信小程序是后续阶段（见下）。
+- **形态**：以 **Web 端商城**为主（手机浏览器即可下单，无需下载），**微信小程序线已启动**（骨架恢复为 `miniprogram/`，业务与后端完全复用，见 `miniprogram/README.md`）。
 
 ## 当前状态
 
@@ -15,11 +15,11 @@
 | M2 | 规则与数据（价格防护、配送规则、种子数据） | ✅ 完成 |
 | M3 | 牵牛花月度 CSV 对账工具 | ✅ 完成 |
 | M4 | Go 后端服务（数据层 / 规则 / 条码链 / HTTP API / 部署件） | ✅ 完成，本地联调通过 |
-| M5 | 微信小程序化 | ⏸ 暂缓，骨架归档在 `archive/miniprogram/`（可续） |
+| M5 | 微信小程序化 | 🚧 **已启动（第 21 轮起）**：骨架由归档恢复为 `miniprogram/`，主题/配置/扫码已改造完成并测试通过；等已备案域名 + AppID 接后台配置与微信支付 |
 | M5′ | **Web 端商城现代化 + 功能实现** | 🔄 进行中（任务池 8 项已完成 7 项） |
 | M6 | 部署上线验证 | 🔄 已上生产（Docker 蓝绿 + 主机 Nginx「IP 直连」入口），管理端走干净地址 `/admin`；域名 + 备案后补 HTTPS |
 
-> 📌 **节奏**：第 13 轮后曾在 2026-10-10 本机暂停并全量同步仓库；2026-10-12 用户要求「继续开发」，已陆续完成任务池第 4 项「销售报表 / 日报」与**第 5 项「批量改价 / 批量操作」**；**第 16 轮按用户要求先把项目部署到生产服务器**，可打开真实界面边看边提优化；**第 17 轮**据用户提问补了管理端干净地址 `/admin`（D22）、演示数据一键灌库脚本 `deploy/seed-demo.py`，并修掉一次「rsync 误删生产库」的事故；**第 18 轮**完成任务池第 ⑥ 项「商品图片与分类管理」——商品图（本地 `web/assets/demo/*.svg` 演示图，不依赖外部 CDN）、**商品上下架（含批量上下架，新增 `product.on_sale` 字段与 D23 口径）**、分类计数与改名/合并，全部已上生产；**第 19 轮**完成任务池第 ⑦ 项「批发价与顾客等级」（新增 `product.wholesale_price` 与 `customer.tier`、**价格口径真源挪到服务端**，见 D24）；**第 20 轮**：不在任务池 8 项内的一轮加固——**D25「消灭 localStorage 单点」**，把原先只活在浏览器 `localStorage` 的四样东西落进后端库（库存流水 / 配送员名单 / 门店抬头 / 顾客备注），库存变更收成唯一入口 `store.ChangeStock`（**改库存与写流水同一事务**、失败不留痕、流水只留最近 500 条），新增 `POST /api/stock/change`、`GET /api/stocklog`、`GET|POST /api/couriers`、`GET|POST /api/settings`、`POST /api/customers/note`；生产 CDP 真浏览器写库时发现并修掉「浏览器顶层 `const` 不在 `window` 上 → 在线改库存页面不同步」的缺陷。续做请看下方「下一步（待续）」与 [`开发计划.html`](开发计划.html) 的任务池。
+> 📌 **节奏**：第 13 轮后曾在 2026-10-10 本机暂停并全量同步仓库；2026-10-12 用户要求「继续开发」，已陆续完成任务池第 4 项「销售报表 / 日报」与**第 5 项「批量改价 / 批量操作」**；**第 16 轮按用户要求先把项目部署到生产服务器**，可打开真实界面边看边提优化；**第 17 轮**据用户提问补了管理端干净地址 `/admin`（D22）、演示数据一键灌库脚本 `deploy/seed-demo.py`，并修掉一次「rsync 误删生产库」的事故；**第 18 轮**完成任务池第 ⑥ 项「商品图片与分类管理」——商品图（本地 `web/assets/demo/*.svg` 演示图，不依赖外部 CDN）、**商品上下架（含批量上下架，新增 `product.on_sale` 字段与 D23 口径）**、分类计数与改名/合并，全部已上生产；**第 19 轮**完成任务池第 ⑦ 项「批发价与顾客等级」（新增 `product.wholesale_price` 与 `customer.tier`、**价格口径真源挪到服务端**，见 D24）；**第 20 轮**：不在任务池 8 项内的一轮加固——**D25「消灭 localStorage 单点」**，把原先只活在浏览器 `localStorage` 的四样东西落进后端库（库存流水 / 配送员名单 / 门店抬头 / 顾客备注），库存变更收成唯一入口 `store.ChangeStock`（**改库存与写流水同一事务**、失败不留痕、流水只留最近 500 条），新增 `POST /api/stock/change`、`GET /api/stocklog`、`GET|POST /api/couriers`、`GET|POST /api/settings`、`POST /api/customers/note`；生产 CDP 真浏览器写库时发现并修掉「浏览器顶层 `const` 不在 `window` 上 → 在线改库存页面不同步」的缺陷；**第 21 轮**启动小程序线：小程序注册已完成（主体：海宁啥都有网络科技有限公司，小额打款验证通过），骨架由归档恢复为正式目录 `miniprogram/`，主题色对齐 `#16a34a`、新增唯一域名配置点 `utils/config.js`、新增只读扫码找货 `wx.scanCode` + `api.resolveBarcode`（D8 只读），三套测试 73 / 57 / 24 项全绿；**下一步只等已备案 HTTPS 域名 + AppID**（见 `小程序开发引导.html`）。续做请看下方「下一步（待续）」与 [`开发计划.html`](开发计划.html) 的任务池。
 
 **M5′ 任务池进度**：①商品建档/编辑/删除 ✅ ②订单打印/小票 ✅ ③顾客端收货地址簿 ✅ ④销售报表/日报 ✅ ⑤批量改价/批量操作 ✅ ⑥商品图片与分类管理（含上下架）✅ ⑦批发价与顾客等级 ✅（第 19 轮，D24） ⑧上线部署验证 ⬜（生产已上线，域名 + 备案后做正式验证）；**第 20 轮另补一轮加固（不在 8 项内）：D25「消灭 localStorage 单点」——库存流水 / 配送员名单 / 门店抬头 / 顾客备注落进后端库**。
 
@@ -45,7 +45,8 @@ sdy/
 ├── barcode-demo/           # 条码双库工具：扫码台（摄像头）+ 商品库/条码库/扫码日志
 ├── sync-demo/              # 牵牛花月度 CSV 对账引擎 + 工作台 + 导出字段确认清单
 ├── deploy/                 # 部署件：deploy.sh / rolling-update.sh / seed-demo.py（演示数据一键灌库）/ 主机 Nginx 模板
-├── archive/miniprogram/    # M5 微信小程序骨架（暂缓，未删除：app.json + utils + 4 页 + 2 套测试）
+├── miniprogram/            # 微信小程序端（M5 已启动：app.json + utils{config,api,rules,store} + 4 页 + 3 套测试）
+├── 小程序开发引导.html      # 小程序上线引导（配置项、回传清单、常见坑）
 ├── docker-compose.yml      # 蓝绿 api-a(8093) / api-b(8094)
 ├── *.py                    # 腾讯文档工具链：pull / convert_html / push / set_permission
 ├── 开发计划.html            # 路线图与里程碑状态（唯一「计划」入口）
@@ -87,7 +88,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | 扫码台启动冒烟 | `node barcode-demo/test-page-boot.js` | 28 | 否 |
 | 扫码台联调 | `node barcode-demo/test-integration.js` | 34 | 是 |
 | 对账引擎 | `node sync-demo/test-sync.js` | 62 | 否 |
-| 小程序（归档） | `node archive/miniprogram/test-api.js` / `test-pages.js` / `test-integration.js` | 62 / 47 / 21 | 最后一个需要 |
+| 小程序 | `node miniprogram/test-api.js` / `test-pages.js` / `test-integration.js` | 73 / 57 / 24 | 最后一个需要 |
 | 后端 | `cd server && go test ./...`（+ `gofmt`/`go vet`/`./smoke.sh`） | 42（store 24 / cmd-server 9 / barcode 6 / pricing 5） | 自起服务 |
 
 约定：
@@ -101,7 +102,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 - **价格防护**：零售价必须 ≤ 牵牛花参考价 −5%（`round2(ref*0.95)`），批发/白名单豁免。
 - **商品档案**：建档/编辑由服务端校验（条码与名称必填、价格与库存非负、比价防线超价即 400），**编辑表单不改库存**（`stock` 不传即保留原值）；删除要求库存为 0 且无进行中订单，删档**保留条码字典层**（D6）。
 - **配送规则**：自提 0 元；配送满 30 元免运费，否则 3 元。
-- **订单小票**：`Admin.buildReceipt(order)` 是**只读投影**（不改订单/库存/价格），纯前端 `@media print` 打印，无打印库依赖；抬头（店名/电话/地址/票尾）存本地 `mall_store`，不上后端；配送单印地址与配送员，自提单印「到店自提」，已取消订单盖「作废」。
+- **订单小票**：`Admin.buildReceipt(order)` 是**只读投影**（不改订单/库存/价格），纯前端 `@media print` 打印，无打印库依赖；抬头（店名/电话/地址/票尾）第 20 轮起存后端 `setting`（`/api/settings`，离线时回退本地 `mall_store`），默认值「家庭超市」；配送单印地址与配送员，自提单印「到店自提」，已取消订单盖「作废」。
 - **D18 收货地址簿**：按手机号维护常用地址（Go 端 `customer_address` 表 + `/api/addresses`；离线走 `localStorage.mall_addresses`），默认地址在结算时自动带出；**订单里的地址是下单当时的快照，改地址簿不影响历史订单**；下单时若地址与带出的那条完全一致就不重复写，改了内容则存成**新的一条**（绝不覆盖已有地址，要改已有地址走「地址簿管理」的编辑）；删掉默认地址时由最早的一条顶为默认。
 - **D19 销售报表口径**：只统计**非取消订单**；营业额按**下单口径**（含未完成）并另拆「已完成 / 进行中」——家庭店要看「今天做了多少生意」，未交付的钱也要单独可见；商品金额取各单 `subtotal`（不含配送费），客单价 = 营业额 ÷ 单量；时间按本机时区的自然日切分，区间含首尾、零单日也占一格（柱状图横轴连续）；环比对**等长的上一个区间**（「全部」不比较）；实现是纯前端纯函数（`Admin.buildReport` / `Admin.reportText`），不加后端接口、离线也能出报表，日报可一键复制或按 72mm 打印。
 - **D20 批量操作边界**：批量可改**售价 / 分类 / 批发标记**，**库存一律不动**（D16）；批量改价逐款过比价防线，**超线默认跳过并在预览里标红**，可点「按防线顶格」按 `round2(参考价×0.95)` 落价；批发商品与缺牵牛花参考价的商品跳过比价检查，但仍照常改价并记流水；写库前**逐款重读当前商品**再写，只覆盖要改的字段，避免拿过期快照盖掉别人刚改的分类/单位（第 18 轮补：每个 payload 都要带上 `img`，否则 `UpsertProduct` 的 `img=excluded.img` 会把已存图片抹成空串）；每款改动都单独记一条商品流水（原因写明规则，如「批量改价：+10%」）。第 18 轮商品表有了 `on_sale`（D23），批量上下架随之补上。
@@ -110,7 +111,8 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 - **D23 商品上下架口径（第 18 轮）**：上下架是**独立动作**，只改 `product.on_sale` 一个字段，走独立接口（`POST /api/products/onsale`，`{codes:[...], onSale:true|false}`）；**编辑商品档案不改上下架状态**（和「编辑不改库存」同理）；**下架只在顾客端生效**——档案、库存、历史订单、条码字典全都不动，顾客端列表里看不到、加购与直接打开详情都被拦住；服务端 JSON 一律下发不带 `omitempty` 的 `onSale`（缺字段视为上架，**只有明确的 `false` 才算下架**，老库/老前端不会因为多一个字段就集体消失）；`product` 新增 `on_sale INTEGER NOT NULL DEFAULT 1`，用 `ensureColumn` 幂等迁移（老库直接升，不用清库）。
 - **D24 批发价与顾客等级（第 19 轮）**：顾客等级三档 `retail`（默认）/ `wholesale` / `vip` 白名单，存在 `customer.tier`，**手机号即身份**（延续 D18，系统仍然没有账号体系）；商品可设 `product.wholesale_price`（**0 = 未设**，就是「这货不批发」，批发客户也按零售价）。**有效价 = 非零售等级且批发价 > 0 ? 批发价 : 零售价**（一律 `round2`），**算价真源在服务端**：`GET /api/products?phone=` 由服务端按该手机号的等级算好 `price` 下发（**不带 `omitempty`**，页面只读它、不自己算），下单时 `CreateOrder` 用**同一个函数**再算一次，**前端传的价不参与**（同 D12）；离线本地演示模式退化为本地按等级算（口径与 Go 完全一致）。**批发价不参与零售比价防线**（比价只约束零售价，沿用商品维度 `isWholesale` 豁免）。**改等级只影响之后的单**——历史订单的价格是下单当时的快照，不会被动过。顾客端有「💰 我的价格」（填手机号存本地 `mall_my_phone`），批发客户看批发价并把原价划线、购物车行标「批发价」；管理端商品表单可填批发价（**高于零售价会被拦**）、商品表显示「批 ¥x.xx」、顾客视图可一键登记/改等级。`product.wholesale_price` 与 `customer.tier` 都用 `ensureColumn` 幂等迁移（老库直接升，不用清库）。
 - **D25 消灭 localStorage 单点（第 20 轮）**：原先只活在浏览器 `localStorage` 的四样东西落进后端库——库存流水 `stock_log`、配送员名单 `courier`、门店抬头 `setting`、顾客备注与标签（复用 `customer.tags/note`）。**改库存只有一个入口 `store.ChangeStock(code, kind, qty, reason, by)`**（`kind` ∈ `stock_in` / `adjust` / `stock_take`），**改数与写流水在同一事务**、任何失败路径 `defer Rollback`——绝不允许「库存变了、没流水」（D8 既然定了库存手动调整，就必须有「谁在什么时候为什么改了多少」的审计；老接口 `POST /api/products/stock` 保留，内部折算成 `adjust` 且记 `reason="直接改数"`，同值不写流水）。流水**只留最近 500 条**（插入后同事务内裁剪），`GET /api/stocklog?limit=` 倒序返回。前端在线时**先写后端再刷本地**：`SdyApi.changeStock` 返回 `{ok, entry, stock}`，本地镜像一律用**服务端的 `after`** 对齐（`Admin.recordStockEntry`，按 `id` 幂等），后端拒绝就整笔中止并原样透出错误（D12），绝不「本地先改、后端后补」；盘点只在实盘数 ≠ 账面数时才发请求。配送员至少保留一位（`ErrConflict` → 409），门店抬头默认值与前端 `DEFAULT_STORE` 一致，顾客标签 ≤60 字、备注 ≤200 字，`/api/customers/tier`（等级）与 `/api/customers/note`（备注）职责分离。**踩坑**：浏览器里顶层 `const` 不是 `window` 的属性，`web/mall-admin.js` 必须显式 `window.Admin = Admin`，否则 `web/sdy-api.js` 的 `resolveAdmin()` 拿不到它、在线改库存会「服务端改了、页面没改」——这个缺陷 Node 单测（显式注入 `admin: Admin`）看不见，是**生产 CDP 真浏览器写库**（`stockAfter` 必须等于服务端 `after`）才暴露的。
-- **D12 单一真源**：前端不直连数据库、不持有任何密钥，所有请求走 `web/sdy-api.js`；服务端是规则与账目的唯一真源，冲突（409）原样呈现。
+- **D26 小程序端口径（第 21 轮）**：微信小程序线启动，`archive/miniprogram/` 恢复为正式目录 `miniprogram/`（**同一套后端与规则，不复制业务逻辑**）。三条口径：① **域名只有一个配置点**——`miniprogram/utils/config.js` 的 `PROD_BASE_URL`（`DEV_BASE_URL` 兜底，`api.js` 的 `DEFAULT_BASE` 只读它），上线要改的域名/接口地址永远不散落在页面里；② **小程序不存任何密钥**——AppID 属公开信息可入库，AppSecret / 商户号 / APIv3 密钥只进服务器 `.env`（延续 D13）；③ **扫码只读照旧（D8）**——`wx.scanCode` → `api.resolveBarcode(code)` → `GET /api/barcode/resolve`，只把结果填进搜索框筛商品，认不出的条码也原样填进去交老板人工看，**绝不自动加购、绝不改库存**。主题色与 Web 端统一 `#16a34a`。等已备案 HTTPS 域名 + AppID 到位后接后台配置与微信支付。
+- **D12 单一真源**：前端不直连数据库、不持有任何密钥，所有请求走 `web/sdy-api.js`（小程序侧同理走 `miniprogram/utils/api.js`）；服务端是规则与账目的唯一真源，冲突（409）原样呈现。
 - **技术栈**：后端 Go 1.24 + 标准库 `net/http` + `modernc.org/sqlite`（纯 Go，`CGO_ENABLED=0` 静态单文件）；前端纯 HTML/JS + 一个共享 CSS，**无构建步骤、无 npm 依赖**。
 - **红线**：敏感信息绝不上库（IP/凭证/APPCODE 只存本地且已 gitignore）；建档必须人工确认；价格与库存永不自动填云端值；对账以本地实物库存为准、牵牛花为单据权威。
 
@@ -124,12 +126,13 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | ~~⑦~~ | ~~批发价与顾客等级~~ | ✅ **第 19 轮已交付**（D24）：`customer.tier`（零售/批发/白名单，手机号即身份）+ `product.wholesale_price`（0=未设）；**服务端按等级算价下发**（`GET /api/products?phone=` 的 `price`、下单 `CreateOrder` 同一函数，前端传价不参与）；批发价豁免零售比价防线；改等级只影响之后的单；顾客端「💰 我的价格」+ 划线原价 + 购物车「批发价」标，管理端商品批发价字段 + 顾客等级视图；接口 `GET /api/customers`、`POST /api/customers/tier` |
 | ➕ | 消灭 localStorage 单点 | ✅ **第 20 轮已交付**（D25，任务池 8 项之外的一轮加固）：新增 `stock_log` / `courier` / `setting` 三张表 + 顾客备注落库；`store.ChangeStock` 唯一入口（改数与写流水同一事务、失败不留痕、流水留最近 500 条）；新增 `POST /api/stock/change`、`GET /api/stocklog`、`GET|POST /api/couriers`、`GET|POST /api/settings`、`POST /api/customers/note`；管理端库存页读后端审计流水、在线改数用服务端回执刷新本地镜像 |
 | ⑧ | 上线部署验证 | 🔄 **已上生产**（Docker 蓝绿 + 主机 Nginx IP 直连入口 + 演示数据）；剩下：备案域名 + HTTPS、备份/回滚演练 |
+| 🆕 | 小程序线（M5） | 🚧 **第 21 轮已启动**：骨架恢复为 `miniprogram/`、主题对齐 `#16a34a`、域名配置单点 `utils/config.js`、只读扫码找货 `wx.scanCode` + `api.resolveBarcode`，测试 73 / 57 / 24 全绿；**等已备案域名 + AppID** 后接后台配置 → 服务端 `POST /api/wx/login`（`code2Session`）→ 微信支付与订阅消息。引导见 [`小程序开发引导.html`](小程序开发引导.html)、清单见 [`miniprogram/README.md`](miniprogram/README.md) |
 
 **需要用户推进（我做不了的部分）**：
 
-- **域名 + ICP 备案**：HTTPS 入口的前置条件（现在用 IP 走 HTTP 已能看界面/试用；有备案域名后可挂证书切到 `https://域名`）。
+- **备案域名（已确认有，只差告知我域名本身）**：HTTPS 入口与小程序「服务器域名」的前置条件。现在用 IP 走 HTTP 已能看界面/试用；**把域名发我 + 把 A 记录指向生产服务器**，我就能配 certbot 证书、切 `deploy/host-nginx.conf` 的域名 + TLS（回归任务池 ⑧ 的最后一环）。
 - **牵牛花导出字段确认**（行动项 0，`sync-demo/牵牛花导出确认清单.html`）：对账引擎从未用真实导出文件验证过，需要一份真样例。
-- **微信小程序账号 + 商户号**（若要走小程序与微信支付，审批约 1–2 周；是否新开商户号待定）。
+- **微信小程序账号 + 商户号**：账号**已注册并通过对公账户小额打款验证**（主体：海宁啥都有网络科技有限公司，2026-10-12），**待办**：主体信息审核放号 → 拿 **AppID**（`开发与服务 → 开发管理 → 开发设置 → AppID(小程序ID)`）→ **微信认证（支付前置，¥300/年）** → 申请/关联**微信支付商户号**（关联后不支持解绑，一个商户号最多关联 50 个 AppID）；AppSecret 与商户号只进服务器 `.env`。**已备案 HTTPS 域名**两者都要（小程序「服务器域名」只认 HTTPS + 已备案）。
 - **未决产品问题**：入库场景范围（D1）、无条码商品策略（D2）、批次效期（D3）、入库单据完整度（D4）、多单位换算（D5）；批发电子发票 / 储值 / 生鲜属于 P1+ 待议。
 
 ## 部署（M6）

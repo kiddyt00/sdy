@@ -103,6 +103,15 @@ async function main() {
   }
   ok(msg.indexOf('库存') >= 0 || msg.indexOf('不足') >= 0, '库存不足报错原文：' + msg)
 
+  section('⑥ 扫码找货（只读，走后端条码解析链）')
+  const stockAtScan = (await api.listProducts('可口可乐')).filter((p) => p.code === '6901234567892')[0].stock
+  const hit = await api.resolveBarcode('6901234567892')
+  ok(hit.found === true && hit.name === '可口可乐', '命中已建档条码：' + hit.name + '（source=' + hit.source + '）')
+  const hitUnknown = await api.resolveBarcode('9999999999999')
+  ok(hitUnknown.found === false, '未建档条码 found=false（source=' + hitUnknown.source + '）')
+  const stockAfterScan = (await api.listProducts('可口可乐')).filter((p) => p.code === '6901234567892')[0].stock
+  ok(stockAfterScan === stockAtScan, '扫码只读：库存不变（' + stockAfterScan + '，D8）')
+
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')
   process.exit(failed ? 1 : 0)

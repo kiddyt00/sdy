@@ -116,6 +116,27 @@ async function main() {
   page.onAdd({ currentTarget: { dataset: { code: '6901234567892' } } })
   ok(page.data.cartCount === 1 && page.data.cartAmountText === '2.50', '加购后角标 1 件 / ¥2.50')
   ok(global.wx.toasts.indexOf('已加入购物车') >= 0, '加购有 toast 反馈')
+
+  // 扫码找货（只读，D8）：识别条码 → 填搜索框筛出来，绝不自动加购
+  global.wx.scanCode = (o) => o.success({ result: '6901234567892' })
+  const hitScan = await page.onScan()
+  ok(hitScan && hitScan.found === true && hitScan.name === '可口可乐', '扫码命中本地演示商品')
+  ok(page.data.keyword === '可口可乐', '扫码后搜索框填商品名：' + page.data.keyword)
+  ok(page.data.products.length === 1 && page.data.products[0].code === '6901234567892', '扫码后列表筛到该商品')
+  ok(page.data.cartCount === 1, '扫码只读：不自动加购（仍 1 件）')
+  ok(global.wx.toasts.indexOf('已找到：可口可乐') >= 0, '扫码命中给出 toast 反馈')
+
+  global.wx.scanCode = (o) => o.success({ result: '9999999999999' })
+  const missScan = await page.onScan()
+  ok(missScan && missScan.found === false, '未建档条码如实返回 not_found')
+  ok(page.data.keyword === '9999999999999', '未建档时把条码填进搜索框，交老板人工看')
+  ok(page.data.products.length === 0, '未建档 → 列表为空（不假装有货）')
+
+  global.wx.scanCode = (o) => o.fail({ errMsg: 'scanCode:fail cancel' })
+  const cancelScan = await page.onScan()
+  ok(cancelScan === null, '用户取消扫码 → 返回 null，不打扰')
+  ok(page.data.keyword === '9999999999999' && page.data.products.length === 0, '取消扫码不改页面数据')
+
   page.goCart()
   ok(global.wx.tabs.indexOf('/pages/cart/cart') >= 0, '「去购物车」切到购物车 tab')
 

@@ -45,7 +45,14 @@
   <span class="bg-green">面向：老板本人操作微信后台</span>
   <span class="bg-blue">配套：我在代码侧同步开工</span>
   <span class="bg-orange">前置：营业执照 + 域名 + 备案</span>
-  <span class="bg-gray">2026-10-12 出稿（第 20 轮期间）</span>
+  <span class="bg-gray">2026-10-12 更新（第 21 轮：账号已注册、代码侧已开工）</span>
+</div>
+
+<div class="callout green">
+<b>当前进度（2026-10-12 第 21 轮更新）：</b>
+✅ 小程序账号<b>已注册</b>（业务：小程序注册，主体 <b>海宁啥都有网络科技有限公司</b>，对公账户小额打款验证<b>成功</b>，0.32 元 3 个工作日内退回）——<b>提醒</b>：你走的是<b>免费的对公打款验证</b>，只能证明主体真实；<b>微信支付要求 AppID 是「已通过微信认证」的</b>，所以拿到 AppID 后<b>还要另办付费「微信认证」</b>（¥300/年，以后台为准，步骤 1 里那条红框就是这个意思）→
+✅ 代码侧已完成：骨架由归档<b>恢复为正式目录</b> <code>miniprogram/</code>、主题色对齐品牌绿 <code>#16a34a</code>、新增<b>唯一域名配置点</b> <code>miniprogram/utils/config.js</code>、新增<b>只读扫码找货</b> <code>wx.scanCode</code>（三套测试 73 / 57 / 24 全绿）。<br>
+⏳ <b>现在只等你两样东西</b>：① <b>已备案的域名</b>（把域名告诉我 + 在域名解析里加一条 A 记录指向 <code>124.223.16.159</code>）；② <b>AppID</b>（主体审核放号后，路径 <code>开发与服务 → 开发管理 → 开发设置 → AppID(小程序ID)</code>）。这两样到手后：我配 HTTPS 证书 + 小程序后台「服务器域名」→ 真机预览 → 你办微信认证 + 关联商户号 → 我接微信登录与支付。
 </div>
 
 <div class="callout blue">
@@ -96,7 +103,7 @@
 <h2>2. 微信侧配置逐步（按顺序做）</h2>
 
 <div class="step">
-<h3>步骤 1 · 注册小程序账号<span class="who you">你做</span></h3>
+<h3>步骤 1 · 注册小程序账号<span class="who you">你做</span> <span class="tag done">✅ 已完成（2026-10-12）</span></h3>
 <ol>
   <li>打开 <a href="https://mp.weixin.qq.com/" target="_blank">https://mp.weixin.qq.com/</a> → 右上角「立即注册」→ 选「<b>小程序</b>」。</li>
   <li>填邮箱（<b>必须是没在任何微信公众平台注册过的邮箱</b>）+ 密码 → 收邮件点激活链接。</li>
@@ -228,20 +235,20 @@
 </div>
 
 <h2>3. 代码侧我要做的事（你不必动手，但可以对着验收）<span class="who me">我做</span></h2>
-<p>小程序骨架当初已经写好并归档在 <code>archive/miniprogram/</code>（4 个页面：首页 / 购物车 / 订单 / 我的；测试 62 + 47 + 21 项）。恢复它并接上现有后端，清单如下：</p>
+<p>小程序骨架当初已经写好并归档在 <code>archive/miniprogram/</code>（4 个页面：首页 / 购物车 / 订单 / 我的）。<b>第 21 轮已由归档恢复为正式目录 <code>miniprogram/</code></b>，并把不依赖 AppID / 域名的部分全部做完（下表 ✅ 项）；剩下的 ⬜ 项都卡在「AppID」或「已备案域名」这两样上。</p>
 <table>
-<tr><th>#</th><th>改什么</th><th>文件 / 位置</th><th>为什么</th></tr>
-<tr><td>1</td><td>把骨架从归档恢复为正式目录</td><td><code>archive/miniprogram/</code> → <code>miniprogram/</code></td><td>让开发者工具能直接导入</td></tr>
-<tr><td>2</td><td>AppID 从游客换成真 AppID</td><td><code>miniprogram/project.config.json</code>（当前 <code>"appid":"touristappid"</code>）</td><td>游客 AppID 不能上传、不能调开放能力</td></tr>
-<tr><td>3</td><td>主题色对齐品牌绿</td><td><code>miniprogram/app.json</code>（现为旧蓝 <code>#2563eb</code> → <code>#16a34a</code>，含 tabBar 选中色）</td><td>与 Web 端一致</td></tr>
-<tr><td>4</td><td>接口地址指向备案域名</td><td><code>miniprogram/utils/api.js:14</code>（当前 <code>DEFAULT_BASE='http://127.0.0.1:8093'</code>）</td><td>真机唯一可达的地址</td></tr>
-<tr><td>5</td><td>扫码换成 <code>wx.scanCode</code></td><td>替换网页版相机扫码</td><td>守住「扫码只读、只用于查商品」的既定原则（D8）</td></tr>
-<tr><td>6</td><td>新增后端微信接口</td><td><code>server/cmd/server/main.go</code>：<code>POST /api/wx/login</code>（code2session）、<code>POST /api/wx/pay</code>（下单 + prepay_id + 签名）、<code>POST /api/wx/notify</code>（支付回调验签 + 更新订单）</td><td>AppSecret / 商户密钥只在服务端（D13）</td></tr>
-<tr><td>7</td><td>登录与身份打通</td><td>openid ↔ 现有「手机号即身份」的顾客档案（<code>customer</code> 表）</td><td>下单、等级价、地址簿全部复用现有逻辑</td></tr>
-<tr><td>8</td><td>价格规则同源</td><td><code>miniprogram/utils/rules.js</code> ↔ <code>server/internal/pricing/pricing.go</code></td><td>有效价、运费、比价防线两端口径必须一致（D24）</td></tr>
-<tr><td>9</td><td>订阅消息下发</td><td>备货完成 / 配送中 / 已送达</td><td>体验提升，顾客不用反复进小程序看</td></tr>
-<tr><td>10</td><td>手机号快速验证组件</td><td><code>getPhoneNumber</code> 替换手输手机号</td><td>少一步输入；需认证 + 按官方计费规则（以后台为准）</td></tr>
-<tr><td>11</td><td>回归测试</td><td><code>test-api</code> 62 / <code>test-pages</code> 47 / <code>test-integration</code> 21 全绿 + 真机 CDP 等价检查</td><td>沿用「页面改动必须过测试」的验收纪律</td></tr>
+<tr><th>#</th><th>改什么</th><th>文件 / 位置</th><th>状态</th></tr>
+<tr><td>1</td><td>把骨架从归档恢复为正式目录</td><td><code>archive/miniprogram/</code> → <code>miniprogram/</code></td><td>✅ 第 21 轮完成（<code>git mv</code>，28 个文件，不复制代码）</td></tr>
+<tr><td>2</td><td>AppID 从游客换成真 AppID</td><td><code>miniprogram/project.config.json</code>（当前 <code>"appid":"touristappid"</code>）</td><td>⬜ <b>等你的 AppID</b></td></tr>
+<tr><td>3</td><td>主题色对齐品牌绿</td><td><code>miniprogram/app.json</code>（旧蓝 <code>#2563eb</code> → <code>#16a34a</code>，含 tabBar 选中色）</td><td>✅ 第 21 轮完成（7 处）</td></tr>
+<tr><td>4</td><td>接口地址指向备案域名</td><td><b>已改为唯一配置点</b> <code>miniprogram/utils/config.js</code>（<code>PROD_BASE_URL</code>，<code>api.js</code> 的 <code>DEFAULT_BASE</code> 只读它）</td><td>✅ 机制完成，⬜ 只差把 <code>PROD_BASE_URL</code> 填成你的备案域名</td></tr>
+<tr><td>5</td><td>扫码换成 <code>wx.scanCode</code></td><td>首页搜索栏「扫码」→ <code>api.resolveBarcode</code> → 服务端 <code>/api/barcode/resolve</code></td><td>✅ 第 21 轮完成（<b>只读</b>：只筛商品，绝不加购 / 改库存，守 D8）</td></tr>
+<tr><td>6</td><td>新增后端微信接口</td><td><code>server/cmd/server/main.go</code>：<code>POST /api/wx/login</code>（code2session）、<code>POST /api/wx/pay</code>（下单 + prepay_id + 签名）、<code>POST /api/wx/notify</code>（支付回调验签 + 更新订单）</td><td>⬜ 等 AppID 到位后做（AppSecret / 商户密钥只在服务端，D13）</td></tr>
+<tr><td>7</td><td>登录与身份打通</td><td>openid ↔ 现有「手机号即身份」的顾客档案（<code>customer</code> 表）</td><td>⬜ 待做</td></tr>
+<tr><td>8</td><td>价格规则同源</td><td><code>miniprogram/utils/rules.js</code> ↔ <code>server/internal/pricing/pricing.go</code></td><td>✅ 口径已同源并各有测试锁死（D24：有效价 / 运费 / 比价防线）</td></tr>
+<tr><td>9</td><td>订阅消息下发</td><td>备货完成 / 配送中 / 已送达</td><td>⬜ 待做（需认证 + 模板 ID）</td></tr>
+<tr><td>10</td><td>手机号快速验证组件</td><td><code>getPhoneNumber</code> 替换手输手机号</td><td>⬜ 待做（需认证，按官方计费规则，以后台为准）</td></tr>
+<tr><td>11</td><td>回归测试</td><td><code>test-api</code> 73 / <code>test-pages</code> 57 / <code>test-integration</code> 24（原 62 / 47 / 21）</td><td>✅ 第 21 轮三套全绿；⬜ 真机验证等域名 + AppID</td></tr>
 </table>
 
 <h2>4. 你要回传给我的清单（照这个发就行）</h2>

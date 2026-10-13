@@ -76,6 +76,39 @@ Page({
     this.setData({ category: e.currentTarget.dataset.cat })
     this.setData({ products: this.applyCategory(this._all || []) })
   },
+  // 扫码找货（D8 扫码只读）：识别条码 → 查后端条码库 → 把结果填进搜索框筛出来。
+  // 绝不改库存、绝不自动加购；认不出的条码也原样填进去，让老板人工看。
+  onScan() {
+    if (typeof wx === 'undefined' || typeof wx.scanCode !== 'function') {
+      this._toast('当前环境不支持扫码')
+      return Promise.resolve(null)
+    }
+    return new Promise((resolve) => {
+      wx.scanCode({
+        onlyFromCamera: false,
+        scanType: ['barCode', 'qrCode'],
+        success: (res) => resolve(res && res.result ? String(res.result).trim() : ''),
+        fail: () => resolve('')
+      })
+    }).then((code) => {
+      if (!code) return null
+      return api
+        .resolveBarcode(code)
+        .catch(() => ({ code: code, found: false, source: 'error' }))
+        .then((hit) => {
+          const found = !!(hit && hit.found)
+          const kw = found && hit.name ? hit.name : code
+          this.setData({ keyword: kw, category: '全部' })
+          this._toast(found ? '已找到：' + hit.name : '条码未建档，可拿给老板看')
+          return this.load().then(() => hit)
+        })
+    })
+  },
+
+  _toast(title) {
+    if (typeof wx !== 'undefined' && wx.showToast) wx.showToast({ title: title, icon: 'none' })
+  },
+
   onAdd(e) {
     const code = e.currentTarget.dataset.code
     const p = (this._all || []).filter((x) => x.code === code)[0]

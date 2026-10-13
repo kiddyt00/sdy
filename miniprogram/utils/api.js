@@ -4,14 +4,15 @@
 //
 // 后端地址优先级：setBase(显式) > wx.storage[sdy_api_base] > DEFAULT_BASE
 // 开发：微信开发者工具「详情 → 本地设置」勾选「不校验合法域名」，直连本机 Go 后端 127.0.0.1:8093
-// 上线：把 DEFAULT_BASE 改成已备案的 HTTPS 域名（小程序服务器域名必须 HTTPS + 已备案）
+// 上线：**只改 utils/config.js 的 PROD_BASE_URL**（小程序服务器域名必须 HTTPS + 已备案）
 
 const store = require('./store.js')
+const config = require('./config.js')
 
 const LS_BASE_KEY = 'sdy_api_base'
 const LS_PRODUCTS_KEY = 'sdy_mp_products'
 const LS_ORDERS_KEY = 'sdy_mp_orders'
-const DEFAULT_BASE = 'http://127.0.0.1:8093'
+const DEFAULT_BASE = config.DEFAULT_BASE_URL
 const TIMEOUT_MS = 8000
 
 const state = {
@@ -309,6 +310,19 @@ function cancelOrder(id) {
   return request('POST', '/api/orders/' + encodeURIComponent(id) + '/advance', { to: 'cancelled' }).then(mapOrder)
 }
 
+// 扫码找货（**只读**，D8）：只回答「这个条码是哪个商品」，绝不改库存、绝不自动加购。
+// 在线走后端条码解析链（商品表 → 本地条码库 → 云端识别）；离线只在本地演示商品里比对。
+function resolveBarcode(code) {
+  const c = String(code == null ? '' : code).trim()
+  if (!c) return Promise.reject(new Error('条码为空'))
+  if (!state.online) {
+    const hit = LOCAL_PRODUCTS.filter((p) => String(p.code) === c)[0]
+    if (hit) return Promise.resolve({ code: c, found: true, name: hit.name, spec: hit.spec, source: 'product' })
+    return Promise.resolve({ code: c, found: false, source: 'not_found' })
+  }
+  return request('GET', '/api/barcode/resolve?code=' + encodeURIComponent(c))
+}
+
 function clearCache() {
   sdel(LS_PRODUCTS_KEY)
   sdel(LS_ORDERS_KEY)
@@ -324,6 +338,7 @@ module.exports = {
   probe: probe,
   status: status,
   listProducts: listProducts,
+  resolveBarcode: resolveBarcode,
   createOrder: createOrder,
   listOrders: listOrders,
   getOrder: getOrder,
