@@ -441,6 +441,75 @@ fresh();
   ok(!Mall.getProduct('6903333333333'), '清理测试商品完成');
 }
 
+// ============ ⑪ 库存审计 / 配送员 / 顾客备注落库（D25） ============
+section('⑪ 落库审计（D25）');
+fresh();
+{
+  // 流水字段与服务端对齐：kind / at 是新字段，type / ts 老数据仍在（页面只读 kind/at）
+  const e = Admin.adjustStock('6901234567892', 2, '整箱到货', '老板');
+  ok(e.kind === 'adjust' && e.type === 'adjust', '流水同时写 kind（服务端口径）与 type（老数据兼容）');
+  ok(typeof e.at === 'number' && e.at > 0 && e.ts === e.at, '流水带 at 毫秒时间戳（渲染用 when(at||ts)）');
+  ok(Admin.getStockLog(1).length === 1, 'getStockLog(limit) 只取最近 N 条');
+}
+{
+  // 服务端流水镜像：对齐本地库存 + 记流水；同一条（按 id）幂等
+  const before = Mall.getProduct('6901234567892').stock;
+  const entry = {
+    id: 991, at: Date.now(), ts: '2026-10-12T10:00:00+08:00', kind: 'stock_in',
+    code: '6901234567892', name: '可口可乐 330ml', unit: '罐',
+    delta: 30, before: before, after: before + 30, reason: '整箱到货', by: '老板'
+  };
+  const n0 = Admin.getStockLog().length;
+  Admin.recordStockEntry(entry);
+  ok(Mall.getProduct('6901234567892').stock === before + 30, '镜像服务端流水：本地库存对齐 after');
+  ok(Admin.getStockLog().length === n0 + 1 && Admin.getStockLog()[0].id === 991, '镜像确实记了一条流水');
+  Admin.recordStockEntry(entry);
+  ok(Admin.getStockLog().length === n0 + 1, '同一条服务端流水重复镜像不重复记（按 id 幂等）');
+  throws(() => Admin.recordStockEntry({ delta: 1 }), '流水缺少商品编码 → 拦截');
+}
+{
+  // 配送员增删与约束（离线只维护姓名清单；手机号要有后端才存得住）
+  const n0 = Admin.getCouriers().length;
+  Admin.saveCourier('阿明', '13900009999');
+  ok(Admin.getCouriers().length === n0 + 1 && Admin.getCouriers().indexOf('阿明') >= 0, '新增配送员');
+  Admin.saveCourier('阿明', '');
+  ok(Admin.getCouriers().length === n0 + 1, '重复新增不产生重名');
+  throws(() => Admin.saveCourier('  ', ''), '空姓名 → 拦截');
+  throws(() => Admin.saveCourier('一二三四五六七八九十一二三', ''), '姓名超 12 字 → 拦截');
+  throws(() => Admin.saveCourier('查无此人', '', true), '删除不存在的配送员 → 拦截');
+  Admin.saveCourier('阿明', '', true);
+  ok(Admin.getCouriers().length === n0, '删除配送员');
+  while (Admin.getCouriers().length > 1) Admin.saveCourier(Admin.getCouriers()[0], '', true);
+  throws(() => Admin.saveCourier(Admin.getCouriers()[0], '', true), '只剩一位时不许再删（没有配送员就没法派单）');
+  Admin.setCouriers(Admin.DEFAULT_COURIERS);
+  ok(Admin.getCouriers().length === 4, '恢复默认 4 人名单');
+}
+{
+  // 顾客备注：只登记过备注（没下过单、仍是零售）的顾客也要进档案
+  Admin.setCustomerNote('13500001111', '只在微信订过货', '熟客');
+  const c = Admin.getCustomers().find(x => x.phone === '13500001111');
+  ok(!!c && c.tag === '熟客' && c.tier === 'retail' && c.orderCount === 0, '只登记备注的顾客也进档案（零售、0 单）');
+  const saved = Admin.setCustomerNote('13500001111', undefined, 'VIP');
+  ok(saved.tag === 'VIP' && saved.tags === 'VIP', '标签同时写 tag 与 tags（与服务端字段对齐）');
+}
+
+{
+  // 回归（第 20 轮生产 CDP 发现的缺陷）：浏览器里顶层 const 不会成为 window 的属性，
+  // 而 sdy-api.js 的 resolveAdmin() 靠它做本地库存镜像 —— mall-admin.js 必须显式挂到 window.Admin，
+  // 否则在线改库存时「服务端改了、页面没改」，且 Node 测试注入 cfg.admin 会把这个坑掩盖掉。
+  const had = Object.prototype.hasOwnProperty.call(global, 'window');
+  const savedWin = global.window;
+  const p = require.resolve('./mall-admin.js');
+  const cached = require.cache[p];
+  delete require.cache[p];
+  global.window = {};
+  const reloaded = require('./mall-admin.js');
+  ok(global.window.Admin === reloaded && typeof reloaded.recordStockEntry === 'function',
+     'mall-admin.js 显式暴露 window.Admin（在线库存镜像的前提）');
+  if (cached) require.cache[p] = cached; else delete require.cache[p];
+  if (had) global.window = savedWin; else delete global.window;
+}
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);

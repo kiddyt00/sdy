@@ -193,6 +193,110 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		writeJSON(w, 200, p)
 	})
 
+	// 库存变更（任务池⑧，D25）：入库 / 改数 / 盘点都走这一个入口，
+	// 服务端在一个事务里改库存 + 写流水。以前在线模式只用 SetStock 盖绝对值，
+	// 「为什么改」的审计只落在浏览器里，换台设备就查不到账。
+	mux.HandleFunc("/api/stock/change", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		var in struct {
+			Code   string  `json:"code"`
+			Kind   string  `json:"kind"`
+			Qty    float64 `json:"qty"`
+			Reason string  `json:"reason"`
+			By     string  `json:"by"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		entry, err := st.ChangeStock(in.Code, in.Kind, in.Qty, in.Reason, in.By)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "entry": entry, "stock": entry.After})
+	})
+
+	// 库存流水（任务池⑧，D25）：GET /api/stocklog?limit=30，最新在前。
+	mux.HandleFunc("/api/stocklog", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		list, err := st.ListStockLog(limit)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
+	})
+
+	// 配送员名单（任务池⑧，D25）：GET 列表 / POST 新增或删除（remove=true）。
+	mux.HandleFunc("/api/couriers", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			list, err := st.ListCouriers()
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
+		case http.MethodPost:
+			var in struct {
+				Name   string `json:"name"`
+				Phone  string `json:"phone"`
+				Remove bool   `json:"remove"`
+			}
+			if !decode(w, r, &in) {
+				return
+			}
+			list, err := st.SaveCourier(in.Name, in.Phone, in.Remove)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"ok": true, "items": list, "total": len(list)})
+		default:
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+		}
+	})
+
+	// 门店抬头（任务池⑧，D25）：小票表头，跨设备要一致，所以落库。
+	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			s, err := st.GetSettings()
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, s)
+		case http.MethodPost:
+			var in struct {
+				Name    string `json:"name"`
+				Phone   string `json:"phone"`
+				Address string `json:"address"`
+				Footer  string `json:"footer"`
+			}
+			if !decode(w, r, &in) {
+				return
+			}
+			saved, err := st.SaveSettings(store.Settings{
+				Name: in.Name, Phone: in.Phone, Address: in.Address, Footer: in.Footer,
+			})
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, saved)
+		default:
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+		}
+	})
+
 	// 批量上下架（任务池⑥，D23）：POST /api/products/onsale {codes:[...], onSale:true|false}
 	mux.HandleFunc("/api/products/onsale", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -377,6 +481,29 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		saved, err := st.SetCustomerTier(in.Phone, in.Name, in.Tier)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, saved)
+	})
+
+	// 顾客备注与标签（任务池⑧，D25）：等级走上面的 /tier，这里只维护 tags/note。
+	mux.HandleFunc("/api/customers/note", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		var in struct {
+			Phone string `json:"phone"`
+			Name  string `json:"name"`
+			Tags  string `json:"tags"`
+			Note  string `json:"note"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		saved, err := st.SetCustomerNote(in.Phone, in.Name, in.Tags, in.Note)
 		if err != nil {
 			writeErr(w, err)
 			return

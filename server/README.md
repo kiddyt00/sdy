@@ -92,6 +92,13 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | DELETE | `/api/addresses/{id}?phone=` | 删除一条（不存在 `404`、编号非法 `400`）；**删掉默认地址后由最早的一条顶为默认** |
 | GET | `/api/customers` | 顾客列表（D24）：`{items:[{phone, name, tier, tags, note}], total}`，等级存 `customer.tier`（`retail` 默认 / `wholesale` / `vip`） |
 | POST | `/api/customers/tier` | 登记 / 改顾客等级（D24）：`{phone, name, tier}`，`tier` 只接受 `retail` / `wholesale` / `vip`（非法或手机号为空 → `400 参数不合法: …`）；`name` 留空保留原名；**改等级只影响之后的单**，历史订单价格是下单当时快照 |
+| POST | `/api/stock/change` | **库存变更唯一入口**（D25）：`{code, kind, qty, reason, by}`，`kind` ∈ `stock_in` / `adjust` / `stock_take`；**改库存与写 `stock_log` 在同一事务**（失败一律回滚，不留「改了库存没流水」），返回 `{ok, entry, stock}`（`stock` 就是 `entry.after`）；非法数量（入库 ≤0、改数 =0、盘点 <0、改完为负）→ `400`，商品不存在 → `404`，`kind` 不在三种之内 → `400` |
+| GET | `/api/stocklog?limit=` | 库存审计流水（D25）：`{items, total}`，按 `id` 倒序，`limit` 缺省或超过 500 都按 **500** 封顶 |
+| GET | `/api/couriers` | 配送员名单（D25）：`{items:[{name, phone}], total}`，只列 `active=1`，按 `sort` 排序 |
+| POST | `/api/couriers` | 新增 / 修改配送员（D25）：`{name, phone, remove}`；姓名必填且 ≤12 字（否则 `400`）、改不存在的 → `404`、**删到只剩一位 → `409 至少要保留一位配送员`** |
+| GET | `/api/settings` | 门店抬头（D25）：`{name, phone, address, footer}`，默认「家庭超市」/「谢谢惠顾，欢迎再来！」（与前端 `DEFAULT_STORE` 一致） |
+| POST | `/api/settings` | 保存门店抬头（D25）：店名必填 ≤20 字（否则 `400 请填写店名` / `400 店名不能超过 20 字`），票尾留空 → 回默认那句 |
+| POST | `/api/customers/note` | 顾客备注与标签（D25）：`{phone, name, tags, note}`，标签 ≤60 字、备注 ≤200 字（超长 `400`），姓名留空保留原名、**不碰等级**（等级走 `/api/customers/tier`） |
 | GET | `/api/orders?status=` | 订单列表 |
 | POST | `/api/orders` | 下单（事务内校验 → 扣库存 → 写订单，避免超卖），成功返回 `201` |
 | GET | `/api/orders/{id}` | 订单详情 |
@@ -110,7 +117,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy/server
-go test ./... -count=1        # 37 个单测
+go test ./... -count=1        # 42 个单测
 ./smoke.sh                    # 起真服务跑 HTTP 全流程
 ```
 
@@ -120,10 +127,10 @@ go test ./... -count=1        # 37 个单测
 | --- | --- | --- |
 | `server/internal/barcode` | 6 | `TestResolveProductFirst`、`TestResolveLibSecond`、`TestResolveCloudBackfill`、`TestResolveCloudNotFoundTTL`、`TestResolveCircuitBreaker`、`TestResolveEdgeCases` |
 | `server/internal/pricing` | 5 | `TestDeliveryFee`、`TestDeliveryFeeCustomConfig`、`TestCheckRetailPrice`、`TestPricingCheck`、`TestEffectivePrice` |
-| `server/internal/store` | 19 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook`、`TestProductOnSaleSemantics`、`TestOnSaleColumnMigration`、`TestCustomerTierWholesalePrice`、`TestTierColumnMigration` |
-| `server/cmd/server` | 7 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestProductOnSaleHTTPFlow`、`TestAddressHTTPFlow`、`TestAdminCleanURL`、`TestHealthzAndOptions`、`TestCustomerTierHTTPFlow` |
+| `server/internal/store` | 24 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook`、`TestProductOnSaleSemantics`、`TestOnSaleColumnMigration`、`TestCustomerTierWholesalePrice`、`TestTierColumnMigration`、**`TestStockChangeAudit`、`TestStockLogCap`、`TestCouriersPersist`、`TestStoreSettings`、`TestCustomerNote`（D25）** |
+| `server/cmd/server` | 9 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestProductOnSaleHTTPFlow`、`TestAddressHTTPFlow`、`TestAdminCleanURL`、`TestHealthzAndOptions`、`TestCustomerTierHTTPFlow`、**`TestStockChangeHTTPFlow`、`TestCourierSettingsNoteHTTPFlow`（D25）** |
 
-合计 **37 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
+合计 **42 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
 
 `./smoke.sh` 会 `go build` 一个临时二进制，用 `mktemp` 建临时库（**不碰 `server/data/sdy.db`**），起在 `127.0.0.1:8099`（`SMOKE_PORT` 可改，**默认不占用 8093**），轮询 `/healthz` 就绪后依次验证 8 项：健康检查 → 商品数 → 条码解析 → 下单 → 下单后库存 → 非法流转返回 409 → 取消回补库存 → 比价巡检，最后退出并清理进程与临时文件。实测输出以 `✅ 冒烟通过` 结束（下单示例：`6901234567892` 库存 120 → 118，取消后回到 120）。
 
@@ -153,6 +160,9 @@ go vet ./...
 - **D24 批发价与顾客等级**：`product.wholesale_price REAL NOT NULL DEFAULT 0`（**0 = 未设**）与 `customer.tier TEXT NOT NULL DEFAULT 'retail'` 都走 `ensureColumn` 幂等迁移，升级不用清库；等级白名单只有 `retail` / `wholesale` / `vip`（`pricing.ValidTier`——空串也算合法并归一成零售，`pricing.NormalizeTier('') == "retail"`）。**有效价只有一条公式**：`pricing.EffectivePrice(tier, salePrice, wholesalePrice)` = 非零售等级（`pricing.IsWholesaleTier`：`wholesale` / `vip`）**且**批发价 > 0 ? `round2(wholesalePrice)` : `round2(salePrice)`——所以「批发价 = 0」就是「这货不批发」，批发客户仍按零售价。
 - **D24 价格真源在服务端**：`GET /api/products?phone=` 用 `GetCustomerTier` 查等级、把算好的 `price` 下发给前端（信封里还带 `tier`，查不到手机号 → `retail`，`price` 不带 `omitempty`）；`CreateOrder` 在同一个事务里先 `SELECT tier FROM customer WHERE phone=?`（`ErrNoRows` → `retail`），再逐行 `SELECT name, sale_price, wholesale_price, stock, on_sale` 并用**同一个** `EffectivePrice` 算行价小计——**前端传的价格不参与结算**（与 D12「前端只经 `sdy-api.js`、规则只在服务端」同一条原则）。`SetCustomerTier(phone, name, tier)` 校验手机号非空 + 等级白名单（否则 `ErrBadInput`，文案「参数不合法: 顾客等级只能是 retail / wholesale / vip」），`name` 留空保留原名；`GetCustomerTier`/`GetCustomer`/`ListCustomers` 是只读口。**改等级只影响之后的单**：历史订单价格是下单当时的快照（同「地址快照」「小票只读投影」）。批发价**不参与零售比价防线**（防线守的是零售价，`ExcludeWholesale` 那一维不变）。
 - **`wholesale_price` 与 `img` 一样是覆盖式**：`UpsertProduct` 的 `ON CONFLICT ... SET wholesale_price=excluded.wholesale_price`，调用方漏传即清零——`web/sdy-api.js` 的每个 upsert payload 与 `deploy/seed-demo.py` 都必须带 `wholesalePrice`（种子数据里 7 款商品带了批发价）。
+- **D25 库存审计（第 20 轮）**：三张新表——`stock_log(id INTEGER PRIMARY KEY AUTOINCREMENT, at, ts, kind, code, name, unit, delta, before_qty, after_qty, reason, operator)`、`courier(name TEXT PRIMARY KEY, phone, sort, active)`、`setting(k TEXT PRIMARY KEY, v)`；`Open()` 末尾按 `setting` 里的 `seed:courier` 标记**只种一次**默认配送员（老张 / 小李 / 阿强 / 小美，事务 + `INSERT ... ON CONFLICT(name) DO NOTHING`，改过就不覆盖）。`ChangeStock` 是**唯一入口**：一个事务里 `SELECT name, unit, stock FROM product WHERE code=?` → 算 `after`（`stock_take` 直接用实盘数，其余 `before + qty`）→ `after < 0` 直接拒 → `UPDATE product SET stock=?, sync_status='pending', updated_at=?` → `INSERT INTO stock_log`（`delta = after - before`、`at` 用 UnixMilli、`ts` 用 RFC3339）→ 同事务裁剪**只留最近 500 条** → `Commit`；所有失败路径 `defer Rollback`，所以**不会出现「库存变了、没流水」**。`SetStock`（老接口）保留但折算成 `adjust` + `reason="直接改数"`，同值不写流水。`ListStockLog(limit)` 倒序（`limit ≤ 0` 或 `> 500` 都按 500）。
+- **D25 门店抬头 / 配送员 / 顾客备注**：`GetSettings` / `SaveSettings` 用 `setting` 表的 `store.*` 前缀键（店名必填 ≤20 字、`footer` 留空回默认那句）；`SaveCourier(name, phone, remove)` 校验姓名必填 ≤12 字、删除用 `COUNT(*) <= 1` 拦「至少要保留一位配送员」（`ErrConflict` → `409`）、新增走 `sort = COALESCE(MAX(sort), -1) + 1` 且 `ON CONFLICT(name) DO UPDATE SET phone=excluded.phone, active=1`（软删再恢复）；`SetCustomerNote(phone, name, tags, note)` 只动备注与标签（`tags ≤ 60` / `note ≤ 200` rune、姓名留空保留原名、**不动 `tier`**）。
+
 - **D8 扫码只读**：`/api/barcode/resolve` 只识别、不写价格库存；库存只能通过 `/api/products/stock` 手动改。
 - **D6 双库**：建档（`POST /api/products`）会**顺带把条码写进字典层**（`source=product`），所以建过档的码永久走本地命中，不再花云端配额。字典层的命中计数不会被 upsert 重置。
 
@@ -191,7 +201,7 @@ cp .env.example .env         # 填 BARCODE_APPCODE 等（.env 不入库）
 
 - [`../README.md`](../README.md) — 仓库总览、里程碑状态、测试矩阵
 - [`../开发计划.html`](../开发计划.html) — 路线图（M4 后端、M6 部署）
-- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账（D6 双库、D8 扫码只读、D12 单一真源、D18 收货地址簿、D23 商品上下架、D24 批发价与顾客等级等）
+- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账（D6 双库、D8 扫码只读、D12 单一真源、D18 收货地址簿、D23 商品上下架、D24 批发价与顾客等级、D25 消灭 localStorage 单点与库存审计等）
 - [`../独立小程序商城可行性分析与架构方案.html`](../独立小程序商城可行性分析与架构方案.html) — 架构与实现现状
 - [`../web/README.md`](../web/README.md) — 商城 Web 端（`web/sdy-api.js` 是它的数据通道）
 - [`../barcode-demo/README.md`](../barcode-demo/README.md) — 扫码台（`barcode-demo/bd-api.js` 是它的数据通道）

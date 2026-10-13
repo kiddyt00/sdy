@@ -13,6 +13,10 @@
     2) 补 3 条收货地址簿（已存在同手机号同地址则跳过）；
     3) 库里没有订单时（或加 --force-orders）造 6 张订单并把状态推到
        已完成 / 待自提(ready) / 配送中 / 待备货 / 已取消，用于验证报表与流转。
+    3.5) 库存审计 / 配送员 / 门店抬头（D25，原本只存在浏览器 localStorage）：
+       没有流水时补 3 笔（入库 / 改数 / 盘点，带 reason + by）；
+       配送员名单为空时补 4 位；门店抬头仍是默认「家庭超市」时改成演示店名。
+       这三样都是「只在空/默认时填」，重复执行不会覆盖你改过的值。
     4) 打印一份核对摘要（商品数 / 订单数 / 营业额等）。
 
 为什么单独留一个脚本：上一轮演示数据是手敲 curl 灌的，没有任何可复现来源，
@@ -77,6 +81,22 @@ ADDRESSES = [
     ("13900002222", "李叔", "建设街 22 号 1 单元 102", False),
     ("13700003333", "张婶", "光明巷 8 号", False),
 ]
+
+# 配送员名单（D25，落库到 courier 表）：后端首次启动也会自己种子这 4 位，这里只是兜底
+SEED_COURIERS = [
+    ("老张", "13800005001"),
+    ("小李", "13800005002"),
+    ("阿强", "13800005003"),
+    ("小美", "13800005004"),
+]
+
+# 门店抬头（D25，落库到 setting 表）：只在库里还是默认「家庭超市」时写入
+STORE = {
+    "name": "小邻里超市",
+    "phone": "0591-88888888",
+    "address": "福建省福州市水东洋便利店",
+    "footer": "谢谢惠顾，欢迎再来！",
+}
 
 # (name, phone, address, deliveryType, [(商品名, 数量)], 目标状态链)
 ORDERS = [
@@ -202,6 +222,63 @@ def main():
             made += 1
         print("✅ 订单新增：%d 张" % made)
 
+    # 3.5) 库存审计 / 配送员 / 门店抬头（D25）：把原本只活在浏览器 localStorage 的三样搬进库
+    st, slog = call(base, "GET", "/api/stocklog?limit=500")
+    log_total = slog.get("total") or 0
+    if log_total == 0:
+        coke = by_name.get("可口可乐")
+        if not coke:
+            print("  ⚠️ 找不到可口可乐，跳过库存流水演示")
+        else:
+            code = coke["code"]
+            for (kind, qty, reason, by) in [
+                ("stock_in", 24, "到货入库（整箱）", "老板"),
+                ("adjust", -2, "破损报废", "店员小王"),
+            ]:
+                st, body = call(base, "POST", "/api/stock/change",
+                                {"code": code, "kind": kind, "qty": qty, "reason": reason, "by": by})
+                if not (200 <= st < 300):
+                    print("  ⚠️ 库存流水（%s）失败：%s" % (kind, body.get("error")))
+            st, one = call(base, "GET", "/api/products?keyword=" + code)
+            cur = ((one.get("items") or [{}])[0]).get("stock", 0)
+            st, body = call(base, "POST", "/api/stock/change",
+                            {"code": code, "kind": "stock_take", "qty": cur,
+                             "reason": "月底盘点校准", "by": "老板"})
+            if not (200 <= st < 300):
+                print("  ⚠️ 库存盘点失败：%s" % body.get("error"))
+            st, slog = call(base, "GET", "/api/stocklog?limit=500")
+            log_total = slog.get("total") or 0
+    else:
+        print("ℹ️ 库里已有 %d 条库存流水，跳过造流水" % log_total)
+    latest = (slog.get("items") or [{}])[0]
+    print("✅ 库存流水：%d 条（最新：%s %s %s，%s）"
+          % (log_total, latest.get("kind", "-"), latest.get("name", "-"),
+             ("%+g" % latest.get("delta", 0)), latest.get("reason", "")))
+
+    st, couriers = call(base, "GET", "/api/couriers")
+    cur_couriers = couriers.get("items") or []
+    if not cur_couriers:
+        for (cname, cphone) in SEED_COURIERS:
+            st, body = call(base, "POST", "/api/couriers", {"name": cname, "phone": cphone})
+            if not (200 <= st < 300):
+                print("  ⚠️ 配送员 %s 失败：%s" % (cname, body.get("error")))
+        st, couriers = call(base, "GET", "/api/couriers")
+        cur_couriers = couriers.get("items") or []
+    print("✅ 配送员：%d 位（%s）"
+          % (len(cur_couriers), "、".join(c.get("name", "") for c in cur_couriers)))
+
+    st, store = call(base, "GET", "/api/settings")
+    if (store.get("name") or "").strip() in ("", "家庭超市"):
+        st, body = call(base, "POST", "/api/settings", STORE)
+        if 200 <= st < 300:
+            store = body
+        else:
+            print("  ⚠️ 门店抬头保存失败：%s" % body.get("error"))
+    else:
+        print("ℹ️ 门店抬头已是「%s」，保留不改" % store.get("name"))
+    print("✅ 门店抬头：%s（%s，页脚：%s）"
+          % (store.get("name", ""), store.get("phone", ""), store.get("footer", "")))
+
     # 4) 核对摘要
     st, olist = call(base, "GET", "/api/orders")
     orders = olist.get("items", []) if isinstance(olist, dict) else []
@@ -218,6 +295,8 @@ def main():
     cust_items = custs.get("items", []) if isinstance(custs, dict) else []
     print("   顾客 %d 位（批发 / 白名单 %d 位）" % (len(cust_items), len([c for c in cust_items if c.get("tier") in ("wholesale", "vip")])))
     print("   带批发价商品 %d 款" % len([p for p in products if (p.get("wholesalePrice") or 0) > 0]))
+    print("   库存流水 %d 条 / 配送员 %d 位 / 门店抬头 %s"
+          % (log_total, len(cur_couriers), store.get("name", "")))
     for o in orders:
         print("   %-22s %-10s ¥%-7.2f %s" % (o["id"], o["status"], o.get("total", 0), o.get("customerName", "")))
     return 0

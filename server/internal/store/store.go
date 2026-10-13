@@ -202,6 +202,34 @@ var schemaStmts = []string{
 		diff INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT ''
 	)`,
+	// 任务池⑧ / D25：库存流水落库。库存一律手动调整（D8），所以每次变更都要能回答
+	// 「谁、什么时候、为什么、从多少到多少」——以前这份审计只存在浏览器 localStorage 里。
+	`CREATE TABLE IF NOT EXISTS stock_log (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		at INTEGER NOT NULL DEFAULT 0,
+		ts TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL DEFAULT 'adjust',
+		code TEXT NOT NULL DEFAULT '',
+		name TEXT NOT NULL DEFAULT '',
+		unit TEXT NOT NULL DEFAULT '',
+		delta REAL NOT NULL DEFAULT 0,
+		before_qty REAL NOT NULL DEFAULT 0,
+		after_qty REAL NOT NULL DEFAULT 0,
+		reason TEXT NOT NULL DEFAULT '',
+		operator TEXT NOT NULL DEFAULT ''
+	)`,
+	// 任务池⑧ / D25：配送员名单落库（原来只在 localStorage：换台设备就没人可派单）。
+	`CREATE TABLE IF NOT EXISTS courier (
+		name TEXT PRIMARY KEY,
+		phone TEXT NOT NULL DEFAULT '',
+		sort INTEGER NOT NULL DEFAULT 0,
+		active INTEGER NOT NULL DEFAULT 1
+	)`,
+	// 任务池⑧ / D25：门店抬头等键值配置落库（小票表头，跨设备要一致）。
+	`CREATE TABLE IF NOT EXISTS setting (
+		k TEXT PRIMARY KEY,
+		v TEXT NOT NULL DEFAULT ''
+	)`,
 }
 
 // Open 打开（或创建）数据库并建表。
@@ -240,7 +268,43 @@ func Open(path string, cfg pricing.Config) (*Store, error) {
 			return nil, err
 		}
 	}
+	// 任务池⑧（D25）：配送员名单首次给一份 4 人雏形种子（只种一次，删空后不复活）。
+	if err := s.seedCouriers(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// defaultCouriers 4 人配送雏形，与前端 Admin.DEFAULT_COURIERS 同一份名单。
+var defaultCouriers = []Courier{{Name: "老张"}, {Name: "小李"}, {Name: "阿强"}, {Name: "小美"}}
+
+// seedCouriers 首次启动灌入默认配送员。用 setting 里的标记位保证「只种一次」：
+// 老板把名单删空后重启服务，不会又冒出来。
+func (s *Store) seedCouriers() error {
+	var v string
+	err := s.db.QueryRow(`SELECT v FROM setting WHERE k='seed:courier'`).Scan(&v)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("读取初始化标记失败: %w", err)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("初始化配送员失败: %w", err)
+	}
+	defer tx.Rollback()
+	for i, c := range defaultCouriers {
+		if _, err := tx.Exec(`INSERT INTO courier (name,phone,sort,active) VALUES (?,?,?,1)
+			ON CONFLICT(name) DO NOTHING`, c.Name, c.Phone, i); err != nil {
+			return fmt.Errorf("写入默认配送员失败: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO setting (k,v) VALUES ('seed:courier','1')`); err != nil {
+		return fmt.Errorf("写入初始化标记失败: %w", err)
+	}
+	return tx.Commit()
 }
 
 // ensureColumn 幂等补列（老库升级用）：列已存在则什么都不做。
@@ -404,20 +468,160 @@ func (s *Store) listProducts(keyword, category string, onSaleOnly bool) ([]Produ
 	return out, rows.Err()
 }
 
+// 库存变更类型（stock_log.kind，任务池⑧ / D25）。
+const (
+	StockKindIn     = "stock_in"   // 入库（qty 为入库正数）
+	StockKindAdjust = "adjust"     // 直接改数（qty 为增减量，可正可负）
+	StockKindTake   = "stock_take" // 盘点（qty 为实盘数）
+	maxStockLog     = 500          // 流水只留最近 500 条，免得库无限长大
+)
+
+// StockLog 一条库存流水（任务池⑧ / D25）。
+// D8 规定库存一律手动调整，所以每一次变更都要留下「谁、为什么、从多少到多少」。
+type StockLog struct {
+	ID     int64   `json:"id"`
+	At     int64   `json:"at"`   // epoch 毫秒（前端时间显示用）
+	TS     string  `json:"ts"`   // RFC3339，便于阅读与以后导出
+	Kind   string  `json:"kind"` // stock_in / adjust / stock_take
+	Code   string  `json:"code"`
+	Name   string  `json:"name"`
+	Unit   string  `json:"unit"`
+	Delta  float64 `json:"delta"`
+	Before float64 `json:"before"`
+	After  float64 `json:"after"`
+	Reason string  `json:"reason"`
+	By     string  `json:"by"`
+}
+
 // SetStock 直接改数（D8：库存一律手动调整，扫码只读）。
+// 值为绝对值；为不留「无审计的库存变更」，它同样写一条流水（D25）。
 func (s *Store) SetStock(code string, stock float64) (Product, error) {
+	if math.IsNaN(stock) || math.IsInf(stock, 0) {
+		return Product{}, fmt.Errorf("%w: 库存数量无效", ErrBadInput)
+	}
 	if stock < 0 {
 		return Product{}, fmt.Errorf("%w: 库存不能为负", ErrBadInput)
 	}
-	res, err := s.db.Exec(`UPDATE product SET stock=?, sync_status='pending', updated_at=? WHERE code=?`,
-		stock, nowStr(), code)
+	cur, err := s.GetProduct(code)
 	if err != nil {
 		return Product{}, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return Product{}, fmt.Errorf("%w: 商品 %s", ErrNotFound, code)
+	if cur.Stock == stock {
+		return cur, nil // 没变就不写流水，免得刷一堆 0 变更
+	}
+	if _, err := s.ChangeStock(code, StockKindAdjust, stock-cur.Stock, "直接改数", "老板"); err != nil {
+		return Product{}, err
 	}
 	return s.GetProduct(code)
+}
+
+// ChangeStock 库存变更的**唯一入口**：一个事务里改 product.stock + 写 stock_log。
+// 库存为负、商品不存在、数量无效都在提交前拦下，不会留下「改了库存却没流水」的中间态。
+func (s *Store) ChangeStock(code, kind string, qty float64, reason, by string) (StockLog, error) {
+	code = strings.TrimSpace(code)
+	kind = strings.TrimSpace(kind)
+	reason = strings.TrimSpace(reason)
+	by = strings.TrimSpace(by)
+	if code == "" {
+		return StockLog{}, fmt.Errorf("%w: 商品条码不能为空", ErrBadInput)
+	}
+	if math.IsNaN(qty) || math.IsInf(qty, 0) {
+		return StockLog{}, fmt.Errorf("%w: 变更数量无效", ErrBadInput)
+	}
+	switch kind {
+	case StockKindIn:
+		if qty <= 0 {
+			return StockLog{}, fmt.Errorf("%w: 入库数量必须为正数", ErrBadInput)
+		}
+	case StockKindAdjust:
+		if qty == 0 {
+			return StockLog{}, fmt.Errorf("%w: 改数数量不能为 0", ErrBadInput)
+		}
+	case StockKindTake:
+		if qty < 0 {
+			return StockLog{}, fmt.Errorf("%w: 实盘数量不能为负", ErrBadInput)
+		}
+	default:
+		return StockLog{}, fmt.Errorf("%w: 库存操作类型只能是 stock_in / adjust / stock_take", ErrBadInput)
+	}
+	if by == "" {
+		by = "老板"
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return StockLog{}, fmt.Errorf("开启库存事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	var (
+		name, unit string
+		before     float64
+	)
+	err = tx.QueryRow(`SELECT name, unit, stock FROM product WHERE code=?`, code).Scan(&name, &unit, &before)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StockLog{}, fmt.Errorf("%w: 商品 %s", ErrNotFound, code)
+	}
+	if err != nil {
+		return StockLog{}, fmt.Errorf("读取商品失败: %w", err)
+	}
+	after := before + qty // stock_in / adjust：qty 是增量
+	if kind == StockKindTake {
+		after = qty // 盘点：qty 是实盘数
+	}
+	if after < 0 {
+		return StockLog{}, fmt.Errorf("%w: 库存不能为负（当前 %v %s）", ErrBadInput, before, unit)
+	}
+	if _, err := tx.Exec(`UPDATE product SET stock=?, sync_status='pending', updated_at=? WHERE code=?`,
+		after, nowStr(), code); err != nil {
+		return StockLog{}, fmt.Errorf("更新库存失败: %w", err)
+	}
+	now := time.Now()
+	res, err := tx.Exec(`INSERT INTO stock_log
+		(at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		now.UnixMilli(), now.Format(time.RFC3339), kind, code, name, unit,
+		after-before, before, after, reason, by)
+	if err != nil {
+		return StockLog{}, fmt.Errorf("写入库存流水失败: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	// 只保留最近 maxStockLog 条（审计足够用，库不会无限长大）。
+	if _, err := tx.Exec(`DELETE FROM stock_log WHERE id NOT IN
+		(SELECT id FROM stock_log ORDER BY id DESC LIMIT ?)`, maxStockLog); err != nil {
+		return StockLog{}, fmt.Errorf("清理库存流水失败: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return StockLog{}, fmt.Errorf("提交库存事务失败: %w", err)
+	}
+	return StockLog{
+		ID: id, At: now.UnixMilli(), TS: now.Format(time.RFC3339), Kind: kind,
+		Code: code, Name: name, Unit: unit,
+		Delta: round2(after - before), Before: before, After: after,
+		Reason: reason, By: by,
+	}, nil
+}
+
+// ListStockLog 最近的库存流水，最新在前（limit ≤ 0 或超过上限时取 500）。
+func (s *Store) ListStockLog(limit int) ([]StockLog, error) {
+	if limit <= 0 || limit > maxStockLog {
+		limit = maxStockLog
+	}
+	rows, err := s.db.Query(`SELECT id,at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator
+		FROM stock_log ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("查询库存流水失败: %w", err)
+	}
+	defer rows.Close()
+	out := []StockLog{}
+	for rows.Next() {
+		var e StockLog
+		if err := rows.Scan(&e.ID, &e.At, &e.TS, &e.Kind, &e.Code, &e.Name, &e.Unit,
+			&e.Delta, &e.Before, &e.After, &e.Reason, &e.By); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // DeleteProduct 删除商品档案。
@@ -896,6 +1100,169 @@ func (s *Store) ListCustomers() ([]Customer, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// SetCustomerNote 维护顾客备注与标签（任务池⑧ / D25；等级另走 SetCustomerTier）。
+// 手机号即身份，查无此人则建档；姓名留空时保留原名。
+func (s *Store) SetCustomerNote(phone, name, tags, note string) (Customer, error) {
+	phone = strings.TrimSpace(phone)
+	name = strings.TrimSpace(name)
+	tags = strings.TrimSpace(tags)
+	note = strings.TrimSpace(note)
+	if phone == "" {
+		return Customer{}, fmt.Errorf("%w: 手机号不能为空", ErrBadInput)
+	}
+	if len([]rune(tags)) > 60 {
+		return Customer{}, fmt.Errorf("%w: 标签不能超过 60 字", ErrBadInput)
+	}
+	if len([]rune(note)) > 200 {
+		return Customer{}, fmt.Errorf("%w: 备注不能超过 200 字", ErrBadInput)
+	}
+	if _, err := s.db.Exec(`INSERT INTO customer (phone,name,tags,note,created_at) VALUES (?,?,?,?,?)
+		ON CONFLICT(phone) DO UPDATE SET tags=excluded.tags, note=excluded.note,
+			name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE customer.name END`,
+		phone, name, tags, note, nowStr()); err != nil {
+		return Customer{}, fmt.Errorf("写入顾客备注失败: %w", err)
+	}
+	return s.GetCustomer(phone)
+}
+
+// Courier 配送员（任务池⑧ / D25）：原来只存在浏览器 localStorage，换台设备就没人可派单。
+type Courier struct {
+	Name  string `json:"name"`
+	Phone string `json:"phone,omitempty"`
+}
+
+// ListCouriers 配送员名单（按登记顺序）。
+func (s *Store) ListCouriers() ([]Courier, error) {
+	rows, err := s.db.Query(`SELECT name,phone FROM courier WHERE active=1 ORDER BY sort, name`)
+	if err != nil {
+		return nil, fmt.Errorf("查询配送员失败: %w", err)
+	}
+	defer rows.Close()
+	out := []Courier{}
+	for rows.Next() {
+		var c Courier
+		if err := rows.Scan(&c.Name, &c.Phone); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SaveCourier 新增/修改配送员；remove=true 时删除。返回最新名单。
+// 约束：姓名必填且 ≤ 12 字；至少保留一位（没有配送员就没法给配送单派单）。
+func (s *Store) SaveCourier(name, phone string, remove bool) ([]Courier, error) {
+	name = strings.TrimSpace(name)
+	phone = strings.TrimSpace(phone)
+	if name == "" {
+		return nil, fmt.Errorf("%w: 配送员姓名不能为空", ErrBadInput)
+	}
+	if len([]rune(name)) > 12 {
+		return nil, fmt.Errorf("%w: 配送员姓名不能超过 12 字", ErrBadInput)
+	}
+	if remove {
+		var n int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM courier WHERE active=1`).Scan(&n); err != nil {
+			return nil, fmt.Errorf("查询配送员失败: %w", err)
+		}
+		if n <= 1 {
+			return nil, fmt.Errorf("%w: 至少要保留一位配送员", ErrConflict)
+		}
+		res, err := s.db.Exec(`DELETE FROM courier WHERE name=?`, name)
+		if err != nil {
+			return nil, fmt.Errorf("删除配送员失败: %w", err)
+		}
+		if k, _ := res.RowsAffected(); k == 0 {
+			return nil, fmt.Errorf("%w: 配送员 %s", ErrNotFound, name)
+		}
+		return s.ListCouriers()
+	}
+	if _, err := s.db.Exec(`INSERT INTO courier (name,phone,sort,active)
+		VALUES (?,?,COALESCE((SELECT MAX(sort) FROM courier),-1)+1,1)
+		ON CONFLICT(name) DO UPDATE SET phone=excluded.phone, active=1`, name, phone); err != nil {
+		return nil, fmt.Errorf("写入配送员失败: %w", err)
+	}
+	return s.ListCouriers()
+}
+
+// Settings 门店抬头（小票表头）。原来只存在浏览器 localStorage，现在落库（D25）。
+type Settings struct {
+	Name    string `json:"name"`
+	Phone   string `json:"phone"`
+	Address string `json:"address"`
+	Footer  string `json:"footer"`
+}
+
+// defaultSettings 门店抬头默认值，与前端 Admin.DEFAULT_STORE 保持一致。
+var defaultSettings = Settings{Name: "家庭超市", Footer: "谢谢惠顾，欢迎再来！"}
+
+// GetSettings 读门店抬头；一项都没存过就用默认值。
+func (s *Store) GetSettings() (Settings, error) {
+	out := defaultSettings
+	rows, err := s.db.Query(`SELECT k,v FROM setting WHERE k LIKE 'store.%'`)
+	if err != nil {
+		return out, fmt.Errorf("查询门店设置失败: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return out, err
+		}
+		switch k {
+		case "store.name":
+			if v != "" {
+				out.Name = v
+			}
+		case "store.phone":
+			out.Phone = v
+		case "store.address":
+			out.Address = v
+		case "store.footer":
+			if v != "" {
+				out.Footer = v
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
+// SaveSettings 保存门店抬头。店名必填且 ≤ 20 字（小票表头必须有店名），
+// 页脚留空则回到默认那句（与前端 setStoreInfo 同规则）。
+func (s *Store) SaveSettings(in Settings) (Settings, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	in.Phone = strings.TrimSpace(in.Phone)
+	in.Address = strings.TrimSpace(in.Address)
+	in.Footer = strings.TrimSpace(in.Footer)
+	if in.Name == "" {
+		return Settings{}, fmt.Errorf("%w: 请填写店名", ErrBadInput)
+	}
+	if len([]rune(in.Name)) > 20 {
+		return Settings{}, fmt.Errorf("%w: 店名不能超过 20 字", ErrBadInput)
+	}
+	if in.Footer == "" {
+		in.Footer = defaultSettings.Footer
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Settings{}, fmt.Errorf("开启设置事务失败: %w", err)
+	}
+	defer tx.Rollback()
+	for _, kv := range [][2]string{
+		{"store.name", in.Name}, {"store.phone", in.Phone},
+		{"store.address", in.Address}, {"store.footer", in.Footer},
+	} {
+		if _, err := tx.Exec(`INSERT INTO setting (k,v) VALUES (?,?)
+			ON CONFLICT(k) DO UPDATE SET v=excluded.v`, kv[0], kv[1]); err != nil {
+			return Settings{}, fmt.Errorf("写入门店设置失败: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Settings{}, fmt.Errorf("提交设置事务失败: %w", err)
+	}
+	return s.GetSettings()
 }
 
 // ListAddresses 列出某手机号的收货地址簿，默认地址排最前（D18）。

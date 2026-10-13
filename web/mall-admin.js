@@ -43,18 +43,58 @@ const Admin = (() => {
     MallCore._save(KEYS.couriers, list);
     return list;
   }
+  // 新增 / 删除配送员（任务池⑧ / D25）：在线模式真源在服务端；
+  // 离线模式只能维护姓名清单（手机号要有后端才存得住），规则与服务端保持一致。
+  function saveCourier(name, phone, remove) {
+    const n = String(name == null ? '' : name).trim();
+    if (!n) throw new Error('配送员姓名不能为空');
+    if (n.length > 12) throw new Error('配送员姓名不能超过 12 字');
+    const list = getCouriers();
+    if (remove) {
+      if (list.length <= 1) throw new Error('至少要保留一位配送员');
+      const i = list.indexOf(n);
+      if (i < 0) throw new Error('配送员不存在：' + n);
+      list.splice(i, 1);
+      return setCouriers(list);
+    }
+    if (list.indexOf(n) < 0) list.push(n);
+    return setCouriers(list);
+  }
 
   // ---------------- 库存流水 ----------------
-  function getStockLog() {
+  // 字段与服务端对齐（D25）：服务端用 kind / at，本地历史数据用 type / ts，
+  // 这里两个都写（值相同），页面只读 kind / at，老流水也不会读不出来。
+  function getStockLog(limit) {
     const l = MallCore._load(KEYS.stockLog, []);
-    return Array.isArray(l) ? l : [];
+    const arr = Array.isArray(l) ? l : [];
+    const n = Number(limit);
+    return n > 0 ? arr.slice(0, n) : arr;
   }
   function logStock(entry) {
     const l = getStockLog();
-    l.unshift(Object.assign({ ts: Date.now() }, entry));
+    const e = Object.assign({ ts: Date.now() }, entry);
+    e.kind = e.kind || e.type || 'adjust';
+    e.type = e.kind;
+    if (e.at == null) e.at = e.ts;
+    l.unshift(e);
     if (l.length > 500) l.length = 500;
     MallCore._save(KEYS.stockLog, l);
     return l[0];
+  }
+  // 把服务端返回的流水镜像到本地（在线模式库存真源在服务端，本地只做显示镜像）。
+  // 幂等：同一条（有 id）不重复记；顺带把商品库存对齐成服务端的 after。
+  function recordStockEntry(entry) {
+    const e = entry || {};
+    if (!e.code) throw new Error('流水缺少商品编码');
+    if (e.after != null) {
+      const list = MallCore.loadCatalog();
+      const p = list.find(x => x.code === e.code);
+      if (p) { p.stock = e.after; MallCore.saveCatalog(list); }
+    }
+    const l = getStockLog();
+    if (e.id != null && l.some(x => x.id === e.id)) return l[0];
+    const at = e.at || Date.now();
+    return logStock(Object.assign({}, e, { at: at, ts: e.ts != null ? e.ts : at }));
   }
 
   // 改库存的公共步骤：校验 → 写 bd_products → 记流水
@@ -145,25 +185,27 @@ const Admin = (() => {
       c.lastOrderAt = Math.max(c.lastOrderAt, o.createdAt);
     });
     const notes = MallCore._load(KEYS.customerNotes, {}) || {};
+    const noteOf = n => ({ note: n.note || '', tag: n.tag || n.tags || '', tags: n.tags || n.tag || '', tier: n.tier || 'retail' });
     const list = Object.keys(map).map(k => {
       const c = map[k];
       const n = notes[c.phone] || {};
-      return Object.assign({}, c, { note: n.note || '', tag: n.tag || '', tier: n.tier || 'retail' });
+      return Object.assign({}, c, noteOf(n));
     });
-    // 只登记了等级、还没下过单的顾客（批发客户常是先登记手机号再拿货）也要出现在档案里
+    // 只登记过（等级 / 标签 / 备注）、还没下过单的顾客也要出现在档案里
+    // （批发客户、熟客常是先登记手机号再拿货）
     Object.keys(notes).forEach(ph => {
       if (!ph || map[ph]) return;
       const n = notes[ph] || {};
-      if (!n.tier || n.tier === 'retail') return;
-      list.push({
+      if ((!n.tier || n.tier === 'retail') && !n.tag && !n.tags && !n.note) return;
+      list.push(Object.assign({
         name: n.name || '', phone: ph, address: '', orderCount: 0, totalSpent: 0,
-        firstOrderAt: 0, lastOrderAt: 0, note: n.note || '', tag: n.tag || '', tier: n.tier
-      });
+        firstOrderAt: 0, lastOrderAt: 0
+      }, noteOf(n)));
     });
     list.sort((a, b) => b.lastOrderAt - a.lastOrderAt);
     return list;
   }
-  // 在线：把后端顾客等级拉回本地档案（页面照旧读本地）
+  // 在线：把后端顾客档案（等级 / 姓名 / 标签 / 备注）拉回本地镜像（页面照旧读本地）
   async function refreshCustomers() {
     if (typeof SdyApi === 'undefined' || !SdyApi.on()) return getCustomers();
     const items = await SdyApi.listCustomers();
@@ -173,7 +215,9 @@ const Admin = (() => {
       if (!ph) return;
       if (!notes[ph]) notes[ph] = {};
       notes[ph].tier = validTier(c.tier) ? c.tier : 'retail';
-      if (c.name && !notes[ph].name) notes[ph].name = c.name;
+      if (c.name) notes[ph].name = String(c.name).trim();
+      if (c.tags != null) { notes[ph].tags = String(c.tags); notes[ph].tag = String(c.tags); }
+      if (c.note != null) notes[ph].note = String(c.note);
     });
     MallCore._save(KEYS.customerNotes, notes);
     return getCustomers();
@@ -196,9 +240,25 @@ const Admin = (() => {
     const notes = MallCore._load(KEYS.customerNotes, {}) || {};
     if (!notes[phone]) notes[phone] = {};
     if (note !== undefined) notes[phone].note = note;
-    if (tag !== undefined) notes[phone].tag = tag;
+    if (tag !== undefined) { notes[phone].tag = tag; notes[phone].tags = tag; }
     MallCore._save(KEYS.customerNotes, notes);
     return notes[phone];
+  }
+  // 备注 / 标签（任务池⑧ / D25）：在线走后端（真源，换台设备也查得到），成功后同步本地；离线只改本地。
+  async function saveCustomerNote(phone, name, tags, note) {
+    const ph = String(phone == null ? '' : phone).trim();
+    if (!ph) throw new Error('手机号不能为空');
+    const t = String(tags == null ? '' : tags).trim();
+    const nt = String(note == null ? '' : note).trim();
+    if (t.length > 60) throw new Error('标签不能超过 60 字');
+    if (nt.length > 200) throw new Error('备注不能超过 200 字');
+    if (typeof SdyApi !== 'undefined' && SdyApi.on()) await SdyApi.setCustomerNote(ph, name || '', t, nt);
+    const notes = MallCore._load(KEYS.customerNotes, {}) || {};
+    if (!notes[ph]) notes[ph] = {};
+    notes[ph].tag = t; notes[ph].tags = t; notes[ph].note = nt;
+    if (name) notes[ph].name = String(name).trim();
+    MallCore._save(KEYS.customerNotes, notes);
+    return notes[ph];
   }
 
   // ---------------- 商品档案（建档 / 编辑 / 删除 · 任务池①） ----------------
@@ -812,8 +872,15 @@ const Admin = (() => {
     tierLabel: tierLabel,
     validTier: validTier,
     refreshCustomers: refreshCustomers,
-    setTier: setTier
+    setTier: setTier,
+    saveCustomerNote: saveCustomerNote,
+    saveCourier: saveCourier,
+    recordStockEntry: recordStockEntry
   };
 })();
+
+// 顶层 const 不会成为 window 的属性，而 sdy-api.js 的 resolveAdmin() 需要拿到它做本地镜像：
+// 显式挂到 window 上（Node 测试里 typeof window === 'undefined'，不受影响）。
+if (typeof window !== 'undefined') window.Admin = Admin;
 
 if (typeof module !== 'undefined' && module.exports) module.exports = Admin;

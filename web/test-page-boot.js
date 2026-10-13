@@ -51,7 +51,7 @@ function makeEnv(opts) {
   global.window = window;
   global.fetch = fetchImpl;
   SdyApi._resetForTest();
-  SdyApi.configure({ fetchImpl: fetchImpl, mall: Mall, timeoutMs: 300, base: (opts && opts.base) || '' });
+  SdyApi.configure({ fetchImpl: fetchImpl, mall: Mall, admin: Admin, timeoutMs: 300, base: (opts && opts.base) || '' });
 
   const sandbox = {
     console: console, setTimeout: setTimeout, clearTimeout: clearTimeout, AbortController: AbortController,
@@ -657,6 +657,104 @@ const online = {
     ok(Admin.getCustomers().find(c => c.phone === '13800001111').tier === 'vip', '改等级为白名单生效');
     ok(aenv.els.custList.innerHTML.indexOf('白名单价') >= 0, '卡片徽标跟着变成「白名单价」');
     ok(aenv.els.toast.textContent.indexOf('白名单') >= 0, '提示「下次下单按新等级算价」：' + aenv.els.toast.textContent.slice(0, 40));
+  }
+
+  /* ---------- 管理端：库存审计 / 配送员 / 门店抬头（D25） ---------- */
+  section('⑫ 库存审计 / 配送员 / 门店抬头（任务池⑧ / D25）');
+  {
+    const calls = [];
+    const fixedAt = 1760000000000;
+    const fetch25 = async (url, opts) => {
+      const p = String(url).replace(/^https?:\/\/[^/]+/, '');
+      const method = (opts && opts.method) || 'GET';
+      let body = null;
+      if (opts && opts.body) { try { body = JSON.parse(opts.body); } catch (e) { body = opts.body; } }
+      calls.push({ method: method, path: p, body: body });
+      const replies = {
+        'GET /healthz': { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true },
+        'GET /api/products': { total: 1, items: [
+          { code: '6901234567892', name: '可口可乐', spec: '330ml 罐装', category: '饮料', salePrice: 2.5, wholesalePrice: 2.2, price: 2.5, costPrice: 1.8, refPrice: 3, unit: '罐', stock: 10, syncStatus: 'synced' }] },
+        'GET /api/orders': { total: 0, items: [] },
+        'GET /api/customers': { total: 0, items: [] },
+        'GET /api/stocklog?limit=30': { total: 1, items: [
+          { id: 41, at: fixedAt, ts: '2026-10-12T09:00:00+08:00', kind: 'stock_in', code: '6901234567892',
+            name: '可口可乐', unit: '罐', delta: 30, before: 10, after: 40, reason: '整箱到货', by: '老板' }] },
+        'GET /api/couriers': { total: 4, items: [{ name: '老张' }, { name: '小李' }, { name: '阿强' }, { name: '小美' }] },
+        'GET /api/settings': { name: '家庭超市', phone: '0771-1234567', address: '水东洋路 1 号', footer: '谢谢惠顾，欢迎再来！' }
+      };
+      let hit = replies[method + ' ' + p];
+      if (hit === undefined) {
+        if (p === '/api/stock/change' && method === 'POST') {
+          hit = { ok: true, stock: 40, entry: { id: 42, at: fixedAt, ts: '2026-10-12T09:05:00+08:00', kind: body.kind,
+            code: body.code, name: '可口可乐', unit: '罐', delta: body.qty, before: 10, after: 40,
+            reason: body.reason, by: body.by } };
+        } else if (p === '/api/couriers' && method === 'POST') {
+          hit = body.remove
+            ? { ok: true, total: 4, items: [{ name: '老张' }, { name: '小李' }, { name: '阿强' }, { name: '小美' }] }
+            : { ok: true, total: 5, items: [{ name: '老张' }, { name: '小李' }, { name: '阿强' }, { name: '小美' }, { name: body.name, phone: body.phone }] };
+        } else if (p === '/api/settings' && method === 'POST') {
+          hit = { name: body.name, phone: body.phone, address: body.address, footer: body.footer || '谢谢惠顾，欢迎再来！' };
+        } else if (p === '/api/customers/note' && method === 'POST') {
+          hit = { phone: body.phone, name: body.name, tier: 'retail', tags: body.tags, note: body.note };
+        }
+      }
+      if (hit === undefined) return { ok: false, status: 404, text: async () => JSON.stringify({ error: 'no route ' + p }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify(hit) };
+    };
+    const aenv = await bootPage('admin.html', { base: 'http://127.0.0.1:8093', fetch: fetch25, wait: 250 });
+    const actx = aenv.ctx;
+    const posted = (path) => calls.filter(c => c.method === 'POST' && c.path === path);
+
+    // 开机从后端拉镜像：配送员名单 / 门店抬头 / 库存流水
+    ok(aenv.els.couriers.value.indexOf('老张') >= 0 && aenv.els.couriers.value.indexOf('小美') >= 0, '开机把后端配送员名单填进输入框');
+    ok(aenv.els.stName.value === '家庭超市' && aenv.els.stFooter.value.indexOf('谢谢惠顾') >= 0, '开机把后端门店抬头填进表单');
+    ok(aenv.els.stockLog.innerHTML.indexOf('整箱到货') >= 0 && aenv.els.stockLog.innerHTML.indexOf('10 → ') >= 0, '库存流水页渲染后端审计流水');
+    ok(aenv.els.stockLogCount.textContent.indexOf('后端审计') >= 0, '流水标题标出「后端审计」：' + aenv.els.stockLogCount.textContent);
+
+    // 入库：走服务端唯一入口，服务端流水镜像回本地
+    aenv.els['si_6901234567892'] = fakeEl('si_6901234567892'); aenv.els['si_6901234567892'].value = '30';
+    aenv.els['sr_6901234567892'] = fakeEl('sr_6901234567892'); aenv.els['sr_6901234567892'].value = '整箱到货';
+    await actx.doStockIn('6901234567892');
+    const p1 = posted('/api/stock/change')[0];
+    ok(!!p1 && p1.body.kind === 'stock_in' && p1.body.qty === 30 && p1.body.reason === '整箱到货', '在线入库 → POST /api/stock/change（kind=stock_in）');
+    ok(aenv.els.toast.textContent.indexOf('已入库') >= 0 && aenv.els.toast.textContent.indexOf('10 → 40') >= 0, '回执用服务端前后值：' + aenv.els.toast.textContent.slice(0, 24));
+    ok(Mall.getProduct('6901234567892').stock === 40, '本地库存镜像对齐服务端（40）');
+
+    // 盘点：实盘数与账面一致就别打扰后端
+    aenv.els['st_6901234567892'] = fakeEl('st_6901234567892'); aenv.els['st_6901234567892'].value = '40';
+    await actx.doTake('6901234567892');
+    ok(posted('/api/stock/change').length === 1, '实盘数 == 账面数 → 不发请求');
+    ok(aenv.els.toast.textContent.indexOf('无需校准') >= 0, '提示无需校准：' + aenv.els.toast.textContent.slice(0, 20));
+
+    // 改数：走服务端
+    aenv.els['ad_6901234567892'] = fakeEl('ad_6901234567892'); aenv.els['ad_6901234567892'].value = '-5';
+    aenv.els['ar_6901234567892'] = fakeEl('ar_6901234567892'); aenv.els['ar_6901234567892'].value = '整箱到货';
+    await actx.doAdjust('6901234567892');
+    const p2 = posted('/api/stock/change')[1];
+    ok(!!p2 && p2.body.kind === 'adjust' && p2.body.qty === -5, '在线改数 → POST /api/stock/change（kind=adjust, qty=-5）');
+
+    // 配送员：按差集同步到后端
+    aenv.els.couriers.value = '老张，小李，阿强，小美，阿明';
+    await actx.saveCouriers();
+    const cp = posted('/api/couriers')[0];
+    ok(!!cp && cp.body.name === '阿明' && cp.body.remove === false, '新增配送员 → POST /api/couriers');
+    ok(aenv.els.toast.textContent.indexOf('已保存到后端') >= 0, '配送员保存回执来自后端：' + aenv.els.toast.textContent.slice(0, 26));
+    aenv.els.couriers.value = '   ';
+    await actx.saveCouriers();
+    ok(aenv.els.toast.textContent.indexOf('不能为空') >= 0, '空名单直接拦下（后端至少要留一位）');
+
+    // 门店抬头：在线写后端并把返回值当本地镜像
+    aenv.els.stName.value = '水东洋便利店'; aenv.els.stPhone.value = ''; aenv.els.stAddr.value = '水东洋路 2 号'; aenv.els.stFooter.value = '';
+    await actx.saveStore();
+    const sp = posted('/api/settings')[0];
+    ok(!!sp && sp.body.name === '水东洋便利店' && sp.body.footer === '', '门店抬头 → POST /api/settings');
+    ok(Admin.getStoreInfo().name === '水东洋便利店' && Admin.getStoreInfo().footer.indexOf('谢谢惠顾') >= 0, '本地镜像用后端返回值（页脚留空回默认）');
+
+    // 顾客备注：写后端（Node 里 Admin 层跳过后端调用，页面回执仍走通）
+    aenv.els.tag_13800001111 = fakeEl('tag_13800001111'); aenv.els.tag_13800001111.value = '熟客';
+    aenv.els.note_13800001111 = fakeEl('note_13800001111'); aenv.els.note_13800001111.value = '常买整箱水';
+    await actx.saveNote('13800001111');
+    ok(aenv.els.toast.textContent.indexOf('顾客档案已保存') >= 0, '备注保存回执：' + aenv.els.toast.textContent.slice(0, 20));
   }
 
   console.log('\n========================================');

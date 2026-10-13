@@ -400,6 +400,86 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     ok(Mall.getMyPhone() === '13800001111', '下单后记住手机号（下次自动按等级取价）');
   }
 
+  section('⑨ 库存审计 / 配送员 / 门店抬头 / 顾客备注（任务池⑧ / D25）');
+  {
+    // 离线：这六类写操作一律返回 null，管理端自己走本地档案
+    fresh();
+    const f0 = mkFetch([]);
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f0, mall: Mall, timeoutMs: 50 });
+    ok(await SdyApi.changeStock('6901234567892', 'stock_in', 30, '整箱到货', '老板') === null, '离线：changeStock 返回 null');
+    ok(await SdyApi.listStockLog(30) === null, '离线：listStockLog 返回 null');
+    ok(await SdyApi.listCouriers() === null, '离线：listCouriers 返回 null');
+    ok(await SdyApi.saveCourier('阿明', '', false) === null, '离线：saveCourier 返回 null');
+    ok(await SdyApi.getSettings() === null, '离线：getSettings 返回 null');
+    ok(await SdyApi.saveSettings({ name: '家庭超市' }) === null, '离线：saveSettings 返回 null');
+    ok(await SdyApi.setCustomerNote('13800001111', '王老板', '熟客', '常买整箱水') === null, '离线：setCustomerNote 返回 null');
+  }
+  {
+    // 在线：库存变更走服务端唯一入口（一个事务里改库存 + 写流水），流水自动镜像回本地
+    fresh();
+    const mirrored = [];
+    const AdminStub = { recordStockEntry: (e) => mirrored.push(e) };
+    const f = mkFetch(serverRoutes([
+      { method: 'POST', path: '/api/stock/change', body: (c) => ({ ok: true, stock: 140, entry: {
+          id: 41, at: 1760000000000, ts: '2026-10-12T09:00:00+08:00', kind: c.body.kind, code: c.body.code,
+          name: '可口可乐', unit: '罐', delta: c.body.qty, before: 110, after: 140,
+          reason: c.body.reason, by: c.body.by } }) },
+      { method: 'GET', path: '/api/stocklog?limit=30', body: { total: 1, items: [
+          { id: 41, at: 1760000000000, ts: '2026-10-12T09:00:00+08:00', kind: 'stock_in', code: '6901234567892',
+            name: '可口可乐', unit: '罐', delta: 30, before: 110, after: 140, reason: '整箱到货', by: '老板' }] } },
+      { method: 'GET', path: '/api/couriers', body: { total: 4, items: [
+          { name: '老张' }, { name: '小李' }, { name: '阿强' }, { name: '小美' }] } },
+      { method: 'POST', path: '/api/couriers', body: (c) => (c.body.remove
+          ? { ok: true, total: 4, items: [{ name: '老张' }, { name: '小李' }, { name: '阿强' }, { name: '小美' }] }
+          : { ok: true, total: 5, items: [{ name: '老张' }, { name: '小李' }, { name: '阿强' }, { name: '小美' },
+                                          { name: c.body.name, phone: c.body.phone }] }) },
+      { method: 'GET', path: '/api/settings', body: { name: '家庭超市', phone: '', address: '', footer: '谢谢惠顾，欢迎再来！' } },
+      { method: 'POST', path: '/api/settings', body: (c) => ({ name: c.body.name, phone: c.body.phone,
+          address: c.body.address, footer: c.body.footer || '谢谢惠顾，欢迎再来！' }) },
+      { method: 'POST', path: '/api/customers/note', body: (c) => ({ phone: c.body.phone, name: c.body.name,
+          tier: 'retail', tags: c.body.tags, note: c.body.note }) }
+    ]));
+    await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, admin: AdminStub, timeoutMs: 50 });
+    ok(SdyApi.mode() === 'server', '在线探测成功（这些接口要有后端才生效）');
+    const r = await SdyApi.changeStock('6901234567892', 'stock_in', 30, '整箱到货', '老板');
+    const post = f.calls.filter(c => c.method === 'POST' && c.path === '/api/stock/change')[0];
+    ok(!!post && post.body.kind === 'stock_in' && post.body.qty === 30 &&
+       post.body.reason === '整箱到货' && post.body.by === '老板', 'POST /api/stock/change 带 kind/qty/reason/by');
+    ok(r && r.stock === 140 && r.entry.after === 140, '透出服务端结果（库存 140）');
+    ok(mirrored.length === 1 && mirrored[0].id === 41 && mirrored[0].after === 140, '服务端流水自动镜像回本地（库存对齐 after）');
+    // 浏览器里 admin.html 调的是无参 SdyApi.boot()，cfg.admin 是空的 → 必须能退回 window.Admin
+    const viaWindow = [];
+    const savedWin = global.window;
+    global.window = { Admin: { recordStockEntry: function (e) { viaWindow.push(e); } } };
+    SdyApi.configure({ admin: null });
+    await SdyApi.changeStock('6901234567892', 'stock_in', 30, '整箱到货', '老板');
+    ok(viaWindow.length === 1 && viaWindow[0].after === 140, '没注入 cfg.admin 时退回 window.Admin 做本地镜像');
+    SdyApi.configure({ admin: AdminStub });
+    global.window = savedWin;
+    const log = await SdyApi.listStockLog(30);
+    ok(log.length === 1 && log[0].kind === 'stock_in' && log[0].after === 140, 'GET /api/stocklog 拿到后端审计流水');
+    ok((await SdyApi.listStockLog()).length === 1, 'limit 省略 → 默认取 30 条');
+    const cs = await SdyApi.listCouriers();
+    ok(cs.length === 4 && cs[0].name === '老张', 'GET /api/couriers 拿到后端名单');
+    const after = await SdyApi.saveCourier('阿明', '13900009999');
+    const cp = f.calls.filter(c => c.method === 'POST' && c.path === '/api/couriers')[0];
+    ok(!!cp && cp.body.name === '阿明' && cp.body.remove === false, 'POST /api/couriers 新增（remove=false）');
+    ok(after.length === 5, 'saveCourier 返回最新名单（5 人）');
+    await SdyApi.saveCourier('阿明', '', true);
+    const cp2 = f.calls.filter(c => c.method === 'POST' && c.path === '/api/couriers')[1];
+    ok(!!cp2 && cp2.body.remove === true, '删除配送员传 remove=true');
+    const st = await SdyApi.getSettings();
+    ok(st.name === '家庭超市' && st.footer.indexOf('谢谢惠顾') >= 0, 'GET /api/settings 拿到门店抬头');
+    const savedSt = await SdyApi.saveSettings({ name: '水东洋便利店', phone: '', address: '', footer: '' });
+    const sp = f.calls.filter(c => c.method === 'POST' && c.path === '/api/settings')[0];
+    ok(!!sp && sp.body.name === '水东洋便利店' && Object.keys(sp.body).length === 4, 'POST /api/settings 只传 name/phone/address/footer');
+    ok(savedSt.footer.indexOf('谢谢惠顾') >= 0, '页脚留空 → 后端回默认那句');
+    const cn = await SdyApi.setCustomerNote('13800001111', '王老板', '熟客', '常买整箱水');
+    const np = f.calls.filter(c => c.method === 'POST' && c.path === '/api/customers/note')[0];
+    ok(!!np && np.body.tags === '熟客' && np.body.note === '常买整箱水', 'POST /api/customers/note 请求体正确');
+    ok(cn && cn.tags === '熟客' && cn.tier === 'retail', '透出后端保存的顾客档案（等级不受影响）');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

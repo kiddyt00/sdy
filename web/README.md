@@ -15,7 +15,7 @@
 | `web/mall.js` | 领域逻辑（427 行，全局 `Mall`）：商品、购物车、订单（**单号保证不重复**）、配送规则、**收货地址簿**、**上下架过滤（`isOnSale` / `listOnSale`）**、**我的手机号与等级（`getMyPhone` / `setMyPhone` / `getMyTier`，localStorage `mall_my_phone`）与有效价 `priceOf(p)`**、localStorage 读写 |
 | `web/mall-admin.js` | 后台逻辑（819 行，全局 `Admin`）：库存流水/入库/盘点、**商品档案 CRUD 与校验（含商品图、批发价、编辑不改库存与上下架）**、**批量改价 / 批量改分类 / 批量改批发标记（`bulkPlan` / `applyBulkPlan` / `applyBulkField`）**、配送员派单、**顾客档案与等级聚合（`getCustomers` / `refreshCustomers` / `setTier` / `TIERS`）**、**小票模型（`buildReceipt`）与门店抬头**、**销售报表与日报模型（`buildReport` / `reportText`）** |
 | `web/pricing.js` | 价格与配送费规则（99 行，全局 `Pricing`）：价格防护、运费计算、**顾客等级（`normalizeTier` / `validTier` / `tierLabel` / `isWholesaleTier`）与有效价 `effectivePrice(tier, salePrice, wholesalePrice)`** |
-| `web/sdy-api.js` | 后端连通层（436 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示；**`setOnSale(codes, on)` 批量上下架**、**`setMyPhone(phone)` / `listCustomers()` / `setCustomerTier(phone, name, tier)`，`sync()` 自动带上「我的手机号」按等级取价（D24）** |
+| `web/sdy-api.js` | 后端连通层（496 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示；**`setOnSale(codes, on)` 批量上下架**、**`setMyPhone(phone)` / `listCustomers()` / `setCustomerTier(phone, name, tier)`，`sync()` 自动带上「我的手机号」按等级取价（D24）**、**库存审计与门店三件套（D25）：`changeStock(code, kind, qty, reason, by)`（写后端审计流水并把 `entry` 镜像回本地）、`listStockLog(limit)`、`listCouriers()` / `saveCourier(name, phone, remove)`、`getSettings()` / `saveSettings(s)`、`setCustomerNote(phone, name, tags, note)`（离线时全部返回 `null`、不发请求）** |
 | `web/test-*.js` | 6 套测试（见下），纯 Node 运行，无需浏览器 |
 
 页面之间只靠相对路径互链（`index.html` ↔ `admin.html`，管理端系统页再链到 `../barcode-demo/`、`../sync-demo/`）。
@@ -85,10 +85,10 @@ node web/test-integration.js   # 17 项（需后端在线）
 | --- | --- | --- | --- |
 | `web/test-mall.js` | 通过 88 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机、**同一毫秒连下两单单号不重复**、**收货地址簿（默认地址语义、按手机号隔离、删默认顶替）**、**上下架过滤（`isOnSale` / `listOnSale` / 加购与下单拦截、缺字段视为上架）** | 否 |
 | `web/test-pricing.js` | 通过 42 项 / 失败 0 项 | 配送费规则、价格防线、批发与无参考价豁免、**顾客等级与有效价（`effectivePrice` / `normalizeTier` / `validTier` / `isWholesaleTier` / `tierLabel`，与 Go 侧 `TestEffectivePrice` 同一组用例，D24）** | 否 |
-| `web/test-admin.js` | 通过 188 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额）、**商品档案归一化/校验/价格防线/三档删除约束**、**小票模型与门店抬头**、**销售报表六档区间/聚合/环比/日报文本**、**批量改价计划（各状态/顶格/汇总）、批量应用（保库存·写流水·未变跳过·单条失败不中断）、批量改字段校验**、**商品图去空格与空串回落、编辑不改上下架/库存、批量改分类不动图片与上下架（D23）** | 否 |
-| `web/test-sdy-api.js` | 通过 94 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品、**地址簿在线/离线双路径（写成功自动重拉、失败不污染镜像）**、**`setOnSale` 在线/离线双路径**、**我的价格与顾客等级（离线 `Mall.priceOf` 按等级算价、在线 `sync()` 带 `?phone=` 且服务端下发价优先、`setMyPhone` / `listCustomers` / `setCustomerTier`，D24）** | 否（注入假 fetch） |
-| `web/test-page-boot.js` | 通过 195 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体**、**批量面板勾选·全选·预览·在线与离线应用·清空**、**小票写入打印区与批量分页（不真打印）**、**结算页地址带出与地址簿弹窗全流程**、**销售报表切页/区间切换/柱状图/复制与打印**、**商品图渲染与回退 emoji、下架商品顾客端拦截、管理端缩略图/图片字段/单个与批量上下架/分类改名合并（D23）**、**「我的价格」弹窗与批发价划线/购物车「批发价」标、管理端批发价字段（高于零售价被拦）、顾客登记与改等级（D24）** | 否 |
-| `web/test-integration.js` | 24 项（需后端在线；探测不到会自动跳过并 `exit 0`） | 真 fetch → 真后端：下单扣库存、运费、状态流转、非法流转 409、取消回补、比价巡检、**按顾客等级取价（`setCustomerTier` 后下单，服务端算价、前端传价不参与；改回等级只影响新单）** | **是** |
+| `web/test-admin.js` | 通过 206 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额）、**商品档案归一化/校验/价格防线/三档删除约束**、**小票模型与门店抬头**、**销售报表六档区间/聚合/环比/日报文本**、**批量改价计划（各状态/顶格/汇总）、批量应用（保库存·写流水·未变跳过·单条失败不中断）、批量改字段校验**、**商品图去空格与空串回落、编辑不改上下架/库存、批量改分类不动图片与上下架（D23）**、**落库审计（D25：`kind`/`type` 双写、`recordStockEntry` 按 `id` 幂等且把库存对齐 `after`、`saveCourier` 四条约束、只登记备注的顾客也进档案、`window.Admin` 必须显式暴露）** | 否 |
+| `web/test-sdy-api.js` | 通过 117 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品、**地址簿在线/离线双路径（写成功自动重拉、失败不污染镜像）**、**`setOnSale` 在线/离线双路径**、**我的价格与顾客等级（离线 `Mall.priceOf` 按等级算价、在线 `sync()` 带 `?phone=` 且服务端下发价优先、`setMyPhone` / `listCustomers` / `setCustomerTier`，D24）**、**库存审计 / 配送员 / 门店抬头 / 顾客备注（D25：六类接口的在线请求体与回执、离线一律 `null` 不发请求、没注入 `cfg.admin` 时退回 `window.Admin` 做本地镜像）** | 否（注入假 fetch） |
+| `web/test-page-boot.js` | 通过 211 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体**、**批量面板勾选·全选·预览·在线与离线应用·清空**、**小票写入打印区与批量分页（不真打印）**、**结算页地址带出与地址簿弹窗全流程**、**销售报表切页/区间切换/柱状图/复制与打印**、**商品图渲染与回退 emoji、下架商品顾客端拦截、管理端缩略图/图片字段/单个与批量上下架/分类改名合并（D23）**、**「我的价格」弹窗与批发价划线/购物车「批发价」标、管理端批发价字段（高于零售价被拦）、顾客登记与改等级（D24）**、**开机拉取后端镜像（配送员名单 / 门店抬头 / 审计流水，标题带「（后端审计）」）、入库与改数走服务端回执并回刷本地库存、盘点同值不发请求、保存配送员与门店抬头落库、顾客备注（D25）** | 否 |
+| `web/test-integration.js` | 50 项（需后端在线；探测不到会自动跳过并 `exit 0`） | 真 fetch → 真后端：下单扣库存、运费、状态流转、非法流转 409、取消回补、比价巡检、**按顾客等级取价（`setCustomerTier` 后下单，服务端算价、前端传价不参与；改回等级只影响新单）**、**库存审计三笔（入库/改数/盘点前后值自洽、本地镜像对齐、非法改数被拒、流水倒序与 500 上限）、配送员增删、门店抬头读写与还原、顾客备注落库不动等级（D25）** | **是** |
 
 联调测试的地址取 `SDY_API_BASE`（不设则默认 `http://127.0.0.1:8093`）：
 
@@ -184,6 +184,7 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 **批发价与顾客等级（任务池⑦ / D24）**
 
 - **手机号即身份，仍然没有账号体系**：顾客在上次结算时填的手机号会被记住（`localStorage.mall_my_phone`，`Mall.getMyPhone()` / `setMyPhone()`），等级（`retail` 默认 / `wholesale` / `vip`）由服务端按手机号判定并随商品列表一起下发（`localStorage.mall_my_tier` 只是镜像）。**列表页价格**由服务端算好（`GET /api/products?phone=`），**下单价**由 `CreateOrder` 用同一个函数再算一次——前端算的价只用于本地演示与界面显示，**永远不参与结算**（D12 单一真源）。
+
 - **有效价只有一条公式**：`Pricing.effectivePrice(tier, salePrice, wholesalePrice)` = 非零售等级**且**批发价 > 0 ? 批发价 : 零售价，结果一律 `round2`。所以 `wholesale_price = 0` 就是「这货不批发」，批发客户看到的仍是零售价；`vip`（白名单）与 `wholesale` **同口径**取批发价。
 - **「💰 我的价格」**：顾客端顶部胶囊旁边，点开填手机号即按等级显示价格——批发价旁边把原价划线（`.oldp`）、购物车行标「批发价」（`.wtag`）、购物车里显示「省了多少」（`cartSummary` 返回 `listPrice` / `wholesale`）。清空手机号即恢复零售价；退出只影响本机显示，**不动任何已下的单**。
 - **改等级只影响之后的单**：订单里的价格是下单当时的快照，之后把顾客从批发改回零售（或反过来）都不会回头动历史订单——与「订单地址是快照」「小票只读投影」同一条原则。
@@ -194,19 +195,26 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 
 **约定与坑**
 
-- **localStorage 键**：`bd_products`（商品库，与扫码台、对账工具**同源共用**）、`mall_cart`（购物车）、`mall_orders`（订单）、`mall_customer`（上次填写的收货信息）、`mall_addresses`（收货地址簿镜像）、`mall_couriers`（配送员名单）、`mall_stockLog`（库存流水，上限 500 条）、`mall_customers`（顾客备注 + 顾客等级镜像）、`mall_my_phone` / `mall_my_tier`（我的手机号与等级，D24）、`mall_store`（小票抬头：店名/电话/地址/票尾）、`sdy_api_base`（后端地址）。
+- **localStorage 键**：`bd_products`（商品库，与扫码台、对账工具**同源共用**）、`mall_cart`（购物车）、`mall_orders`（订单）、`mall_customer`（上次填写的收货信息）、`mall_addresses`（收货地址簿镜像）、`mall_couriers`（配送员名单）、`mall_stockLog`（库存流水，上限 500 条）、`mall_customers`（顾客备注 + 顾客等级镜像）、`mall_my_phone` / `mall_my_tier`（我的手机号与等级，D24）、`mall_store`（小票抬头：店名/电话/地址/票尾）、`sdy_api_base`（后端地址）。**D25 起库存流水 / 配送员名单 / 门店抬头 / 顾客备注以服务端为真源**，这几个键只作离线降级与镜像（在线时开机即被后端覆盖）。
 - **跨模块共用**：商城、扫码台、对账工作台必须用**同一个端口（同一源）**打开，才看到同一份 `bd_products`。
 - **历史坑（已修，勿回退）**：`mall.js` 在浏览器里声明了顶层 `const Mall`，`mall-admin.js` 若再声明一个 `Mall` 会直接 `SyntaxError: Identifier 'Mall' has already been declared`，导致整个后台脚本静默失效。所以后台注入时用的是 `MallCore` 这个名字，别改回去。
 - **假 DOM 测试的坑**：`web/test-page-boot.js` 里的 `env.els.X` **只在页面脚本调用过 `getElementById('X')` 之后才存在**——测试要用到的元素，要么先驱动页面走到会碰它的那一步，要么自己 `env.els.X = fakeEl('X')`；页面脚本用到的浏览器弹窗（`confirm` / `prompt`，分类改名就用 `prompt`）必须在沙箱里注入，`makeEnv` 已给 `prompt` 默认 `() => null`，需要返回值时按测试传参。
 - **库存页形态未定稿**：`web/mall-admin.js` 顶部注释写明库存页是**占位实现**（D1/D2/D4 待确认后可能调整），改动前先看 `../细节讨论记录.html`。
 - **顾客端不做摄像头扫码**：顾客端只有扫码枪/手动输入（`扫码找货` 弹窗），摄像头那条路在扫码台里。
 - 商品搜索：顾客端匹配 `名称 + 品牌 + 条码`；后端 `ListProducts` 的 `keyword` 只匹配 `名称 + 条码`（不含品牌）。两边口径不同，是已知差异。
+**消灭 localStorage 单点（任务池外加固 / D25）**
+
+- **为什么**：D8 定了「库存一律手动调整」，那每一次调整就必须能回答「谁、何时、为什么、前后多少」；此前在线改库存只调 `SdyApi.setStock(code, stock)`（覆盖绝对值），服务端**没有任何变更痕迹**。第 20 轮把原先只活在浏览器 `localStorage` 的四样东西落进后端库：库存流水 `stock_log`、配送员名单 `courier`、门店抬头 `setting`、顾客备注与标签（复用 `customer.tags/note`）。
+- **唯一入口**：服务端 `store.ChangeStock(code, kind, qty, reason, by)`（`kind` ∈ `stock_in` / `adjust` / `stock_take`），**改库存与写 `stock_log` 在同一事务**、失败路径一律 `Rollback`（不留「改了库存没流水」），流水**只保留最近 500 条**；老接口 `POST /api/products/stock` 保留但折算成 `adjust` 且 `reason="直接改数"`（同值不写流水）。
+- **页面在线优先**：`web/admin.html` 的 `doStockIn` / `doAdjust` / `doTake` 先 `SdyApi.changeStock(...)`，用**服务端回执的前后值**报回执（如「已入库：可口可乐 10 → 40 罐」），`SdyApi` 再把 `entry` 镜像进本地（`Admin.recordStockEntry`，按 `id` 幂等、并把本地库存对齐 `after`）；后端拒绝就中止并原样透出错误。**盘点时实盘数 == 账面数不发请求**（提示「实盘数与账面一致（N），无需校准」）。库存页标题带「（后端审计）」，离线时静默回落到本地流水。
+- **配送员 / 门店抬头 / 顾客备注**：`saveCouriers()` 在线时与后端名单做差集增删（空名单拦下、只剩一位不许删）；`saveStore()` / `renderStore()` 走 `/api/settings`（票尾留空回默认那句）；`saveNote(phone)` 走 `Admin.saveCustomerNote` → `/api/customers/note`（只改备注与标签，不动等级）。
+- **踩坑（务必记住）**：浏览器里 classic script 的顶层 `const` **不是 `window` 的属性**，而 `web/sdy-api.js` 的 `resolveAdmin()` 原本只找 `window.Admin` → 在线改库存「服务端改了、页面没改」。修法：`web/mall-admin.js` 末尾显式 `window.Admin = Admin`，`resolveAdmin()` 同时支持全局词法查找（与 `resolveMall()` 同法）。Node 单测因为显式注入 `admin: Admin` 掩盖了这个坑，**只有生产 CDP 真浏览器写库**（`stockAfter` 必须等于服务端 `after`）才暴露——见 `.agent_rules.md` 规则 21⑤。
 
 ## 相关文档
 
 - [`../README.md`](../README.md) — 仓库总览、里程碑状态、测试矩阵
 - [`../开发计划.html`](../开发计划.html) — 路线图与当前重心
-- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账 D1–D24（含库存页形态、扫码只读、商品档案写接口、小票约定、收货地址簿、销售报表口径、批量操作边界、商品上下架口径、批发价与顾客等级口径等）
+- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账 D1–D25（含库存页形态、扫码只读、商品档案写接口、小票约定、收货地址簿、销售报表口径、批量操作边界、商品上下架口径、批发价与顾客等级口径、消灭 localStorage 单点与库存审计等）
 - [`../独立小程序商城可行性分析与架构方案.html`](../独立小程序商城可行性分析与架构方案.html) — 架构与实现现状
 - [`../server/README.md`](../server/README.md) — 后端接口、环境变量、测试
 - [`../barcode-demo/README.md`](../barcode-demo/README.md) — 扫码台与双库解析链

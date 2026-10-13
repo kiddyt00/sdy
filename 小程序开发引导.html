@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>家庭超市自营商城 · 小程序开发引导（手把手版）</title>
+<style>
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;color:#1f2937;line-height:1.65;font-size:14px}
+  h1{font-size:22px;border-bottom:3px solid #16a34a;padding-bottom:8px}
+  h2{font-size:18px;margin-top:30px;border-left:5px solid #16a34a;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#111827}
+  h4{font-size:14px;margin-top:14px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px}
+  th,td{border:1px solid #e3e8ee;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#f8fafc}
+  .callout{border-radius:8px;padding:10px 14px;margin:10px 0;font-size:13px}
+  .callout.blue{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
+  .callout.green{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+  .callout.yellow{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+  .callout.red{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+  .callout.gray{background:#f8fafc;border:1px solid #e5e7eb;color:#374151}
+  .badges span{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;margin-right:6px;font-weight:600}
+  .bg-green{background:#dcfce7;color:#166534}.bg-blue{background:#dbeafe;color:#1e40af}
+  .bg-orange{background:#ffedd5;color:#9a3412}.bg-gray{background:#f3f4f6;color:#4b5563}
+  .bg-red{background:#fee2e2;color:#991b1b}.bg-purple{background:#ede9fe;color:#6b21a8}
+  code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-size:12px}
+  .path{background:#f0fdf4;border:1px dashed #86efac;border-radius:6px;padding:2px 8px;font-size:12.5px;color:#166534;font-weight:600}
+  .step{border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;margin:12px 0;background:#fff}
+  .step h3{margin-top:0}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;font-size:13px}
+  .flow b{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:4px 12px;border-radius:999px}
+  .flow i{color:#9ca3af;font-style:normal}
+  .who{font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;margin-left:6px}
+  .who.me{background:#dbeafe;color:#1e40af}.who.you{background:#ffedd5;color:#9a3412}.who.both{background:#ede9fe;color:#6b21a8}
+  ul,ol{padding-left:22px}li{margin:3px 0}
+  .chk{list-style:none;padding-left:0}
+  .chk li{margin:5px 0;padding-left:24px;position:relative}
+  .chk li:before{content:"☐";position:absolute;left:0;color:#16a34a;font-weight:700}
+  a{color:#166534}
+</style>
+</head>
+<body>
+
+<h1>家庭超市自营商城 · 小程序开发引导（手把手版）</h1>
+<div class="badges">
+  <span class="bg-green">面向：老板本人操作微信后台</span>
+  <span class="bg-blue">配套：我在代码侧同步开工</span>
+  <span class="bg-orange">前置：营业执照 + 域名 + 备案</span>
+  <span class="bg-gray">2026-10-12 出稿（第 20 轮期间）</span>
+</div>
+
+<div class="callout blue">
+<b>这份文档怎么用：</b>微信侧的事你只能自己做（要用你的营业执照、法人身份证、对公账户、法人微信），我在代码侧同时开工。
+每一步都标了<b>谁做</b>：<span class="who you">你做</span> 微信/腾讯云后台的点按，<span class="who me">我做</span> 代码与服务器，
+<span class="who both">一起</span> 需要你我对着界面确认。全程<b>三步并行</b>，最慢的是备案，所以<b>今天先把备案启动</b>。
+</div>
+
+<div class="callout green">
+<b>▶ 今天先做这三件事（其余都可以等）</b>
+<ol>
+  <li><b>注册小程序账号</b>：<a href="https://mp.weixin.qq.com/" target="_blank">mp.weixin.qq.com</a> → 立即注册 → 小程序。材料：一个<b>没注册过公众平台</b>的邮箱、营业执照、法人身份证、法人微信。约 20 分钟。</li>
+  <li><b>买域名 + 提交备案</b>：域名 30–80 元/年；备案免费但<b>要等 1–20 个工作日</b>，是全流程的关键路径。服务器已有（124.223.16.159 腾讯云），可以直接在腾讯云备案系统申请。约 30 分钟提交，然后等。</li>
+  <li><b>把 AppID 发我</b>：登录后 <span class="path">开发与服务 → 开发管理 → 开发设置 → AppID(小程序ID)</span>，把 AppID（形如 <code>wx</code> 开头 18 位）发我。<b>AppSecret 也可以一起发，但只在本地保存、绝不入库、不进 git。</b></li>
+</ol>
+</div>
+
+<h2>0. 先确认两件事（决定走哪条路）</h2>
+<table>
+<tr><th>问题</th><th>如果「有」</th><th>如果「没有」</th></tr>
+<tr>
+  <td><b>有营业执照吗？</b>（个体工商户 / 企业）</td>
+  <td>走<b>主路</b>：可以做<b>微信认证</b> → 能开<b>微信支付</b> → 顾客在小程序里直接付钱。</td>
+  <td>只能注册<b>个人主体</b>小程序：<b>不能开微信支付</b>、不能用「手机号快速验证」、食品 / 酒水类目大概率也选不了。
+      <div class="callout yellow" style="margin:6px 0">这种情况小程序只能当「电子菜单 + 下单留言板」，收款仍靠转账，体验差一截。<b>建议先去办个体工商户</b>（成本低、很快），再回来走主路。</div></td>
+</tr>
+<tr>
+  <td><b>卖饮料 / 酒水，有《食品经营许可证》吗？</b></td>
+  <td>添加「食品 / 饮料 / 酒」类目时可直接上传，过审快。</td>
+  <td>类目审核会卡。预包装食品可先看能否用「预包装食品销售备案」；酒类一般要食品经营许可证（含酒类）。
+      <b>这一步以微信后台的类目要求提示为准，我不替你判断资质。</b></td>
+</tr>
+</table>
+
+<h2>1. 三条并行线（谁挡谁）</h2>
+<div class="flow">
+  <b>线A 小程序账号 + 认证</b><i>→</i><b>线C 微信支付商户号</b><i>→</i><b>顾客能付款</b>
+</div>
+<div class="flow">
+  <b>线B 域名 + ICP备案 + HTTPS</b><i>→</i><b>后台配置服务器域名</b><i>→</i><b>真机能连后端</b>
+</div>
+<div class="callout yellow">
+<b>依赖关系（记住这句就够）：</b>没有<b>备案域名</b> → 真机请求被微信拦（开发工具里能预览，家人手机上看不了）；
+没有<b>微信认证</b> → 商户号绑不上 AppID → 收不了钱；
+没有<b>食品类目资质</b> → 提交审核会被驳回。<b>备案最慢，先启动它。</b>
+</div>
+
+<h2>2. 微信侧配置逐步（按顺序做）</h2>
+
+<div class="step">
+<h3>步骤 1 · 注册小程序账号<span class="who you">你做</span></h3>
+<ol>
+  <li>打开 <a href="https://mp.weixin.qq.com/" target="_blank">https://mp.weixin.qq.com/</a> → 右上角「立即注册」→ 选「<b>小程序</b>」。</li>
+  <li>填邮箱（<b>必须是没在任何微信公众平台注册过的邮箱</b>）+ 密码 → 收邮件点激活链接。</li>
+  <li>选主体类型：<b>企业</b> 或 <b>个体工商户</b>（有执照就选这两个之一，别选个人）。</li>
+  <li>填主体信息：营业执照注册号、主体名称、法人姓名与身份证号、管理员（通常是你自己）姓名/身份证/手机号 + 管理员本人微信扫码验证。</li>
+  <li>主体验证方式选<b>「微信认证」</b>（另一条是「对公打款验证」，只能证明主体真实、<b>不能用于绑定微信支付</b>）。
+      <div class="callout red" style="margin:6px 0">⚠️ <b>想收钱就必须走微信认证</b>：微信支付官方要求可绑定的 AppID 是「<b>已通过微信认证</b>的…小程序」（见 <a href="https://pay.wechatpay.cn/doc/v3/merchant/4013287174" target="_blank">微信支付 · 管理商户号绑定的APPID账号</a>）。认证费<b>以后台显示为准</b>（历史为 300 元/年，本页未逐年核实）。</div></li>
+  <li>认证通过后回到后台，第一件事就是<b>把 AppID 发我</b>。</li>
+</ol>
+<b>这一步做完的样子：</b>能登录 <code>mp.weixin.qq.com</code> 后台，首页看到小程序名称与 AppID，认证状态显示「已认证」（认证通常 1–3 个工作日，加急另议）。
+</div>
+
+<div class="step">
+<h3>步骤 2 · 基本信息与服务类目<span class="who you">你做</span></h3>
+<span class="path">设置 → 基本设置</span>
+<ul>
+  <li><b>名称</b>：想好一个不重名的名字（名称全网唯一，被占用就得换；含「超市」「商城」等词可能需要资质，系统会提示）。建议提前想 3 个备选。</li>
+  <li><b>头像 / 简介</b>：头像一张方图（可用现有门店照），简介一句话（如「XX 家庭超市线上商城，附近送货上门」）。</li>
+  <li><b>服务类目</b>：<span class="path">设置 → 基本设置 → 服务类目</span> → 添加「食品 / 饮料 / 酒」等与实际经营相符的类目，按提示上传《食品经营许可证》等资质。类目和实际卖的东西必须一致，否则审核会驳。</li>
+</ul>
+<b>这一步做完的样子：</b>服务类目显示「审核通过」。
+</div>
+
+<div class="step">
+<h3>步骤 3 · 成员管理（把家人加进来）<span class="who you">你做</span></h3>
+<span class="path">设置 → 成员管理</span>
+<ul>
+  <li><b>项目成员</b>：加微信号即可（最多若干人），有权限登录开发者工具、上传代码。可以就把你自己 + 我在的微信号（如需要）。</li>
+  <li><b>体验成员</b>：家人的微信加到这里，等有「体验版」后他们手机上就能打开试用（<b>不需要审核、不需要发布</b>）。</li>
+</ul>
+<b>你要给我：</b>加完成员后告诉我准好了，我把体验版传上去给你二维码。
+</div>
+
+<div class="step">
+<h3>步骤 4 · 域名 + ICP 备案 + HTTPS<span class="who you">你做</span><span class="who me">我做</span></h3>
+<div class="callout gray">
+这是<b>全流程最慢、也最容易被忽略</b>的一步。小程序<b>只允许请求已备案的 HTTPS 域名</b>，不允许 IP、不允许 http。
+我们的后端现在跑在 <code>http://124.223.16.159</code>（没有域名）——所以<b>现在真机连不上，只能在开发者工具里预览</b>。
+</div>
+<ol>
+  <li><b>买域名</b>：腾讯云 / 阿里云都可，<b>建议在腾讯云买</b>（服务器也是腾讯云，备案更顺）。域名要<b>实名认证</b>（约 1–3 天）。</li>
+  <li><b>提交 ICP 备案</b>：<a href="https://console.cloud.tencent.com/beian" target="_blank">腾讯云备案控制台</a>。腾讯云服务器实例可以生成「<b>备案授权码</b>」。材料：主体证件、法人/负责人身份证、网站负责人人脸核验（手机 App）、真实性核验单。免费，时长以管局为准（常见 1–20 个工作日）。</li>
+  <li><b>DNS 解析</b>：备案通过后加一条 A 记录指向 <code>124.223.16.159</code>。</li>
+  <li><b>HTTPS 证书</b>：腾讯云可申请免费 DV 证书（或我用 Let's Encrypt）。</li>
+  <li><b>Nginx 加一个 server 块</b>（<span class="who me">我做</span>）：<code>server_name 你的域名;</code> + 443 + 证书 → 反代到现有的 <code>127.0.0.1:8093</code>。
+      <div class="callout yellow" style="margin:6px 0">✅ <b>不会和同机其它服务抢端口</b>：80/443 已被占用没问题，Nginx 靠 <b>server_name（域名）</b> 区分站点——这正是现在 IP 直连入口的做法（<code>deploy/host-nginx-ip.conf</code>）。等域名到位我们切到 <code>deploy/host-nginx.conf</code>。</div></li>
+</ol>
+<b>这一步做完的样子：</b>浏览器打开 <code>https://你的域名/admin</code> 能进管理端，锁标志正常。
+<b>你要给我：</b>备案通过的域名。
+</div>
+
+<div class="step">
+<h3>步骤 5 · 后台开发设置（开发者 ID + 服务器域名）<span class="who you">你做</span></h3>
+<span class="path">开发与服务 → 开发管理 → 开发设置</span>
+<ol>
+  <li><b>AppID(小程序ID)</b>：页面顶部，18 位 <code>wx</code> 开头 → 发我。</li>
+  <li><b>AppSecret(小程序密钥)</b>：点「生成 / 重置」后<b>只显示一次</b>，立刻复制发我（我只写进服务器 <code>.env</code>，<b>不进 git、不进数据库、不写进任何前端</b>）。用于服务端 <code>code2session</code> 换取用户身份。</li>
+  <li><b>服务器域名</b>：把我们的域名填进 <span class="path">request 合法域名</span> → <code>https://你的域名</code>。
+      知识点（官方：<a href="https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html" target="_blank">网络 · 使用说明</a>）：
+      <ul>
+        <li>必须 <b>HTTPS</b>、域名<b>已 ICP 备案</b>；不能是 IP、不能是 <code>localhost</code>、不能带非标准端口。</li>
+        <li>填错或没填，<b>真机</b>请求直接失败（开发者工具里勾「不校验合法域名」只对工具内有效）。</li>
+        <li>改完域名配置，要<b>重新编译 / 重开小程序</b>才生效。</li>
+      </ul></li>
+  <li><b>业务域名</b>（可选，之后要用 web-view 打开现有 H5 才需要）：<span class="path">开发设置 → 业务域名</span>。它会要求你把一个校验文件放到域名根目录 —— <b>这个文件给我，我帮你放上去并部署</b>（形如 <code>MP_verify_xxxxxxxx.txt</code>）。</li>
+  <li><b>uploadFile / downloadFile 合法域名</b>：以后做「顾客传图 / 传凭证」才需要，先跳过。</li>
+</ol>
+<b>你要给我：</b>AppID、AppSecret、服务器域名填写完成截图（或告诉我填好了）。
+</div>
+
+<div class="step">
+<h3>步骤 6 · 用户隐私保护指引（不做会拦住接口）<span class="who you">你做</span></h3>
+<span class="path">设置 → 服务内容声明 → 用户隐私保护指引</span>
+<div class="callout red">
+按官方规则，小程序<b>必须填写并审核通过</b>《用户隐私保护指引》，否则涉及用户信息的接口（手机号、地址等）在正式环境会调用失败。
+参考：<a href="https://developers.weixin.qq.com/miniprogram/dev/framework/user-privacy/" target="_blank">用户隐私保护指引填写说明</a>。
+</div>
+<p>我们要采集 / 使用的信息（照这个填，写清「用途」即可）：</p>
+<table>
+<tr><th>信息类型</th><th>用途怎么写</th></tr>
+<tr><td>手机号</td><td>用于识别会员身份、展示对应价格、订单联系与配送</td></tr>
+<tr><td>收货地址（姓名 / 电话 / 详细地址）</td><td>用于下单后配送上门</td></tr>
+<tr><td>订单信息（含商品与金额）</td><td>用于生成订单、售后与对账</td></tr>
+<tr><td>微信昵称 / 头像（可选）</td><td>用于会员资料展示；不填也不影响下单</td></tr>
+</table>
+<p>第三方共享如实勾选：<b>微信支付</b>（收款）、<b>腾讯云</b>（服务器与数据库托管）。保存期限写「依法留存，交易记录不少于 3 年」即可。</p>
+<b>这一步做完的样子：</b>指引状态「审核通过」。
+</div>
+
+<div class="step">
+<h3>步骤 7 · 微信支付商户号 + 与小程序关联<span class="who you">你做</span></h3>
+<ol>
+  <li><b>申请商户号</b>：<a href="https://pay.weixin.qq.com/" target="_blank">pay.weixin.qq.com</a> → 接入微信支付 → 提交资料：营业执照、法人身份证、银行账户（个体户可用法人个人账户，视后台提示）、超级管理员微信、门店/经营信息。审核通常 1–5 个工作日。
+      <div class="callout gray" style="margin:6px 0">商户号可选「<b>免开发</b>」接入方式，但我们要在小程序内直接发起支付（<code>wx.requestPayment</code>），所以要开「<b>小程序支付</b>」权限。</div></li>
+  <li><b>关联 AppID</b>（两部分，缺一不可）：
+    <ul>
+      <li>商户平台：<span class="path">产品中心 → APPID授权管理 → +关联AppID → 新增授权</span>，填小程序 AppID 提交；</li>
+      <li>小程序后台：<span class="path">微信支付 → 商户号管理 → 待关联商户号</span> → 确认授权（手机端「公众平台安全助手」消息里也能确认）。</li>
+    </ul>
+    <div class="callout yellow" style="margin:6px 0">要点（官方文档）：① 一个商户号最多关联 <b>50</b> 个 AppID；② 可绑定的 AppID 必须是<b>已微信认证</b>的小程序；③ 小程序与商户号<b>主体不一致</b>时要补填 AppID 主体信息，且费率需一致；④ 特殊行业费率会加审核（1–3 个工作日）；⑤ <b>关联后暂不支持解绑</b>，请确认主体再提交。</div></li>
+  <li><b>给我三样东西</b>（都是敏感信息，只本地保存）：
+    <ul>
+      <li><code>mchid</code>（商户号）</li>
+      <li>商户<b>APIv3 密钥</b>（商户平台：账户中心 → API 安全 → 设置 APIv3 密钥）</li>
+      <li><b>商户 API 证书</b>（<code>apiclient_cert.pem</code> / <code>apiclient_key.pem</code>，下载后发我文件或内容）</li>
+    </ul>
+    另外在商户平台把<b>支付回调域名</b>填成 <code>https://你的域名/api/wx/notify</code>（这个接口我来写）。</li>
+</ol>
+<b>这一步做完的样子：</b>商户平台「我关联的APPID账号」里能看到你的小程序；小程序里 <code>wx.requestPayment</code> 能拉起收银台。
+</div>
+
+<div class="step">
+<h3>步骤 8 · 订阅消息模板（可选，但很值）<span class="who you">你做</span></h3>
+<span class="path">功能 → 订阅消息 → 公共模板库</span>
+<p>选两类模板：<b>「订单状态提醒」</b>（备货完成 / 待取货）和 <b>「配送进度提醒」</b>（已送达 / 配送中）。选用后每个模板会有一个<b>模板 ID</b>，发我。
+这样顾客下单后能在微信里收到「你的货已备好」通知，这是小程序相比网页最大的体验优势（参考：<a href="https://developers.weixin.qq.com/miniprogram/dev/framework/open-ability/subscribe-message.html" target="_blank">订阅消息</a>）。</p>
+<div class="callout yellow">注意：订阅消息必须由用户在点击时授权（一次性订阅，一次授权可发一条），所以下单按钮上要顺手请求订阅 —— 这部分代码我来写。</div>
+</div>
+
+<div class="step">
+<h3>步骤 9 · 上传 → 体验版 → 提交审核 → 发布<span class="who both">一起</span></h3>
+<ol>
+  <li><span class="who me">我做</span>：微信开发者工具里上传代码（需要你的项目成员微信扫码登录一次，我可以远程指导）。</li>
+  <li><span class="who you">你做</span>：<span class="path">版本管理 → 开发版本 → 选为体验版</span> → 生成体验版二维码，发给家人先试用。</li>
+  <li><span class="who you">你做</span>：<span class="path">版本管理 → 提交审核</span>。提交前确认三件事：<b>类目与资质齐全、隐私指引已通过、小程序内没有未备案域名</b>。</li>
+  <li>审核通过（常见 1–7 天，可能补材料）→ <span class="path">发布</span> → 正式上线，可在后台生成<b>小程序码</b>贴到店里、发到顾客群。</li>
+</ol>
+<b>审核常见被拒原因（提前避开）：</b>① 类目与实际内容不符；② 隐私指引未填写或写得太笼统；③ 页面有「测试 / 待开发 / 敬请期待」字样或空白页；④ 用个人主体做经营性内容；⑤ 诱导分享 / 强制授权。
+</div>
+
+<h2>3. 代码侧我要做的事（你不必动手，但可以对着验收）<span class="who me">我做</span></h2>
+<p>小程序骨架当初已经写好并归档在 <code>archive/miniprogram/</code>（4 个页面：首页 / 购物车 / 订单 / 我的；测试 62 + 47 + 21 项）。恢复它并接上现有后端，清单如下：</p>
+<table>
+<tr><th>#</th><th>改什么</th><th>文件 / 位置</th><th>为什么</th></tr>
+<tr><td>1</td><td>把骨架从归档恢复为正式目录</td><td><code>archive/miniprogram/</code> → <code>miniprogram/</code></td><td>让开发者工具能直接导入</td></tr>
+<tr><td>2</td><td>AppID 从游客换成真 AppID</td><td><code>miniprogram/project.config.json</code>（当前 <code>"appid":"touristappid"</code>）</td><td>游客 AppID 不能上传、不能调开放能力</td></tr>
+<tr><td>3</td><td>主题色对齐品牌绿</td><td><code>miniprogram/app.json</code>（现为旧蓝 <code>#2563eb</code> → <code>#16a34a</code>，含 tabBar 选中色）</td><td>与 Web 端一致</td></tr>
+<tr><td>4</td><td>接口地址指向备案域名</td><td><code>miniprogram/utils/api.js:14</code>（当前 <code>DEFAULT_BASE='http://127.0.0.1:8093'</code>）</td><td>真机唯一可达的地址</td></tr>
+<tr><td>5</td><td>扫码换成 <code>wx.scanCode</code></td><td>替换网页版相机扫码</td><td>守住「扫码只读、只用于查商品」的既定原则（D8）</td></tr>
+<tr><td>6</td><td>新增后端微信接口</td><td><code>server/cmd/server/main.go</code>：<code>POST /api/wx/login</code>（code2session）、<code>POST /api/wx/pay</code>（下单 + prepay_id + 签名）、<code>POST /api/wx/notify</code>（支付回调验签 + 更新订单）</td><td>AppSecret / 商户密钥只在服务端（D13）</td></tr>
+<tr><td>7</td><td>登录与身份打通</td><td>openid ↔ 现有「手机号即身份」的顾客档案（<code>customer</code> 表）</td><td>下单、等级价、地址簿全部复用现有逻辑</td></tr>
+<tr><td>8</td><td>价格规则同源</td><td><code>miniprogram/utils/rules.js</code> ↔ <code>server/internal/pricing/pricing.go</code></td><td>有效价、运费、比价防线两端口径必须一致（D24）</td></tr>
+<tr><td>9</td><td>订阅消息下发</td><td>备货完成 / 配送中 / 已送达</td><td>体验提升，顾客不用反复进小程序看</td></tr>
+<tr><td>10</td><td>手机号快速验证组件</td><td><code>getPhoneNumber</code> 替换手输手机号</td><td>少一步输入；需认证 + 按官方计费规则（以后台为准）</td></tr>
+<tr><td>11</td><td>回归测试</td><td><code>test-api</code> 62 / <code>test-pages</code> 47 / <code>test-integration</code> 21 全绿 + 真机 CDP 等价检查</td><td>沿用「页面改动必须过测试」的验收纪律</td></tr>
+</table>
+
+<h2>4. 你要回传给我的清单（照这个发就行）</h2>
+<table>
+<tr><th>#</th><th>东西</th><th>从哪拿</th><th>敏感？</th></tr>
+<tr><td>1</td><td>小程序 <b>AppID</b></td><td>开发与服务 → 开发管理 → 开发设置</td><td>否</td></tr>
+<tr><td>2</td><td>小程序 <b>AppSecret</b></td><td>同上（只显示一次）</td><td><b>是</b>：只写服务器 <code>.env</code></td></tr>
+<tr><td>3</td><td><b>备案域名</b></td><td>腾讯云备案控制台 / 域名控制台</td><td>否</td></tr>
+<tr><td>4</td><td>商户号 <b>mchid</b></td><td>微信支付商户平台</td><td>半敏感</td></tr>
+<tr><td>5</td><td><b>APIv3 密钥</b></td><td>商户平台 → 账户中心 → API 安全</td><td><b>是</b></td></tr>
+<tr><td>6</td><td><b>商户 API 证书</b>（<code>apiclient_cert.pem</code> / <code>apiclient_key.pem</code>）</td><td>商户平台 → API 安全 → API 证书</td><td><b>是</b></td></tr>
+<tr><td>7</td><td>订阅消息<b>模板 ID</b> ×2</td><td>功能 → 订阅消息</td><td>否</td></tr>
+<tr><td>8</td><td>（可选）<b>业务域名校验文件</b> <code>MP_verify_xxx.txt</code></td><td>开发设置 → 业务域名</td><td>否</td></tr>
+</table>
+
+<div class="callout red">
+<b>安全红线（本项目一贯原则）：</b>AppSecret / APIv3 密钥 / 商户证书 / 服务器密码 —— 一律<b>只存本地与服务器 <code>.env</code></b>，
+<b>绝不进公开仓库（github.com/kiddyt00/sdy 是公开的）、绝不入库、绝不写进任何前端页面</b>。
+发我时用微信单独发，我会放进服务器并确认没有出现在 <code>git status</code> 里。
+</div>
+
+<h2>5. 时间与成本（估算，数字以后台实际显示为准）</h2>
+<table>
+<tr><th>项</th><th>费用</th><th>时间</th><th>谁</th></tr>
+<tr><td>域名</td><td>约 30–80 元/年</td><td>即时买，实名 1–3 天</td><td>你</td></tr>
+<tr><td>ICP 备案</td><td>0 元</td><td><b>1–20 个工作日（关键路径）</b></td><td>你</td></tr>
+<tr><td>HTTPS 证书</td><td>0 元（免费 DV 证书）</td><td>当天</td><td>我 + 你（腾讯云申请）</td></tr>
+<tr><td>微信认证</td><td>以后台为准（历史 300 元/年）</td><td>1–3 个工作日</td><td>你</td></tr>
+<tr><td>微信支付商户号</td><td>无开户费；交易费率按类目（零售常见 0.6%，以商户平台为准）</td><td>1–5 个工作日</td><td>你</td></tr>
+<tr><td>服务器</td><td>已有（124.223.16.159）</td><td>—</td><td>—</td></tr>
+<tr><td>小程序开发与联调</td><td>0（我）</td><td>恢复 + 联调 + 提审约 3–5 个工作日</td><td>我</td></tr>
+<tr><td>审核发布</td><td>0</td><td>1–7 天（可能补材料）</td><td>你</td></tr>
+</table>
+<div class="callout yellow">
+⚠️ <b>本页所有金额与时限均以微信 / 腾讯云后台当前实际显示为准</b>，我没有逐年核实官方费率的变动。
+</div>
+
+<h2>6. 不动微信、今天就能验证的事（过渡方案）</h2>
+<ul>
+  <li><b>现在就能给家人看界面</b>：小程序骨架可以在<b>微信开发者工具</b>里直接跑（工具勾「不校验合法域名」），我在你电脑上演示一遍，家人也能用「预览」扫码看到，但<b>真机正式用必须等备案域名</b>。</li>
+  <li><b>Web 端照旧可用</b>：<code>http://124.223.16.159/</code>（顾客端）与 <code>/admin</code>（管理端）现在是活的，界面优化反馈继续走这条路，不受小程序进度影响。</li>
+  <li><b>并行动作</b>：你去办账号 / 备案 / 商户号，我在这些等待时间里继续做 Web 端的功能（当前刚完成第 20 轮库存审计落库）。</li>
+</ul>
+
+<h2>7. 常见坑速查</h2>
+<table>
+<tr><th>症状</th><th>原因</th><th>怎么办</th></tr>
+<tr><td>真机请求失败、工具里却正常</td><td>服务器域名没配 / 不是 HTTPS / 域名未备案 / 域名带端口</td><td>按步骤 5 配 <code>request 合法域名</code>，重新编译</td></tr>
+<tr><td>商户号绑不上 AppID</td><td>小程序未通过微信认证</td><td>先做认证（步骤 1）</td></tr>
+<tr><td>拉不起收银台 / 报签名错误</td><td>APIv3 密钥或商户证书不对、回调域名没配</td><td>核对步骤 7 的三样东西</td></tr>
+<tr><td>手机号组件报错</td><td>隐私指引未通过 / 主体不支持</td><td>先过隐私指引（步骤 6）</td></tr>
+<tr><td>审核被拒：类目不符</td><td>类目没选全或资质不匹配</td><td>补齐服务类目与许可证</td></tr>
+<tr><td>提交审核要求「服务类目 + 隐私」</td><td>两者未通过前无法提审</td><td>先把步骤 2、6 做完</td></tr>
+</table>
+
+<div class="callout green">
+<b>成功的样子：</b>家人在微信里搜到你这家店 → 打开小程序看到和网页一样（甚至更顺）的商品与价格 → 填手机号就是会员价 → 加购下单 → 微信付款 →
+你管理端收到订单、打印小票 → 备货完成点一下，顾客微信收到通知 → 送货上门。<b>这条链路跑通，就算成了。</b>
+</div>
+
+<p style="color:#6b7280;font-size:12px;margin-top:26px">
+官方参考链接：<a href="https://mp.weixin.qq.com/" target="_blank">微信公众平台</a> ·
+<a href="https://pay.weixin.qq.com/" target="_blank">微信支付商户平台</a> ·
+<a href="https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html" target="_blank">网络与域名要求</a> ·
+<a href="https://developers.weixin.qq.com/miniprogram/dev/framework/user-privacy/" target="_blank">用户隐私保护指引</a> ·
+<a href="https://pay.wechatpay.cn/doc/v3/merchant/4013287174" target="_blank">商户号绑定 AppID</a> ·
+<a href="https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html" target="_blank">开发者工具下载</a> ·
+<a href="https://console.cloud.tencent.com/beian" target="_blank">腾讯云备案</a>
+</p>
+
+</body>
+</html>

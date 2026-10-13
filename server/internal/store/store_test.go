@@ -811,3 +811,255 @@ func TestTierColumnMigration(t *testing.T) {
 		t.Fatalf("补列后等级应生效，实际 %q", tier)
 	}
 }
+
+// ---- 任务池⑧（D25）：库存流水 / 配送员 / 门店抬头 / 顾客备注 落库 ----
+
+// 库存变更必须在一个事务里同时改库存 + 写流水；失败不留痕（审计可信的前提）。
+func TestStockChangeAudit(t *testing.T) {
+	st := newTestStore(t)
+	seed(t, st)
+
+	// 入库 +30：可乐 120 → 150
+	e, err := st.ChangeStock("6901", StockKindIn, 30, "整箱到货", "老板")
+	if err != nil {
+		t.Fatalf("入库失败: %v", err)
+	}
+	if e.Kind != StockKindIn || e.Before != 120 || e.After != 150 || e.Delta != 30 {
+		t.Fatalf("入库流水不正确: %+v", e)
+	}
+	if e.Name != "可乐" || e.Unit != "罐" || e.Reason != "整箱到货" || e.By != "老板" || e.At == 0 || e.TS == "" {
+		t.Fatalf("流水快照字段不全: %+v", e)
+	}
+	if p, _ := st.GetProduct("6901"); p.Stock != 150 {
+		t.Fatalf("入库后库存应为 150，实际 %v", p.Stock)
+	}
+
+	// 改数 -6：150 → 144
+	e, err = st.ChangeStock("6901", StockKindAdjust, -6, "整箱到货", "老板")
+	if err != nil {
+		t.Fatalf("改数失败: %v", err)
+	}
+	if e.Delta != -6 || e.Before != 150 || e.After != 144 {
+		t.Fatalf("改数流水不正确: %+v", e)
+	}
+
+	// 盘点 140：144 → 140（qty 是实盘数，不是增量）
+	e, err = st.ChangeStock("6901", StockKindTake, 140, "", "")
+	if err != nil {
+		t.Fatalf("盘点失败: %v", err)
+	}
+	if e.Delta != -4 || e.Before != 144 || e.After != 140 {
+		t.Fatalf("盘点流水不正确: %+v", e)
+	}
+	if e.By != "老板" {
+		t.Fatalf("操作人留空时应回落到老板，实际 %q", e.By)
+	}
+
+	// 非法输入：类型 / 数量 / 商品，一条都不许落下流水
+	bad := []struct {
+		code, kind string
+		qty        float64
+	}{
+		{"6901", "nope", 1},
+		{"6901", StockKindIn, 0},
+		{"6901", StockKindIn, -1},
+		{"6901", StockKindAdjust, 0},
+		{"6901", StockKindTake, -1},
+		{"6901", StockKindAdjust, -1000}, // 改完为负
+		{"", StockKindIn, 1},
+		{"9999", StockKindIn, 1},
+	}
+	for _, c := range bad {
+		if _, err := st.ChangeStock(c.code, c.kind, c.qty, "", ""); err == nil {
+			t.Fatalf("非法库存变更应报错: %+v", c)
+		}
+	}
+	logs, err := st.ListStockLog(0)
+	if err != nil {
+		t.Fatalf("读流水失败: %v", err)
+	}
+	if len(logs) != 3 {
+		t.Fatalf("非法操作不该留流水，期望 3 条，实际 %d", len(logs))
+	}
+	if logs[0].Kind != StockKindTake || logs[2].Kind != StockKindIn {
+		t.Fatalf("流水应按时间倒序（最新在前）: %+v", logs)
+	}
+	if p, _ := st.GetProduct("6901"); p.Stock != 140 {
+		t.Fatalf("非法操作不该改库存，实际 %v", p.Stock)
+	}
+
+	// 直接改数（绝对值）也走审计：值没变不写流水，变了写一条
+	if _, err := st.SetStock("6901", 140); err != nil {
+		t.Fatalf("SetStock 同值失败: %v", err)
+	}
+	if logs, _ := st.ListStockLog(0); len(logs) != 3 {
+		t.Fatalf("同值改数不该写流水，实际 %d 条", len(logs))
+	}
+	if p, err := st.SetStock("6901", 200); err != nil || p.Stock != 200 {
+		t.Fatalf("直接改数失败: %v %+v", err, p)
+	}
+	logs, _ = st.ListStockLog(0)
+	if len(logs) != 4 || logs[0].Kind != StockKindAdjust || logs[0].Delta != 60 || logs[0].Reason != "直接改数" {
+		t.Fatalf("直接改数流水不正确: %+v", logs[0])
+	}
+	if _, err := st.SetStock("6901", -1); err == nil {
+		t.Fatalf("负库存应被拦下")
+	}
+	if _, err := st.SetStock("9999", 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("不存在的商品应报 ErrNotFound，实际 %v", err)
+	}
+}
+
+// 流水只留最近 500 条：审计够用，库不会无限长大。
+func TestStockLogCap(t *testing.T) {
+	st := newTestStore(t)
+	seed(t, st)
+	if _, err := st.SetStock("6901", 0); err != nil {
+		t.Fatalf("清零失败: %v", err)
+	}
+	for i := 0; i < 505; i++ {
+		if _, err := st.ChangeStock("6901", StockKindIn, 1, "压力测试", "老板"); err != nil {
+			t.Fatalf("第 %d 次入库失败: %v", i+1, err)
+		}
+	}
+	logs, err := st.ListStockLog(0)
+	if err != nil {
+		t.Fatalf("读流水失败: %v", err)
+	}
+	if len(logs) != 500 {
+		t.Fatalf("流水上限应为 500，实际 %d", len(logs))
+	}
+	if p, _ := st.GetProduct("6901"); p.Stock != 505 {
+		t.Fatalf("库存应累计到 505，实际 %v", p.Stock)
+	}
+	if logs, _ := st.ListStockLog(3); len(logs) != 3 {
+		t.Fatalf("limit 应生效，实际 %d 条", len(logs))
+	}
+}
+
+// 配送员名单落库：首次有 4 人雏形种子，可增删改，删空到 1 人会被拦（没法派单）。
+func TestCouriersPersist(t *testing.T) {
+	st := newTestStore(t)
+	list, err := st.ListCouriers()
+	if err != nil {
+		t.Fatalf("读配送员失败: %v", err)
+	}
+	if len(list) != 4 || list[0].Name != "老张" {
+		t.Fatalf("首次应有 4 人雏形（老张…），实际 %+v", list)
+	}
+	// 改手机号
+	if _, err := st.SaveCourier("老张", "13800000000", false); err != nil {
+		t.Fatalf("改配送员失败: %v", err)
+	}
+	list, _ = st.ListCouriers()
+	if len(list) != 4 || list[0].Phone != "13800000000" {
+		t.Fatalf("配送员手机号未更新: %+v", list)
+	}
+	// 加人
+	list, err = st.SaveCourier("阿明", "13900000000", false)
+	if err != nil || len(list) != 5 {
+		t.Fatalf("新增配送员失败: %v %+v", err, list)
+	}
+	// 删人
+	list, err = st.SaveCourier("阿明", "", true)
+	if err != nil || len(list) != 4 {
+		t.Fatalf("删除配送员失败: %v %+v", err, list)
+	}
+	if _, err := st.SaveCourier("阿明", "", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("删不存在的配送员应报 ErrNotFound，实际 %v", err)
+	}
+	if _, err := st.SaveCourier("  ", "", false); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("空姓名应报 ErrBadInput，实际 %v", err)
+	}
+	if _, err := st.SaveCourier(strings.Repeat("名", 13), "", false); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("超长姓名应报 ErrBadInput，实际 %v", err)
+	}
+	// 删到只剩 1 人后不许再删
+	for _, n := range []string{"小李", "阿强", "小美"} {
+		if _, err := st.SaveCourier(n, "", true); err != nil {
+			t.Fatalf("删 %s 失败: %v", n, err)
+		}
+	}
+	if _, err := st.SaveCourier("老张", "", true); !errors.Is(err, ErrConflict) {
+		t.Fatalf("只剩一位时应报 ErrConflict，实际 %v", err)
+	}
+	// 重新 Open 同一库不该复活名单（种子只种一次）——用文件库验证更真实，这里退而验证标记位
+	var v string
+	if err := st.DB().QueryRow(`SELECT v FROM setting WHERE k='seed:courier'`).Scan(&v); err != nil || v != "1" {
+		t.Fatalf("种子标记位缺失: %v %q", err, v)
+	}
+}
+
+// 门店抬头落库（小票表头）。
+func TestStoreSettings(t *testing.T) {
+	st := newTestStore(t)
+	s, err := st.GetSettings()
+	if err != nil {
+		t.Fatalf("读门店设置失败: %v", err)
+	}
+	if s.Name != "家庭超市" || s.Footer != "谢谢惠顾，欢迎再来！" || s.Phone != "" || s.Address != "" {
+		t.Fatalf("默认门店抬头不正确: %+v", s)
+	}
+	if _, err := st.SaveSettings(Settings{Name: "  "}); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("空店名应报 ErrBadInput，实际 %v", err)
+	}
+	if _, err := st.SaveSettings(Settings{Name: strings.Repeat("店", 21)}); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("超长店名应报 ErrBadInput，实际 %v", err)
+	}
+	saved, err := st.SaveSettings(Settings{Name: "水东洋便利店", Phone: "0571-8888", Address: "水东洋小区 1 幢", Footer: "  "})
+	if err != nil {
+		t.Fatalf("保存门店设置失败: %v", err)
+	}
+	if saved.Name != "水东洋便利店" || saved.Phone != "0571-8888" || saved.Address != "水东洋小区 1 幢" {
+		t.Fatalf("保存结果不正确: %+v", saved)
+	}
+	if saved.Footer != "谢谢惠顾，欢迎再来！" {
+		t.Fatalf("页脚留空应回到默认，实际 %q", saved.Footer)
+	}
+	again, _ := st.GetSettings()
+	if again != saved {
+		t.Fatalf("回读不一致: %+v vs %+v", again, saved)
+	}
+}
+
+// 顾客备注与标签：手机号即身份，建档 / 更新都不该动到等级。
+func TestCustomerNote(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.SetCustomerNote("", "王阿姨", "", ""); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("空手机号应报 ErrBadInput，实际 %v", err)
+	}
+	if _, err := st.SetCustomerNote("13800001111", "", "", strings.Repeat("备", 201)); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("超长备注应报 ErrBadInput，实际 %v", err)
+	}
+	if _, err := st.SetCustomerNote("13800001111", "", strings.Repeat("签", 61), ""); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("超长标签应报 ErrBadInput，实际 %v", err)
+	}
+	c, err := st.SetCustomerNote("13800001111", "王阿姨", "老客户,3 号楼", "喜欢整箱买")
+	if err != nil {
+		t.Fatalf("写备注失败: %v", err)
+	}
+	if c.Phone != "13800001111" || c.Name != "王阿姨" || c.Tags != "老客户,3 号楼" || c.Note != "喜欢整箱买" {
+		t.Fatalf("顾客档案不正确: %+v", c)
+	}
+	if c.Tier != pricing.TierRetail {
+		t.Fatalf("新档顾客等级应为零售，实际 %q", c.Tier)
+	}
+	if _, err := st.SetCustomerTier("13800001111", "", pricing.TierWholesale); err != nil {
+		t.Fatalf("设等级失败: %v", err)
+	}
+	// 只改备注（姓名留空）不许抹掉姓名与等级
+	c, err = st.SetCustomerNote("13800001111", "", "老客户", "改成送货上门")
+	if err != nil {
+		t.Fatalf("改备注失败: %v", err)
+	}
+	if c.Name != "王阿姨" || c.Tier != pricing.TierWholesale || c.Note != "改成送货上门" || c.Tags != "老客户" {
+		t.Fatalf("改备注不应动姓名/等级: %+v", c)
+	}
+	list, err := st.ListCustomers()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("顾客列表不正确: %v %+v", err, list)
+	}
+	if list[0].Note != "改成送货上门" || list[0].Tags != "老客户" {
+		t.Fatalf("列表未带出备注/标签: %+v", list[0])
+	}
+}

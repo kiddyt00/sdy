@@ -451,3 +451,164 @@ func TestCustomerTierHTTPFlow(t *testing.T) {
 		t.Errorf("POST /api/customers 应 405，实际 %d", code)
 	}
 }
+
+// 任务池⑧（D25）：库存变更走服务端唯一入口，一次事务里改库存 + 留流水。
+func TestStockChangeHTTPFlow(t *testing.T) {
+	ts := newTestServer(t)
+
+	if code, body := do(t, ts, http.MethodPost, "/api/products",
+		`{"code":"7201","name":"整箱可乐","salePrice":60,"stock":10,"unit":"箱"}`); code != 200 {
+		t.Fatalf("建档失败: %d %s", code, body)
+	}
+
+	// 入库 30：响应带流水与改后库存（前端据此刷新本地镜像）
+	code, body := do(t, ts, http.MethodPost, "/api/stock/change",
+		`{"code":"7201","kind":"stock_in","qty":30,"reason":"整箱到货","by":"老板"}`)
+	if code != 200 || !strings.Contains(body, `"stock":40`) || !strings.Contains(body, `"kind":"stock_in"`) ||
+		!strings.Contains(body, `"before":10`) || !strings.Contains(body, `"after":40`) ||
+		!strings.Contains(body, `"reason":"整箱到货"`) {
+		t.Fatalf("入库应返回流水与改后库存，实际 %d %s", code, body)
+	}
+
+	// 改数 -5、盘点 30（盘点写的是实盘数，delta 由服务端算）
+	if code, body = do(t, ts, http.MethodPost, "/api/stock/change",
+		`{"code":"7201","kind":"adjust","qty":-5,"reason":"破损报废","by":"老板"}`); code != 200 ||
+		!strings.Contains(body, `"stock":35`) {
+		t.Fatalf("改数失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/stock/change",
+		`{"code":"7201","kind":"stock_take","qty":30,"reason":"盘点","by":"老板"}`); code != 200 ||
+		!strings.Contains(body, `"stock":30`) || !strings.Contains(body, `"delta":-5`) {
+		t.Fatalf("盘点失败: %d %s", code, body)
+	}
+
+	// 流水可查，最新在前
+	code, body = do(t, ts, http.MethodGet, "/api/stocklog?limit=30", "")
+	if code != 200 || !strings.Contains(body, `"total":3`) || !strings.Contains(body, `"kind":"stock_take"`) {
+		t.Fatalf("流水查询失败: %d %s", code, body)
+	}
+
+	// 非法输入一条都不许留痕，库存也不许变
+	for _, bad := range []string{
+		`{"code":"7201","kind":"nope","qty":1}`,
+		`{"code":"7201","kind":"stock_in","qty":0}`,
+		`{"code":"7201","kind":"adjust","qty":0}`,
+		`{"code":"7201","kind":"stock_take","qty":-1}`,
+		`{"code":"","kind":"stock_in","qty":1}`,
+		`{"code":"查无此货","kind":"stock_in","qty":1}`,
+	} {
+		if code, body = do(t, ts, http.MethodPost, "/api/stock/change", bad); code != 400 && code != 404 {
+			t.Errorf("非法输入应 400/404，实际 %d %s（%s）", code, body, bad)
+		}
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/stocklog", ""); code != 200 || !strings.Contains(body, `"total":3`) {
+		t.Errorf("失败不应留流水，实际 %d %s", code, body)
+	}
+	if _, body = do(t, ts, http.MethodGet, "/api/products?keyword=7201", ""); !strings.Contains(body, `"stock":30`) {
+		t.Errorf("失败不应改库存，实际 %s", body)
+	}
+
+	// 老接口 SetStock 也留流水（绝对值 → 走同一个入口）
+	if code, body = do(t, ts, http.MethodPost, "/api/products/stock", `{"code":"7201","stock":45}`); code != 200 ||
+		!strings.Contains(body, `"stock":45`) {
+		t.Fatalf("老接口改库存失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/stocklog", ""); code != 200 ||
+		!strings.Contains(body, `"total":4`) || !strings.Contains(body, "直接改数") {
+		t.Errorf("老接口也应留流水，实际 %d %s", code, body)
+	}
+
+	// 方法不支持
+	if code, _ = do(t, ts, http.MethodGet, "/api/stock/change", ""); code != 405 {
+		t.Errorf("GET /api/stock/change 应 405，实际 %d", code)
+	}
+	if code, _ = do(t, ts, http.MethodPost, "/api/stocklog", `{}`); code != 405 {
+		t.Errorf("POST /api/stocklog 应 405，实际 %d", code)
+	}
+}
+
+// 任务池⑧（D25）：配送员、门店抬头、顾客备注都落库，换设备后一致。
+func TestCourierSettingsNoteHTTPFlow(t *testing.T) {
+	ts := newTestServer(t)
+
+	// 配送员：默认种入 4 位（原来只在浏览器 localStorage 里）
+	code, body := do(t, ts, http.MethodGet, "/api/couriers", "")
+	if code != 200 || !strings.Contains(body, `"total":4`) || !strings.Contains(body, "老张") {
+		t.Fatalf("默认配送员应为 4 位，实际 %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/couriers", `{"name":"阿明","phone":"13900009999"}`); code != 200 ||
+		!strings.Contains(body, `"total":5`) || !strings.Contains(body, "阿明") {
+		t.Fatalf("新增配送员失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/couriers", `{"name":"阿明","remove":true}`); code != 200 ||
+		!strings.Contains(body, `"total":4`) {
+		t.Fatalf("删除配送员失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/couriers", `{"name":"  "}`); code != 400 ||
+		!strings.Contains(body, "不能为空") {
+		t.Errorf("空姓名应 400，实际 %d %s", code, body)
+	}
+	if code, _ = do(t, ts, http.MethodPost, "/api/couriers", `{"name":"查无此人","remove":true}`); code != 404 {
+		t.Errorf("删不存在应 404，实际 %d", code)
+	}
+	for _, n := range []string{"小李", "阿强", "小美"} {
+		if code, body = do(t, ts, http.MethodPost, "/api/couriers", `{"name":"`+n+`","remove":true}`); code != 200 {
+			t.Fatalf("删除 %s 失败: %d %s", n, code, body)
+		}
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/couriers", `{"name":"老张","remove":true}`); code != 409 ||
+		!strings.Contains(body, "至少要保留一位配送员") {
+		t.Errorf("只剩一位时应 409，实际 %d %s", code, body)
+	}
+
+	// 门店抬头：默认值 → 保存 → 回读一致
+	if code, body = do(t, ts, http.MethodGet, "/api/settings", ""); code != 200 ||
+		!strings.Contains(body, "家庭超市") || !strings.Contains(body, "谢谢惠顾") {
+		t.Fatalf("默认门店抬头不对: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/settings",
+		`{"name":"水东洋便利店","phone":"13800001111","address":"水东洋小区 1 栋","footer":""}`); code != 200 ||
+		!strings.Contains(body, "水东洋便利店") || !strings.Contains(body, "谢谢惠顾") {
+		t.Fatalf("保存门店抬头失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/settings", ""); code != 200 ||
+		!strings.Contains(body, "水东洋便利店") || !strings.Contains(body, "水东洋小区 1 栋") {
+		t.Fatalf("回读门店抬头不一致: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/settings", `{"name":"  "}`); code != 400 ||
+		!strings.Contains(body, "请填写店名") {
+		t.Errorf("空店名应 400，实际 %d %s", code, body)
+	}
+	if code, _ = do(t, ts, http.MethodDelete, "/api/settings", ""); code != 405 {
+		t.Errorf("DELETE /api/settings 应 405，实际 %d", code)
+	}
+
+	// 顾客备注与标签：建档默认零售；改备注不动等级与姓名
+	if code, body = do(t, ts, http.MethodPost, "/api/customers/note",
+		`{"phone":"13800001111","name":"王阿姨","tags":"老客,爱买啤酒","note":"三楼，放冰箱"}`); code != 200 ||
+		!strings.Contains(body, `"tier":"retail"`) || !strings.Contains(body, "爱买啤酒") {
+		t.Fatalf("写顾客备注失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/customers/tier",
+		`{"phone":"13800001111","name":"","tier":"vip"}`); code != 200 {
+		t.Fatalf("设等级失败: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/customers/note",
+		`{"phone":"13800001111","name":"","tags":"老客","note":"改地址了"}`); code != 200 ||
+		!strings.Contains(body, `"tier":"vip"`) || !strings.Contains(body, "王阿姨") ||
+		!strings.Contains(body, "改地址了") {
+		t.Fatalf("改备注不应动等级与姓名: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/customers", ""); code != 200 ||
+		!strings.Contains(body, "改地址了") || !strings.Contains(body, "老客") {
+		t.Fatalf("顾客列表应带出标签备注: %d %s", code, body)
+	}
+	if code, body = do(t, ts, http.MethodPost, "/api/customers/note",
+		`{"phone":"13800001111","note":"`+strings.Repeat("长", 201)+`"}`); code != 400 ||
+		!strings.Contains(body, "备注不能超过 200 字") {
+		t.Errorf("超长备注应 400，实际 %d %s", code, body)
+	}
+	if code, _ = do(t, ts, http.MethodGet, "/api/customers/note", ""); code != 405 {
+		t.Errorf("GET /api/customers/note 应 405，实际 %d", code)
+	}
+}

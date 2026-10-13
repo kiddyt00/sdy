@@ -230,7 +230,7 @@
       <div class="panel">
         <div class="panel-head">
           <h3>库存与流水</h3>
-          <span class="sub">整箱饮料直接改数；到货记入库；月底盘点校准</span>
+          <span class="sub">整箱饮料直接改数；到货记入库；月底盘点校准 · 在线时每次变动都写后端审计流水</span>
         </div>
         <div class="panel-body tight"><div id="stockRows"></div></div>
       </div>
@@ -655,11 +655,32 @@ function renderOrders() {
       '</div></div>';
   }).join('') : '<div class="empty"><span class="big">' + (curFilter ? '🔍' : '🧾') + '</span>' + (curFilter ? '这个状态下没有订单' : '还没有订单') + '</div>';
 }
-function saveCouriers() {
+// 配送员名单（任务池⑧ / D25）：在线时真源在后端 courier 表（增删带约束校验），
+// 保存时按「本地输入 vs 后端名单」求差集逐个调接口，再把后端名单拉回来做镜像；离线只改本地。
+function renderCouriers() {
+  if (!$('couriers')) return;
+  $('couriers').value = Admin.getCouriers().join('，');
+}
+async function saveCouriers() {
   const list = ($('couriers').value || '').split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
-  Admin.setCouriers(list);
-  toast(list.length ? '配送员已保存：' + list.join('、') : '已清空配送员名单');
-  renderOrders();
+  if (!list.length) return toast('配送员名单不能为空', 3000);
+  if (online()) {
+    try {
+      const cur = (await SdyApi.listCouriers()) || [];
+      const curNames = cur.map(c => c.name);
+      const added = list.filter(n => curNames.indexOf(n) < 0);
+      const removed = curNames.filter(n => list.indexOf(n) < 0);
+      for (const n of added) await SdyApi.saveCourier(n, '');
+      for (const n of removed) await SdyApi.saveCourier(n, '', true);
+      const after = (await SdyApi.listCouriers()) || [];
+      Admin.setCouriers(after.map(c => c.name));
+      renderCouriers(); renderOrders();
+      return toast('配送员已保存到后端：' + after.map(c => c.name).join('、') + (removed.length ? '（删除 ' + removed.length + ' 人）' : ''));
+    } catch (e) { return toast('后端未接受配送员改动：' + e.message, 4200); }
+  }
+  try { Admin.setCouriers(list); } catch (e) { return toast(e.message, 3600); }
+  toast('配送员已保存：' + list.join('、'));
+  renderCouriers(); renderOrders();
 }
 async function assign(id) {
   const sel = $('cs_' + id);
@@ -730,22 +751,43 @@ function printPending() {
     receiptHTML(Admin.buildReceipt(o, { store: store })) + '</div>').join(''),
     '已生成 ' + list.length + ' 张小票，正在唤起打印…');
 }
-function saveStore() {
-  try { Admin.setStoreInfo({ name: $('stName').value, phone: $('stPhone').value, address: $('stAddr').value, footer: $('stFooter').value }); }
-  catch (e) { return toast(e.message, 3600); }
+// 门店抬头（任务池⑧ / D25）：在线时真源在后端 setting 表（换台设备打票表头一致）；
+// 保存成功把后端返回值镜像回本地，离线/后端不可用时仍按本地值打票。
+async function saveStore() {
+  const payload = {
+    name: $('stName').value, phone: $('stPhone').value,
+    address: $('stAddr').value, footer: $('stFooter').value
+  };
+  let saved = null;
+  if (online()) {
+    try {
+      const r = await SdyApi.saveSettings(payload);
+      if (r && r.name) saved = Admin.setStoreInfo(r);
+    } catch (e) { return toast('后端未接受门店抬头：' + e.message, 4200); }
+  }
+  if (!saved) {
+    try { saved = Admin.setStoreInfo(payload); }
+    catch (e) { return toast(e.message, 3600); }
+  }
   renderStore();
   toast('小票抬头已保存，下次打票即生效');
 }
-function renderStore() {
+async function renderStore() {
   if (!$('stName')) return;
+  if (online()) {
+    try { const s = await SdyApi.getSettings(); if (s && s.name) Admin.setStoreInfo(s); } catch (e) { }
+  }
   const s = Admin.getStoreInfo();
   $('stName').value = s.name; $('stPhone').value = s.phone; $('stAddr').value = s.address; $('stFooter').value = s.footer;
 }
 
 /* ---------------- 库存 ---------------- */
-async function pushStock(code, stock) {
-  if (!online()) return;
-  try { await SdyApi.setStock(code, stock); } catch (e) { toast('后端未接受库存：' + e.message, 3600); }
+// 库存变更（任务池⑧ / D25）：在线走服务端唯一入口——一个事务里改库存 + 写审计流水
+// （谁、为什么、前后各是多少），服务端返回的流水原样镜像回本地；离线才用本地那一套。
+async function applyStockChangeRemote(code, kind, qty, reason) {
+  if (!online()) return null;
+  const r = await SdyApi.changeStock(code, kind, qty, reason, BY);
+  return r && r.entry ? r.entry : null;
 }
 function renderStock() {
   const list = Mall.loadCatalog();
@@ -772,17 +814,25 @@ function renderStock() {
   }).join('') || '<div class="empty">商品库是空的，先去扫码台建档</div>';
   renderStockLog();
 }
-function renderStockLog() {
-  const log = Admin.getStockLog().slice(0, 30);
+async function renderStockLog() {
+  let log = Admin.getStockLog(30);
+  let fromServer = false;
+  if (online()) {
+    try {
+      const items = await SdyApi.listStockLog(30);
+      if (items && items.length) { log = items; fromServer = true; }
+    } catch (e) { }
+  }
+  log = log.slice(0, 30);
   const LT = { stock_in: ['入库', 'in'], adjust: ['改数', 'adj'], stock_take: ['盘点', 'take'] };
-  $('stockLogCount').textContent = log.length ? '最近 ' + log.length + ' 条' : '';
+  $('stockLogCount').textContent = log.length ? '最近 ' + log.length + ' 条' + (fromServer ? '（后端审计）' : '') : '';
   $('stockLog').innerHTML = log.length ? log.map(e => {
-    const t = LT[e.type] || ['操作', 'adj'];
+    const t = LT[e.kind || e.type] || ['操作', 'adj'];
     return '<div class="logline"><span class="lgt ' + t[1] + '">' + t[0] + '</span>' +
       '<span>' + esc(e.name || e.code) + ' ' + esc(e.unit || '件') + '：' + e.before + ' → <b>' + e.after + '</b>' +
       (e.delta ? '（' + (e.delta > 0 ? '+' : '') + e.delta + '）' : '') + '</span>' +
       '<span class="muted">' + esc(e.reason || '') + ' · ' + esc(e.by || BY) + '</span>' +
-      '<span class="ts">' + when(e.at) + '</span></div>';
+      '<span class="ts">' + when(e.at || e.ts) + '</span></div>';
   }).join('') : '<div class="empty">还没有库存操作记录</div>';
 }
 function toastChange(verb, code, e) {
@@ -792,24 +842,37 @@ function toastChange(verb, code, e) {
 async function doStockIn(code) {
   const q = Number($('si_' + code).value);
   if (!q || isNaN(q)) return toast('入库数量填一下');
-  const e = Admin.stockIn(code, q, $('sr_' + code).value.trim() || '现场入库', BY);
-  await pushStock(code, e.after);
+  const reason = $('sr_' + code).value.trim() || '现场入库';
+  let e = null;
+  try { e = await applyStockChangeRemote(code, 'stock_in', q, reason); }
+  catch (err) { return toast('后端未接受入库：' + err.message, 4200); }
+  if (!e) e = Admin.stockIn(code, q, reason, BY);
   toastChange('已入库', code, e);
   renderStock(); renderDash();
 }
 async function doAdjust(code) {
   const d = Number($('ad_' + code).value);
   if (!d || isNaN(d)) return toast('改数填个数字，比如 -6 或 12');
-  const e = Admin.adjustStock(code, d, $('ar_' + code).value.trim() || '手动调整', BY);
-  await pushStock(code, e.after);
+  const reason = $('ar_' + code).value.trim() || '手动调整';
+  let e = null;
+  try { e = await applyStockChangeRemote(code, 'adjust', d, reason); }
+  catch (err) { return toast('后端未接受改数：' + err.message, 4200); }
+  if (!e) e = Admin.adjustStock(code, d, reason, BY);
   toastChange('已改数', code, e);
   renderStock(); renderDash();
 }
 async function doTake(code) {
   const v = $('st_' + code).value;
   if (v === '' || isNaN(Number(v))) return toast('填一下实盘数量');
-  const e = Admin.stockTake(code, Number(v), BY);
-  if (e.delta !== 0) await pushStock(code, e.after);
+  const counted = Number(v);
+  let e = null;
+  const cur = Mall.getProduct(code);
+  if (online() && cur && counted === cur.stock) {
+    return toast('实盘数与账面一致（' + counted + '），无需校准');   // 同值不必打扰后端
+  }
+  try { e = await applyStockChangeRemote(code, 'stock_take', counted, '盘点校准'); }
+  catch (err) { return toast('后端未接受盘点：' + err.message, 4200); }
+  if (!e) e = Admin.stockTake(code, counted, BY);
   toastChange('盘点校准', code, e);
   renderStock(); renderDash();
 }
@@ -1320,10 +1383,14 @@ function renderCust() {
     '</div>';
   }).join('') : '<div class="empty"><span class="big">👥</span>还没有顾客记录（登记等级或下单后自动沉淀）</div>';
 }
-function saveNote(phone) {
-  Admin.setCustomerNote(phone, $('note_' + phone).value.trim(), $('tag_' + phone).value);
-  toast('顾客档案已保存');
+// 备注 / 标签（任务池⑧ / D25）：在线写后端 customer.tags/note（换台设备也查得到），离线写本地档案
+async function saveNote(phone) {
+  const tag = $('tag_' + phone).value;
+  const note = $('note_' + phone).value.trim();
+  try { await Admin.saveCustomerNote(phone, '', tag, note); }
+  catch (e) { return toast('保存失败：' + e.message, 4200); }
   renderCust();
+  toast(online() ? '顾客档案已保存到后端' : '顾客档案已保存');
 }
 // 设顾客等级（D24）：在线写后端、离线写本地档案；价格由服务端按等级算
 async function saveTier(phone) {
@@ -1383,7 +1450,7 @@ async function setBase() {
 function renderAll() {
   if (tab === 'dash') renderDash();
   else if (tab === 'report') renderReport();
-  else if (tab === 'orders') renderOrders();
+  else if (tab === 'orders') { renderOrders(); renderCouriers(); }
   else if (tab === 'stock') renderStock();
   else if (tab === 'products') renderProducts();
   else if (tab === 'pricing') renderPricing();
@@ -1395,7 +1462,7 @@ async function refreshAll() {
   renderAll();
 }
 function renderAllAdmin() {
-  renderFilters(); renderOrders(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore();
+  renderFilters(); renderOrders(); renderCouriers(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore();
 }
 async function initApi() {
   const badge = $('modeBadge');
@@ -1407,6 +1474,15 @@ async function initApi() {
     if (st.online) {
       try { await SdyApi.sync(); } catch (e) { }
       try { await Admin.refreshCustomers(); } catch (e) { }   // 顾客等级（D24）：后端真源同步进本地档案
+      // 库存流水 / 配送员 / 门店抬头（任务池⑧ / D25）：后端是真源，开机拉一次镜像
+      try {
+        const cs = await SdyApi.listCouriers();
+        if (cs && cs.length) Admin.setCouriers(cs.map(c => c.name));
+      } catch (e) { }
+      try {
+        const s = await SdyApi.getSettings();
+        if (s && s.name) Admin.setStoreInfo(s);
+      } catch (e) { }
       try {
         const h = await SdyApi.health();
         if (h && h.circuitOpen) toast('⚠️ 条码云端查询已熔断（今日额度耗尽或连续失败），扫码台只查本地库', 4200);

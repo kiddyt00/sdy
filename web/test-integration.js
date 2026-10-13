@@ -2,6 +2,7 @@
  * 端到端联调测试：真 fetch → 真 Go 后端（不是假 fetch）
  *   验证「前端页面代码（Mall + SdyApi）」与「后端 HTTP API」确实对得上：
  *   下单扣库存 / 运费规则 / 状态流转 / 非法流转 409 / 取消回补 / 比价巡检 / 条码解析
+ *   库存审计落库（D25）/ 配送员 / 门店抬头 / 顾客备注 / 离线降级
  *
  * 用法：
  *   1) 先启动后端：cd server && STATIC_DIR=.. go run ./cmd/server
@@ -11,6 +12,7 @@
 'use strict';
 const Mall = require('./mall.js');
 const SdyApi = require('./sdy-api.js');
+const Admin = require('./mall-admin.js');
 
 const BASE = process.env.SDY_API_BASE || 'http://127.0.0.1:8093';
 const CODE = '6901234567892';   // 可口可乐 2.5/罐（后端种子数据）
@@ -33,7 +35,7 @@ async function serverStock(code) {
   SdyApi._resetForTest();
   Mall.loadCatalog();
 
-  const st = await SdyApi.boot({ base: BASE, mall: Mall, timeoutMs: 1500 });
+  const st = await SdyApi.boot({ base: BASE, mall: Mall, admin: Admin, timeoutMs: 1500 });
   if (!st.online) {
     console.log('⏭  未探测到后端 ' + BASE + '（' + st.error + '）');
     console.log('   先启动后端再跑本联调测试：cd server && STATIC_DIR=.. go run ./cmd/server');
@@ -112,10 +114,64 @@ async function serverStock(code) {
   Mall.setMyPhone('');
   ok(Math.abs(Mall.getProduct(CODE).price - 2.5) < 1e-6, '清理后可乐回到零售价 2.5');
 
-  section('⑧ 离线降级路径（错误地址）');
+  section('⑧ 库存审计 / 配送员 / 门店抬头 / 顾客备注（D25，真后端落库）');
+  const logBefore = await SdyApi.listStockLog(500);
+  const rIn = await SdyApi.changeStock(CODE, 'stock_in', 5, '联调入库', '联调');
+  ok(rIn && rIn.ok === true && rIn.entry.kind === 'stock_in', '入库走 POST /api/stock/change，返回审计流水');
+  ok(rIn.entry.before + 5 === rIn.entry.after && rIn.stock === rIn.entry.after,
+    '流水前后值自洽且 stock=after：' + rIn.entry.before + ' → ' + rIn.entry.after);
+  ok(rIn.entry.reason === '联调入库' && rIn.entry.by === '联调', '「为什么改 / 谁改的」都记下：' + rIn.entry.reason + ' / ' + rIn.entry.by);
+  ok(!!rIn.entry.ts && rIn.entry.at > 0, '流水带时间戳（' + rIn.entry.ts + '）');
+  ok((await serverStock(CODE)) === rIn.entry.after, '服务端库存 = 流水 after（' + rIn.entry.after + '）');
+  ok(Mall.getProduct(CODE).stock === rIn.entry.after, '本地镜像自动对齐 after（' + Mall.getProduct(CODE).stock + '）');
+
+  const rAdj = await SdyApi.changeStock(CODE, 'adjust', -3, '联调改数', '联调');
+  ok(Math.abs(rAdj.entry.delta + 3) < 1e-6, '改数流水 delta = ' + rAdj.entry.delta);
+  const rTake = await SdyApi.changeStock(CODE, 'stock_take', rAdj.entry.after, '联调盘点', '联调');
+  ok(rTake.entry.delta === 0 && rTake.entry.after === rAdj.entry.after, '盘点以实盘为准（delta=' + rTake.entry.delta + '，账面=' + rTake.entry.after + '）');
+
+  let badQty = '';
+  try { await SdyApi.changeStock(CODE, 'adjust', 0, '', '联调'); } catch (e) { badQty = e.message; }
+  ok(badQty.indexOf('不能为 0') >= 0, '非法改数被后端拒绝：' + badQty);
+  const log2 = await SdyApi.listStockLog(2);
+  ok(log2.length === 2 && log2[0].id > log2[1].id, '流水按时间倒序、limit=2 生效');
+  ok(log2[0].code === CODE, '最新一条就是刚才那笔（' + log2[0].kind + '）');
+  const logAfter = await SdyApi.listStockLog(500);
+  ok(logAfter.length === Math.min(500, logBefore.length + 3), '三笔变更各留一条审计（' + logBefore.length + ' → ' + logAfter.length + '）');
+
+  const c0 = await SdyApi.listCouriers();
+  ok(c0.length >= 4 && c0.some(c => c.name === '老张'), '配送员名单来自后端（' + c0.length + ' 人，含老张）');
+  const c1 = await SdyApi.saveCourier('联调临时', '13700000009');
+  ok(c1.some(c => c.name === '联调临时'), '新增配送员落库（' + c1.length + ' 人）');
+  const c2 = await SdyApi.saveCourier('联调临时', '', true);
+  ok(!c2.some(c => c.name === '联调临时') && c2.length === c0.length, '删除后回到 ' + c2.length + ' 人');
+
+  const s0 = await SdyApi.getSettings();
+  ok(!!s0 && !!s0.name, '门店抬头来自后端（' + s0.name + '）');
+  const s1 = await SdyApi.saveSettings({ name: '联调小店', phone: '0591-0000000', address: '联调路 1 号', footer: '' });
+  ok(s1.name === '联调小店' && !!s1.footer, '保存抬头，页脚留空回默认（' + s1.footer + '）');
+  const s2 = await SdyApi.getSettings();
+  ok(s2.name === '联调小店' && s2.phone === '0591-0000000', '重新读取仍是保存后的值（真落库）');
+  await SdyApi.saveSettings({ name: s0.name, phone: s0.phone, address: s0.address, footer: s0.footer });
+  ok((await SdyApi.getSettings()).name === s0.name, '还原原抬头（' + s0.name + '）');
+
+  const PH2 = '13800003333';
+  const n1 = await SdyApi.setCustomerNote(PH2, '联调备注顾客', '熟客', '每周三来拿两箱水');
+  ok(n1.phone === PH2 && n1.tags === '熟客' && n1.note.indexOf('两箱水') >= 0, '顾客备注与标签落库');
+  ok(n1.tier === 'retail', '只登记备注不动等级（tier=' + n1.tier + '）');
+  const cust = (await SdyApi.listCustomers()).find(c => c.phone === PH2);
+  ok(!!cust && cust.tags === '熟客' && cust.note.indexOf('两箱水') >= 0, '顾客档案里能查到备注与标签');
+  let badNote = '';
+  try { await SdyApi.setCustomerNote(PH2, '', '', 'x'.repeat(201)); } catch (e) { badNote = e.message; }
+  ok(badNote.indexOf('200') >= 0, '超长备注被后端拒绝：' + badNote);
+
+  section('⑨ 离线降级路径（错误地址）');
   SdyApi._resetForTest();
   const st2 = await SdyApi.boot({ base: 'http://127.0.0.1:1', mall: Mall, timeoutMs: 600 });
   ok(st2.online === false, '连不上时自动退回本地演示模式');
+  ok((await SdyApi.changeStock(CODE, 'stock_in', 1, '', '')) === null, '离线时库存变更不发请求、返回 null');
+  ok((await SdyApi.listCouriers()) === null && (await SdyApi.getSettings()) === null, '离线时配送员/门店抬头返回 null');
+  ok((await SdyApi.listStockLog(30)) === null && (await SdyApi.setCustomerNote('13800009999', '', '', '')) === null, '离线时流水/备注返回 null');
 
   console.log('\n========================================');
   console.log('联调通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');

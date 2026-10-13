@@ -18,7 +18,7 @@
 const SdyApi = (() => {
 
   const LS_BASE_KEY = 'sdy_api_base';
-  const DEFAULTS = { timeoutMs: 2000, base: '', fetchImpl: null, mall: null };
+  const DEFAULTS = { timeoutMs: 2000, base: '', fetchImpl: null, mall: null, admin: null };
 
   let cfg = Object.assign({}, DEFAULTS);
   let mode_ = 'local';          // 'server' | 'local'
@@ -42,6 +42,16 @@ const SdyApi = (() => {
     const m = resolveMall();
     if (!m) throw new Error('SdyApi 找不到 Mall 模块（请先引入 mall.js）');
     return m;
+  }
+  // resolveAdmin：库存流水的本地镜像由管理端模块负责（Node 测试可用 cfg.admin 注入桩）。
+  function resolveAdmin() {
+    if (cfg.admin && typeof cfg.admin.recordStockEntry === 'function') return cfg.admin;
+    // 浏览器里 Admin 是 classic script 的顶层 const，不在 window 上，只能靠全局词法查找（与 resolveMall 同法）
+    try {
+      if (typeof Admin !== 'undefined' && Admin && typeof Admin.recordStockEntry === 'function') return Admin;
+    } catch (e) { /* 尚未初始化（TDZ）时忽略 */ }
+    if (typeof window !== 'undefined' && window.Admin && typeof window.Admin.recordStockEntry === 'function') return window.Admin;
+    return null;
   }
   function fetchImpl() {
     if (cfg.fetchImpl) return cfg.fetchImpl;
@@ -343,6 +353,49 @@ const SdyApi = (() => {
     if (mode_ !== 'server') return null;
     return req('POST', '/api/customers/tier', { phone: phone, name: name || '', tier: tier });
   }
+  async function setCustomerNote(phone, name, tags, note) {
+    if (mode_ !== 'server') return null;
+    return req('POST', '/api/customers/note', { phone: phone, name: name || '', tags: tags || '', note: note || '' });
+  }
+
+  // ---------------- 库存流水 / 配送员 / 门店抬头（任务池⑧ / D25） ----------------
+  // 这四样原来只存在浏览器 localStorage，换台设备 / 清缓存就丢；现在真源都在后端。
+  // changeStock：入库 / 改数 / 盘点唯一入口，服务端一个事务里改库存 + 写审计流水。
+  async function changeStock(code, kind, qty, reason, by) {
+    if (mode_ !== 'server') return null;
+    const res = await req('POST', '/api/stock/change', {
+      code: code, kind: kind, qty: Number(qty), reason: reason || '', by: by || ''
+    });
+    const a = resolveAdmin();
+    if (res && res.entry && a) a.recordStockEntry(res.entry);   // 本地镜像对齐（库存 + 流水，按 id 幂等）
+    return res;
+  }
+  async function listStockLog(limit) {
+    if (mode_ !== 'server') return null;
+    const res = await req('GET', '/api/stocklog?limit=' + (Number(limit) > 0 ? Number(limit) : 30));
+    return (res && res.items ? res.items : []);
+  }
+  async function listCouriers() {
+    if (mode_ !== 'server') return null;
+    const res = await req('GET', '/api/couriers');
+    return (res && res.items ? res.items : []);
+  }
+  async function saveCourier(name, phone, remove) {
+    if (mode_ !== 'server') return null;
+    const res = await req('POST', '/api/couriers', { name: name, phone: phone || '', remove: !!remove });
+    return (res && res.items ? res.items : []);
+  }
+  async function getSettings() {
+    if (mode_ !== 'server') return null;
+    return req('GET', '/api/settings');
+  }
+  async function saveSettings(s) {
+    if (mode_ !== 'server') return null;
+    const x = s || {};
+    return req('POST', '/api/settings', {
+      name: x.name || '', phone: x.phone || '', address: x.address || '', footer: x.footer || ''
+    });
+  }
 
   // ---------------- 收货地址簿（D18） ----------------
   // 在线时以后端为准，每次操作后把整册镜像回 localStorage（离线仍能一键带出默认地址）；
@@ -421,6 +474,13 @@ const SdyApi = (() => {
     getMyTier: getMyTier,
     listCustomers: listCustomers,
     setCustomerTier: setCustomerTier,
+    setCustomerNote: setCustomerNote,
+    changeStock: changeStock,
+    listStockLog: listStockLog,
+    listCouriers: listCouriers,
+    saveCourier: saveCourier,
+    getSettings: getSettings,
+    saveSettings: saveSettings,
     listAddresses: listAddresses,
     defaultAddress: defaultAddress,
     saveAddress: saveAddress,
