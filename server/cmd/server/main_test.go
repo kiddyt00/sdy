@@ -676,9 +676,9 @@ func TestWxLoginHTTPFlow(t *testing.T) {
 
 	// ② 带手机号：绑到批发顾客，等级跟着档案走（绑手机号本身不提权）
 	code, body = call(ts, http.MethodPost, "/api/wx/login",
-		`{"code":"CODE_2","phone":"13800001111","nickname":"阿明"}`)
+		`{"code":"CODE_2","phone":"13800001111","nickname":"阿明","avatar":"https://x/a.png"}`)
 	if code != 200 || !strings.Contains(body, `"bound":true`) || !strings.Contains(body, `"tier":"wholesale"`) ||
-		!strings.Contains(body, `"name":"王阿姨"`) {
+		!strings.Contains(body, `"name":"王阿姨"`) || !strings.Contains(body, `"avatar":"https://x/a.png"`) {
 		t.Fatalf("绑手机号后应拿到批发等级与档案姓名: %d %s", code, body)
 	}
 
@@ -726,6 +726,28 @@ func TestWxLoginHTTPFlow(t *testing.T) {
 	if code, body = call(bare, http.MethodPost, "/api/wx/login", `{"code":"CODE_5"}`); code != 503 ||
 		!strings.Contains(body, "未配置") {
 		t.Errorf("未配置应 503，实际 %d %s", code, body)
+	}
+
+	// ⑩ 头像昵称保存（第 25 轮 / D31）：空值保留原值、未知 openid 404、缺 openid 400、错方法 405
+	if code, body = call(ts, http.MethodPost, "/api/wx/profile",
+		`{"openid":"o_TEST_1","nickname":"小美","avatar":"https://x/b.png"}`); code != 200 ||
+		!strings.Contains(body, `"nickname":"小美"`) || !strings.Contains(body, `"avatar":"https://x/b.png"`) {
+		t.Errorf("保存头像昵称失败: %d %s", code, body)
+	}
+	// 只改昵称：头像必须留着（否则用户每次编辑昵称都会掉头像）
+	if code, body = call(ts, http.MethodPost, "/api/wx/profile", `{"openid":"o_TEST_1","nickname":"小美2"}`); code != 200 ||
+		!strings.Contains(body, `"avatar":"https://x/b.png"`) {
+		t.Errorf("空头像应保留原头像: %d %s", code, body)
+	}
+	if code, body = call(ts, http.MethodPost, "/api/wx/profile", `{"openid":"o_none"}`); code != 404 {
+		t.Errorf("未知 openid 应 404，实际 %d %s", code, body)
+	}
+	if code, body = call(ts, http.MethodPost, "/api/wx/profile", `{}`); code != 400 ||
+		!strings.Contains(body, "缺少 openid") {
+		t.Errorf("缺 openid 应 400，实际 %d %s", code, body)
+	}
+	if code, _ = call(ts, http.MethodGet, "/api/wx/profile", ""); code != 405 {
+		t.Errorf("GET /api/wx/profile 应 405，实际 %d", code)
 	}
 
 	// ⑧ 假微信服务器确实被调用了（否则上面全是假通过）

@@ -254,29 +254,48 @@ async function main() {
   ok(rules.effectivePrice('wholesale', 2.5, 2.2) === 2.2, '批发等级用批发价')
   ok(rules.effectivePrice('wholesale', 2.5, 0) === 2.5, '没设批发价 → 回落零售价')
 
-  /* ---------- ⑨ 微信登录（第 23 轮 / D28） ---------- */
+  /* ---------- ⑨ 微信登录（第 23 轮 / D28；第 25 轮 D31 不绑手机号） ---------- */
   section('⑨ 微信登录与顾客身份')
-  const LOGIN_OK = { method: 'POST', path: '/api/wx/login', body: { ok: true, openid: 'o_test_1', bound: true, phone: '13800001111', name: '王阿姨', tier: 'wholesale' } }
-  global.wx = mkWx(ROUTES.concat([LOGIN_OK]))
+  const LOGIN_OK = { method: 'POST', path: '/api/wx/login', body: { ok: true, openid: 'o_test_1', bound: false, phone: '', name: '', nickname: '阿明', avatar: '', tier: 'retail' } }
+  const PROFILE_OK = { method: 'POST', path: '/api/wx/profile', body: { ok: true, openid: 'o_test_1', nickname: '阿明', avatar: 'https://x/a.png' } }
+  const ADDR_OK = { method: 'GET', path: '/api/addresses', body: { items: [{ id: 7, phone: '13800001111', contact: '王阿姨', address: '幸福小区 3 栋 201', isDefault: true }], total: 1 } }
+  global.wx = mkWx(ROUTES.concat([LOGIN_OK, PROFILE_OK, ADDR_OK]))
   api.clearSession()
   await api.probe()
   ok(api.isLoggedIn() === false && api.boundPhone() === '' && api.session() === null, '未登录：isLoggedIn=false、boundPhone 空、session=null')
   ok(api.sessionLabel().indexOf('未登录') >= 0, '未登录文案：' + api.sessionLabel())
 
-  const sess = await api.wxLogin({ phone: '13800001111', nickname: '阿明' })
-  ok(sess.openid === 'o_test_1' && sess.tier === 'wholesale' && sess.bound === true, '登录成功并记住 openid / 等级')
-  ok(api.isLoggedIn() === true && api.boundPhone() === '13800001111', '登录态落地本地')
-  ok(global.wx.getStorageSync('sdy_mp_session') && global.wx.getStorageSync('sdy_mp_session').name === '王阿姨', '会话写入 sdy_mp_session')
-  ok(api.sessionLabel().indexOf('王阿姨') >= 0 && api.sessionLabel().indexOf('批发') >= 0, '登录态文案：' + api.sessionLabel())
+  const sess = await api.wxLogin({ nickname: '阿明' })
+  ok(sess.openid === 'o_test_1' && sess.nickname === '阿明', '只带昵称也能登录，拿到 openid')
+  ok(api.isLoggedIn() === true && api.boundPhone() === '', '登录不带手机号：会话里没有手机号')
+  ok(sess.bound === false && api.sessionLabel().indexOf('手机号下单时再填') > 0, '文案如实说明手机号下单时再填：' + api.sessionLabel())
+  ok(api.displayName() === '阿明', '显示名优先用微信昵称：' + api.displayName())
   const loginCall = global.wx._calls.filter((c) => c.path === '/api/wx/login')[0]
   ok(!!loginCall && loginCall.data.code === 'CODE_MOCK', 'body 带 wx.login 拿到的 code')
-  ok(loginCall.data.phone === '13800001111' && loginCall.data.nickname === '阿明', 'body 带手机号与称呼')
+  ok(loginCall.data.nickname === '阿明' && loginCall.data.phone === undefined, 'body 带昵称、不带手机号')
   ok(!!global.wx._calls.filter((c) => c.method === 'LOGIN')[0], '确实调用了 wx.login')
 
+  // 头像昵称单独保存：空值保留服务端原值
+  const prof = await api.saveProfile({ nickname: '阿明', avatar: 'https://x/a.png' })
+  ok(prof.nickname === '阿明' && prof.avatar === 'https://x/a.png', '头像昵称保存后回写本地会话')
+  await api.saveProfile({}).catch(() => {})
+  const profCall = global.wx._calls.filter((c) => c.path === '/api/wx/profile').pop()
+  ok(profCall.data.openid === 'o_test_1', '保存头像昵称带上 openid，服务端才知道存给谁')
+
+  // 手机号是下单时填的（D31）：填过一次要记住，价格与地址簿都靠它（D24/D18）
+  api.rememberPhone('13800001111')
+  ok(api.boundPhone() === '13800001111', '下单填过的手机号被记住：' + api.boundPhone())
   list = await api.listProducts()
   const reqPath = global.wx._calls.filter((c) => c.path.indexOf('/api/products') === 0).pop().path
   ok(reqPath.indexOf('onSale=1') > 0, '顾客端只请求上架商品：' + reqPath)
-  ok(reqPath.indexOf('phone=13800001111') > 0, '已登录时带 phone，让服务端按等级给价：' + reqPath)
+  ok(reqPath.indexOf('phone=13800001111') > 0, '记住手机号后请求带 phone，让服务端按等级给价：' + reqPath)
+  const addrs = await api.listAddresses()
+  ok(addrs.length === 1 && addrs[0].id === '7', '地址簿按记住的手机号取：' + JSON.stringify(addrs))
+  const addrPath = global.wx._calls.filter((c) => c.path.indexOf('/api/addresses') === 0).pop().path
+  ok(addrPath.indexOf('phone=13800001111') > 0, '地址簿请求带手机号：' + addrPath)
+  await api.listAddresses('13900002222')
+  const addrPath2 = global.wx._calls.filter((c) => c.path.indexOf('/api/addresses') === 0).pop().path
+  ok(addrPath2.indexOf('phone=13900002222') > 0, '地址簿允许显式传手机号（下单页刚填的那个优先）：' + addrPath2)
 
   // 服务端给了有效价 price 就用它（零售价仍保留，便于页面显示划线价）
   global.wx = mkWx([

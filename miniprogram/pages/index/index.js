@@ -9,8 +9,6 @@ const PAGE_SIZE = 20
 Page({
   data: {
     online: false,
-    statusLabel: '',
-    statusDetail: '',
     shop: { name: config.STORE_NAME, phone: '', address: '' },
     cats: [{ name: '全部', count: 0 }],
     cat: '全部',
@@ -33,7 +31,7 @@ Page({
   onShow() {
     this.syncCart()
     return api.probe().then((st) => {
-      this.setData({ online: !!st.online, statusLabel: st.label, statusDetail: st.detail })
+      this.setData({ online: !!st.online })
       return this.load()
     })
   },

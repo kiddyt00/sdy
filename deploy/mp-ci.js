@@ -39,7 +39,7 @@ try {
 const mode = process.argv[2] || 'all' // all | preview | upload
 // 版本号真源 = miniprogram/package.json（避免脚本和包版本号各写一份）
 const version = process.env.MP_VERSION || require(path.join(REPO, 'miniprogram/package.json')).version
-const desc = process.env.MP_DESC || '第24轮：Vant 视觉重做 + 浏览→详情→下单主链路（开发版）'
+const desc = process.env.MP_DESC || '第25轮：微信头像昵称登录（不再绑手机号）+ 顾客端只留小绿点（开发版）'
 
 const project = new ci.Project({
   appid: APPID,

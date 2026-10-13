@@ -39,6 +39,13 @@
     background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa;
     border-radius: var(--r-pill); padding: 0 6px; font-size: 11px; white-space: nowrap;
   }
+  /* 连接状态只留一个小圆点（第 25 轮 / D31）：顾客端不露「后端已连接」这种开发信息 */
+  .dot-mode {
+    width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+    background: #d1d5db; flex: none; cursor: default;
+  }
+  .dot-mode.on { background: var(--green); box-shadow: 0 0 0 4px var(--green-bg); }
+  .dot-mode.off { background: #d1d5db; }
 </style>
 </head>
 <body>
@@ -56,7 +63,7 @@
         </div>
       </div>
       <div class="row">
-        <span class="pill-mode" id="modeBadge">⏳ 正在探测后端…</span>
+        <span class="dot-mode" id="modeBadge" title="后端状态"></span>
         <div class="topnav">
           <div class="tn on" id="tabHome" onclick="switchView('home')">逛商品</div>
           <div class="tn" id="tabOrders" onclick="switchView('orders')">我的订单</div>
@@ -723,11 +730,13 @@ refreshAll();
 renderCart();
 
 (async function initApi() {
+  // 连接状态只用一个点表示（第 25 轮 / D31）：绿=后端在线，灰=本地演示。
+  // 文字说明留在 title 里，页面上不出现「后端已连接」这种开发信息。
   const badge = $('modeBadge');
   const st = await SdyApi.boot();
-  badge.textContent = st.label;
+  badge.textContent = '';
   badge.title = st.detail;
-  badge.className = 'pill-mode ' + (st.online ? 'on' : 'off');
+  badge.className = 'dot-mode ' + (st.online ? 'on' : 'off');
   if (st.online) refreshAll();
 })();
 </script>

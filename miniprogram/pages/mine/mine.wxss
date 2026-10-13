@@ -1,4 +1,4 @@
-/* 我的（第 24 轮重构） */
+/* 我的（第 24 轮重构；第 25 轮 D31：头像真圆、登录不绑手机号） */
 .mpage { padding-bottom: 60rpx; }
 
 .mhead {
@@ -9,14 +9,24 @@
   border-bottom-left-radius: 32rpx;
   border-bottom-right-radius: 32rpx;
 }
+/* 头像必须是正圆：button 自带 padding / 行高 / ::after 边框，
+   不重置的话 128rpx 的盒子会被撑成长方形，border-radius:50% 就成了椭圆（第 25 轮修复）。 */
 .mavatar-btn {
   width: 128rpx;
   height: 128rpx;
+  min-width: 128rpx;
+  padding: 0;
+  margin: 0;
+  border: none;
   border-radius: 50%;
   overflow: hidden;
   flex: none;
+  line-height: 1;
+  font-size: 0;
+  box-sizing: border-box;
   background: rgba(255, 255, 255, .18);
 }
+.mavatar-btn::after { border: none; }
 .mavatar {
   width: 128rpx;
   height: 128rpx;
@@ -40,6 +50,18 @@
   border-radius: 999rpx;
   padding: 4rpx 20rpx;
 }
+/* 连接状态只留一个小点：绿=后端在线，灰=本地演示模式（文案在开发者选项里看） */
+.mdot {
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  flex: none;
+  margin-left: 16rpx;
+  align-self: flex-start;
+  margin-top: 10rpx;
+}
+.mdot.ok { background: #4ade80; box-shadow: 0 0 0 6rpx rgba(255, 255, 255, .22); }
+.mdot.off { background: #d1d5db; }
 
 .mcard {
   background: #fff;
@@ -50,6 +72,33 @@
 }
 .mcard.login { padding: 28rpx; }
 .ltitle { font-size: 28rpx; font-weight: 700; margin-bottom: 20rpx; }
+.lrow { display: flex; align-items: center; margin-bottom: 20rpx; }
+.lavbtn {
+  width: 108rpx;
+  height: 108rpx;
+  min-width: 108rpx;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  line-height: 1;
+  font-size: 0;
+  box-sizing: border-box;
+  background: #f5f6f8;
+}
+.lavbtn::after { border: none; }
+.lav { width: 108rpx; height: 108rpx; border-radius: 50%; display: block; }
+.lav.ph {
+  line-height: 108rpx;
+  text-align: center;
+  font-size: 44rpx;
+  color: #9ca3af;
+}
+.lcol { flex: 1; padding-left: 22rpx; min-width: 0; }
+.lname { font-size: 27rpx; color: #111827; }
+.lsub { font-size: 22rpx; color: #9ca3af; margin-top: 8rpx; }
 .linput {
   background: #f5f6f8;
   border-radius: 14rpx;

@@ -237,6 +237,7 @@ var schemaStmts = []string{
 		unionid TEXT NOT NULL DEFAULT '',
 		phone TEXT NOT NULL DEFAULT '',
 		nickname TEXT NOT NULL DEFAULT '',
+		avatar TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL DEFAULT '',
 		last_login_at TEXT NOT NULL DEFAULT ''
@@ -274,6 +275,8 @@ func Open(path string, cfg pricing.Config) (*Store, error) {
 	for _, c := range []struct{ table, column, decl string }{
 		{"product", "wholesale_price", "REAL NOT NULL DEFAULT 0"},
 		{"customer", "tier", "TEXT NOT NULL DEFAULT 'retail'"},
+		// 第 25 轮（D31）：微信头像与昵称——昵称从登录参数挪到可单独保存的档案字段。
+		{"wx_user", "avatar", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := ensureColumn(db, c.table, c.column, c.decl); err != nil {
 			db.Close()
@@ -1196,6 +1199,7 @@ type WxUser struct {
 	UnionID   string `json:"unionid,omitempty"`
 	Phone     string `json:"phone,omitempty"`
 	Nickname  string `json:"nickname,omitempty"`
+	Avatar    string `json:"avatar,omitempty"`
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 	LastLogin string `json:"lastLoginAt,omitempty"`
@@ -1214,15 +1218,18 @@ func ValidPhone(p string) bool {
 	return true
 }
 
-// BindWxUser 记录一次微信登录（openid 为主键），并可选绑定手机号。
+// BindWxUser 记录一次微信登录（openid 为主键），手机号与昵称头像都是可选：
+// 第 25 轮（D31）起**登录不再要求手机号**——手机号只是下单时填的收货信息，
+// 价格身份由它承载，但「这台微信是谁」与「手机号是多少」是两件事。
 // phone 传空＝只刷新登录时间、保留原绑定；传新号＝换绑（一个 openid 只对一个手机号，
 // 反过来一家人共用一个手机号下单是允许的）。
 // **不碰顾客等级**：批发/白名单只能由老板在管理端设定，登录永远不能自动提权（D24）。
-func (s *Store) BindWxUser(openid, unionid, phone, nickname string) (WxUser, error) {
+func (s *Store) BindWxUser(openid, unionid, phone, nickname, avatar string) (WxUser, error) {
 	openid = strings.TrimSpace(openid)
 	unionid = strings.TrimSpace(unionid)
 	phone = strings.TrimSpace(phone)
 	nickname = strings.TrimSpace(nickname)
+	avatar = strings.TrimSpace(avatar)
 	if openid == "" {
 		return WxUser{}, fmt.Errorf("%w: openid 不能为空", ErrBadInput)
 	}
@@ -1233,17 +1240,57 @@ func (s *Store) BindWxUser(openid, unionid, phone, nickname string) (WxUser, err
 		// 老板维护的姓名优先，微信昵称只是兜底：超长就截断，绝不让登录因为昵称而失败。
 		nickname = string(r[:20])
 	}
+	if len([]rune(avatar)) > 512 {
+		return WxUser{}, fmt.Errorf("%w: 头像地址过长", ErrBadInput)
+	}
 	now := nowStr()
-	if _, err := s.db.Exec(`INSERT INTO wx_user (openid,unionid,phone,nickname,created_at,updated_at,last_login_at)
-		VALUES (?,?,?,?,?,?,?)
+	if _, err := s.db.Exec(`INSERT INTO wx_user (openid,unionid,phone,nickname,avatar,created_at,updated_at,last_login_at)
+		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(openid) DO UPDATE SET
 			unionid=CASE WHEN excluded.unionid<>'' THEN excluded.unionid ELSE wx_user.unionid END,
 			phone=CASE WHEN excluded.phone<>'' THEN excluded.phone ELSE wx_user.phone END,
 			nickname=CASE WHEN excluded.nickname<>'' THEN excluded.nickname ELSE wx_user.nickname END,
+			avatar=CASE WHEN excluded.avatar<>'' THEN excluded.avatar ELSE wx_user.avatar END,
 			updated_at=excluded.updated_at,
 			last_login_at=excluded.last_login_at`,
-		openid, unionid, phone, nickname, now, now, now); err != nil {
+		openid, unionid, phone, nickname, avatar, now, now, now); err != nil {
 		return WxUser{}, fmt.Errorf("写入微信登录失败: %w", err)
+	}
+	u, _, err := s.GetWxUser(openid)
+	return u, err
+}
+
+// UpdateWxProfile 保存微信头像与昵称（第 25 轮 / D31）。
+// 空值＝保留原值（头像昵称是可选的，别因为一次空提交把已有的擦掉）。
+func (s *Store) UpdateWxProfile(openid, nickname, avatar string) (WxUser, error) {
+	openid = strings.TrimSpace(openid)
+	if openid == "" {
+		return WxUser{}, fmt.Errorf("%w: openid 不能为空", ErrBadInput)
+	}
+	nickname = strings.TrimSpace(nickname)
+	avatar = strings.TrimSpace(avatar)
+	if r := []rune(nickname); len(r) > 20 {
+		nickname = string(r[:20])
+	}
+	if len([]rune(avatar)) > 512 {
+		return WxUser{}, fmt.Errorf("%w: 头像地址过长", ErrBadInput)
+	}
+	old, ok, err := s.GetWxUser(openid)
+	if err != nil {
+		return WxUser{}, err
+	}
+	if !ok {
+		return WxUser{}, fmt.Errorf("%w: 微信用户 %s", ErrNotFound, openid)
+	}
+	if nickname == "" {
+		nickname = old.Nickname
+	}
+	if avatar == "" {
+		avatar = old.Avatar
+	}
+	if _, err := s.db.Exec(`UPDATE wx_user SET nickname=?, avatar=?, updated_at=? WHERE openid=?`,
+		nickname, avatar, nowStr(), openid); err != nil {
+		return WxUser{}, fmt.Errorf("保存微信头像昵称失败: %w", err)
 	}
 	u, _, err := s.GetWxUser(openid)
 	return u, err
@@ -1256,9 +1303,9 @@ func (s *Store) GetWxUser(openid string) (WxUser, bool, error) {
 		return WxUser{}, false, fmt.Errorf("%w: openid 不能为空", ErrBadInput)
 	}
 	var u WxUser
-	err := s.db.QueryRow(`SELECT openid,unionid,phone,nickname,created_at,updated_at,last_login_at
+	err := s.db.QueryRow(`SELECT openid,unionid,phone,nickname,avatar,created_at,updated_at,last_login_at
 		FROM wx_user WHERE openid=?`, openid).
-		Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
+		Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.Avatar, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WxUser{}, false, nil
 	}
@@ -1274,7 +1321,7 @@ func (s *Store) ListWxUsers(limit int) ([]WxUser, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	rows, err := s.db.Query(`SELECT openid,unionid,phone,nickname,created_at,updated_at,last_login_at
+	rows, err := s.db.Query(`SELECT openid,unionid,phone,nickname,avatar,created_at,updated_at,last_login_at
 		FROM wx_user ORDER BY last_login_at DESC, openid LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("查询微信绑定失败: %w", err)
@@ -1283,7 +1330,7 @@ func (s *Store) ListWxUsers(limit int) ([]WxUser, error) {
 	out := make([]WxUser, 0, 16)
 	for rows.Next() {
 		var u WxUser
-		if err := rows.Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin); err != nil {
+		if err := rows.Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.Avatar, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

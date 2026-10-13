@@ -104,7 +104,8 @@ const online = {
   section('① index.html · 后端不可用（本地演示）');
   {
     const env = await bootPage('index.html', offline);
-    ok(env.els.modeBadge.textContent.indexOf('本地演示') >= 0, '顶部状态：' + env.els.modeBadge.textContent);
+    ok(env.els.modeBadge.className.indexOf('dot-mode') >= 0 && env.els.modeBadge.className.indexOf('off') >= 0, '顶部只留一个小灰点：' + env.els.modeBadge.className);
+    ok(env.els.modeBadge.textContent === '' && env.els.modeBadge.title.length > 0, '顾客端不露「后端已连接」字样，说明只在 title 里：' + env.els.modeBadge.title);
     ok(env.els.grid.innerHTML.indexOf('可口可乐') >= 0, '商品网格已渲染（含种子商品）');
     ok(env.els.cats.innerHTML.indexOf('全部') >= 0, '分类栏已渲染');
     ok(env.els.cartDot.innerHTML !== undefined, '购物车角标元素存在');
@@ -115,7 +116,7 @@ const online = {
   section('② index.html · 后端可用（拉镜像）');
   {
     const env = await bootPage('index.html', online);
-    ok(env.els.modeBadge.textContent.indexOf('已连接') >= 0, '顶部状态：' + env.els.modeBadge.textContent);
+    ok(env.els.modeBadge.className.indexOf('dot-mode') >= 0 && env.els.modeBadge.className.indexOf('on') >= 0, '后端可用时小点是绿的：' + env.els.modeBadge.className);
     ok(SdyApi.on() === true, 'SdyApi 处于 server 模式');
     ok(Mall.loadCatalog().length === 2, '页面已被后端镜像覆盖（2 条，非 6 条种子）');
     ok(env.els.grid.innerHTML.indexOf('可口可乐') >= 0, '用后端数据渲染商品网格');

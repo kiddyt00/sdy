@@ -261,8 +261,9 @@ function listCategories() {
   return request('GET', '/api/products/categories?onSale=1').then((d) => d.items || [])
 }
 
-// ---------- 微信登录（第 23 轮 / D28） ----------
-// 手机号仍是业务身份（D24）：openid 只记住「这台微信是谁」，免去每次重输手机号；
+// ---------- 微信登录（第 23 轮 / D28；第 25 轮 / D31 起不绑手机号） ----------
+// 登录只记住「这台微信是谁」（openid + 微信头像昵称）；**手机号不属于登录**，
+// 它只是下单时填的收货信息（价格身份由它承载，D24）。
 // 价格与等级一律由服务端按顾客档案下发，小程序不自己算、也存不下任何密钥（D13/D26）。
 
 function session() {
@@ -278,7 +279,7 @@ function clearSession() {
   sdel(LS_PRODUCTS_KEY) // 价格跟着等级走，退出登录别留旧价
   return null
 }
-// 已绑定的手机号（没登录 / 只登录没绑号就是空串）
+// 已绑定的手机号（没登录 / 登录了还没在下单时填过就是空串）
 function boundPhone() {
   const s = session()
   return s && s.phone ? String(s.phone) : ''
@@ -287,16 +288,37 @@ function isLoggedIn() {
   const s = session()
   return !!(s && s.openid)
 }
+// 「我的」页显示用的名字：老板维护的姓名 > 微信昵称 > 兜底
+function displayName() {
+  const s = session()
+  if (!s) return ''
+  if (s.name) return String(s.name)
+  if (s.nickname) return String(s.nickname)
+  return s.openid ? '微信顾客' : ''
+}
 // 给页面用的一句话状态
 function sessionLabel() {
   const s = session()
   if (!s || !s.openid) return '未登录（登录后免输手机号）'
-  if (!s.phone) return '已登录 · 还没绑手机号'
-  return '已登录 · ' + (s.name || '微信顾客') + ' · ' + rules.tierLabel(s.tier)
+  if (!s.phone) return '微信已登录 · 手机号下单时再填'
+  return '已登录 · ' + displayName() + ' · ' + rules.tierLabel(s.tier)
 }
 
-// 登录：wx.login 的 code 换 openid；带 phone 就顺手绑上。
-// 绑定**不提权**——批发/白名单只能由老板在管理端设定（D24）。
+// 记住下单时填的手机号（第 25 轮 / D31）：登录不再问手机号，但手机号仍是
+// 「价格身份 + 地址簿钥匙」（D24），所以下单时填过的号要留在本地会话里，
+// 之后的价格查询、地址簿、再来一单才能用上；**等级一律由服务端按档案下发，本地不推断**。
+function rememberPhone(phone) {
+  const p = String(phone == null ? '' : phone).trim()
+  if (!p) return session()
+  const cur = session() || {}
+  const next = saveSession(Object.assign({}, cur, { phone: p, bound: true, at: Date.now() }))
+  sdel(LS_PRODUCTS_KEY) // 带上手机号后价格可能按等级变，缓存作废
+  return next
+}
+
+// 登录：wx.login 的 code 换 openid；头像昵称可选（微信只能用官方「头像昵称填写能力」
+// 让用户自己选，所以是登录前后由页面收集好传进来，不传也能登录成功）。
+// 绑定手机号**不提权**——批发/白名单只能由老板在管理端设定（D24）。
 function wxLogin(opts) {
   const o = opts || {}
   if (typeof wx === 'undefined' || !wx || typeof wx.login !== 'function') {
@@ -316,12 +338,15 @@ function wxLogin(opts) {
         const body = { code: String(code) }
         if (o.phone) body.phone = String(o.phone).trim()
         if (o.nickname) body.nickname = String(o.nickname).trim()
+        if (o.avatar) body.avatar = String(o.avatar).trim()
         request('POST', '/api/wx/login', body).then((d) => {
           const s = saveSession({
             openid: d.openid || '',
             bound: !!d.bound,
             phone: d.phone || '',
             name: d.name || '',
+            nickname: d.nickname || o.nickname || '',
+            avatar: d.avatar || o.avatar || '',
             tier: d.tier || rules.TIER_RETAIL,
             at: Date.now()
           })
@@ -333,6 +358,27 @@ function wxLogin(opts) {
         reject(new Error((err && err.errMsg) || 'wx.login 失败'))
       }
     })
+  })
+}
+
+// 保存微信头像昵称（第 25 轮 / D31）：微信 2022 年起不再允许静默拿头像昵称，
+// 只能用官方「头像昵称填写能力」让用户自己选，选完回传服务端存起来，
+// 下次在任何设备登录都能带出来。空值＝保留服务端原值。
+function saveProfile(opts) {
+  const o = opts || {}
+  const s = session()
+  if (!s || !s.openid) {
+    return Promise.reject(new Error('还没登录，先登录再保存头像昵称'))
+  }
+  const body = { openid: s.openid }
+  if (o.nickname) body.nickname = String(o.nickname).trim()
+  if (o.avatar) body.avatar = String(o.avatar).trim()
+  return request('POST', '/api/wx/profile', body).then((d) => {
+    const next = saveSession(Object.assign({}, s, {
+      nickname: d.nickname || s.nickname || '',
+      avatar: d.avatar || s.avatar || ''
+    }))
+    return next
   })
 }
 
@@ -495,23 +541,28 @@ function mapAddress(a) {
     isDefault: !!a.isDefault
   }
 }
-function listAddresses() {
-  const ph = boundPhone()
-  if (!ph) return Promise.reject(new Error('请先登录并绑定手机号，才能用地址簿'))
+// 地址簿按手机号存（D18）：phone 参数优先用调用方给的（下单页刚填的那个），
+// 没给就用会话里记住的——登录本身不带手机号（D31），所以这两个来源都要认。
+function addrPhone(phone) {
+  return String(phone == null ? '' : phone).trim() || boundPhone()
+}
+function listAddresses(phone) {
+  const ph = addrPhone(phone)
+  if (!ph) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
   if (!state.online) return Promise.resolve([])
   return request('GET', '/api/addresses?phone=' + encodeURIComponent(ph)).then((d) => (d.items || []).map(mapAddress))
 }
-function saveAddress(a) {
-  const ph = boundPhone()
-  if (!ph) return Promise.reject(new Error('请先登录并绑定手机号，才能用地址簿'))
+function saveAddress(a, phone) {
+  const ph = addrPhone(phone)
+  if (!ph) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
   if (!state.online) return Promise.reject(new Error('后端未连接：地址簿要连上服务端才能保存'))
   const body = { phone: ph, contact: a.contact, address: a.address, isDefault: !!a.isDefault }
   if (a.id) body.id = Number(a.id)
   return request('POST', '/api/addresses', body).then(mapAddress)
 }
-function deleteAddress(id) {
-  const ph = boundPhone()
-  if (!ph) return Promise.reject(new Error('请先登录并绑定手机号，才能用地址簿'))
+function deleteAddress(id, phone) {
+  const ph = addrPhone(phone)
+  if (!ph) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
   if (!state.online) return Promise.reject(new Error('后端未连接：地址簿要连上服务端才能改'))
   return request('DELETE', '/api/addresses/' + encodeURIComponent(id) + '?phone=' + encodeURIComponent(ph))
 }
@@ -548,10 +599,14 @@ module.exports = {
   listCategories: listCategories,
   resolveBarcode: resolveBarcode,
   wxLogin: wxLogin,
+  saveProfile: saveProfile,
+  rememberPhone: rememberPhone,
   session: session,
+  saveSession: saveSession,
   clearSession: clearSession,
   isLoggedIn: isLoggedIn,
   boundPhone: boundPhone,
+  displayName: displayName,
   sessionLabel: sessionLabel,
   createOrder: createOrder,
   listOrders: listOrders,

@@ -561,9 +561,10 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		writeJSON(w, 200, saved)
 	})
 
-	// 微信登录（第 23 轮 / D28）：小程序 wx.login 的 code 换 openid；可选带手机号完成绑定。
-	// 手机号仍是业务身份（D24）——本接口只让服务端记住「这台微信是谁」，
-	// **绝不改顾客等级**（批发/白名单只能由老板在管理端设定）。
+	// 微信登录（第 23 轮 / D28；第 25 轮 D31 起手机号改为可选）：小程序 wx.login 的 code 换 openid。
+	// 手机号仍是业务身份（D24）——但它是**下单时**才需要的东西：登录只让服务端记住「这台微信是谁」，
+	// 带手机号就顺手绑上（价格身份），不带也照样登录成功；**绝不改顾客等级**
+	// （批发/白名单只能由老板在管理端设定）。
 	mux.HandleFunc("/api/wx/login", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
@@ -573,6 +574,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			Code     string `json:"code"`
 			Phone    string `json:"phone"`
 			Nickname string `json:"nickname"`
+			Avatar   string `json:"avatar"`
 		}
 		if !decode(w, r, &in) {
 			return
@@ -595,13 +597,13 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			writeJSON(w, 502, map[string]string{"error": err.Error()})
 			return
 		}
-		// 绑过的手机号决定看到的价格；等级一律取顾客档案里的值（老板设的）。
-		u, err := st.BindWxUser(sess.OpenID, sess.UnionID, in.Phone, in.Nickname)
+		u, err := st.BindWxUser(sess.OpenID, sess.UnionID, in.Phone, in.Nickname, in.Avatar)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		name := ""
+		// 绑过的手机号决定看到的价格；等级一律取顾客档案里的值（老板设的）。
+		name := u.Nickname
 		tier := pricing.TierRetail
 		if u.Phone != "" {
 			if _, err := st.EnsureCustomer(u.Phone, u.Nickname); err != nil {
@@ -612,13 +614,43 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				writeErr(w, err)
 				return
 			}
-			if c, err := st.GetCustomer(u.Phone); err == nil {
+			if c, err := st.GetCustomer(u.Phone); err == nil && c.Name != "" {
 				name = c.Name
 			}
 		}
 		writeJSON(w, 200, map[string]any{
 			"ok": true, "openid": u.OpenID, "bound": u.Phone != "",
-			"phone": u.Phone, "name": name, "tier": tier,
+			"phone": u.Phone, "name": name, "nickname": u.Nickname, "avatar": u.Avatar, "tier": tier,
+		})
+	})
+
+	// 微信头像昵称（第 25 轮 / D31）：微信从 2022 起不再允许静默获取头像昵称，只能用官方
+	// 「头像昵称填写能力」——小程序把用户选好的头像/昵称回传到这里保存，下次进来自动带出来。
+	// 空值保留原值；只认 openid，不碰手机号与等级。
+	mux.HandleFunc("/api/wx/profile", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		var in struct {
+			OpenID   string `json:"openid"`
+			Nickname string `json:"nickname"`
+			Avatar   string `json:"avatar"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		if strings.TrimSpace(in.OpenID) == "" {
+			writeJSON(w, 400, map[string]string{"error": "缺少 openid（先登录再保存头像昵称）"})
+			return
+		}
+		u, err := st.UpdateWxProfile(in.OpenID, in.Nickname, in.Avatar)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{
+			"ok": true, "openid": u.OpenID, "nickname": u.Nickname, "avatar": u.Avatar,
 		})
 	})
 

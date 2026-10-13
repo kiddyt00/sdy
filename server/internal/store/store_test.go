@@ -1081,7 +1081,7 @@ func TestWxUserBind(t *testing.T) {
 	}
 
 	// 首次登录：只有 openid，没有手机号
-	u, err := st.BindWxUser("o_1", "u_1", "", "")
+	u, err := st.BindWxUser("o_1", "u_1", "", "", "")
 	if err != nil {
 		t.Fatalf("首次登录失败: %v", err)
 	}
@@ -1090,7 +1090,7 @@ func TestWxUserBind(t *testing.T) {
 	}
 
 	// 再登录（新时间）仍然是同一条记录
-	if _, err := st.BindWxUser("o_1", "u_1", "", ""); err != nil {
+	if _, err := st.BindWxUser("o_1", "u_1", "", "", ""); err != nil {
 		t.Fatalf("重复登录失败: %v", err)
 	}
 	list, err := st.ListWxUsers(50)
@@ -1099,7 +1099,7 @@ func TestWxUserBind(t *testing.T) {
 	}
 
 	// 绑手机号：等级仍是顾客档案里的零售（老板还没设批发）
-	if _, err := st.BindWxUser("o_1", "u_1", "13800001111", "阿明"); err != nil {
+	if _, err := st.BindWxUser("o_1", "u_1", "13800001111", "阿明", ""); err != nil {
 		t.Fatalf("绑手机号失败: %v", err)
 	}
 	if tier, err := st.GetCustomerTier("13800001111"); err != nil || tier != pricing.TierRetail {
@@ -1110,13 +1110,13 @@ func TestWxUserBind(t *testing.T) {
 	}
 
 	// 再登录不带手机号：绑定保留（不许被空手机号抹掉）
-	u, err = st.BindWxUser("o_1", "u_1", "", "")
+	u, err = st.BindWxUser("o_1", "u_1", "", "", "")
 	if err != nil || u.Phone != "13800001111" || u.Nickname != "阿明" {
 		t.Fatalf("空手机号不该抹掉已有绑定: %v %+v", err, u)
 	}
 
 	// 坏手机号：报错且不动原绑定
-	if _, err := st.BindWxUser("o_1", "u_1", "12345", ""); err == nil ||
+	if _, err := st.BindWxUser("o_1", "u_1", "12345", "", ""); err == nil ||
 		!strings.Contains(err.Error(), "手机号格式不对") {
 		t.Fatalf("坏手机号应报错: %v", err)
 	}
@@ -1126,7 +1126,7 @@ func TestWxUserBind(t *testing.T) {
 
 	// 超长昵称截断到 20 字；换绑另一台微信到同一手机号互不影响
 	long := strings.Repeat("名", 30)
-	if u, err = st.BindWxUser("o_2", "u_2", "13900002222", long); err != nil {
+	if u, err = st.BindWxUser("o_2", "u_2", "13900002222", long, "https://x/a.jpg"); err != nil {
 		t.Fatalf("第二台微信绑定失败: %v", err)
 	}
 	if len([]rune(u.Nickname)) != 20 {
@@ -1163,6 +1163,30 @@ func TestWxUserBind(t *testing.T) {
 	}
 	if _, err := st.EnsureCustomer("12345", ""); err == nil {
 		t.Errorf("坏手机号不该建档")
+	}
+
+	// 第 25 轮（D31）：头像昵称单独保存——空值保留原值、不存在的 openid 报「资源不存在」、
+	// 超长昵称截断、头像地址过长报错。
+	if u, err = st.UpdateWxProfile("o_2", "", ""); err != nil || u.Avatar != "https://x/a.jpg" {
+		t.Fatalf("空提交应保留原头像昵称: %v %+v", err, u)
+	}
+	if u, err = st.UpdateWxProfile("o_2", "小美", ""); err != nil || u.Nickname != "小美" || u.Avatar != "https://x/a.jpg" {
+		t.Fatalf("只改昵称不该清头像: %v %+v", err, u)
+	}
+	if u, err = st.UpdateWxProfile("o_2", strings.Repeat("长", 30), ""); err != nil || len([]rune(u.Nickname)) != 20 {
+		t.Fatalf("昵称应截断到 20 字: %v %+v", err, u)
+	}
+	if _, err = st.UpdateWxProfile("o_2", "", strings.Repeat("a", 513)); err == nil ||
+		!strings.Contains(err.Error(), "头像地址过长") {
+		t.Fatalf("超长头像地址应报错: %v", err)
+	}
+	if _, err = st.UpdateWxProfile("o_none", "谁", ""); err == nil ||
+		!strings.Contains(err.Error(), "资源不存在") {
+		t.Fatalf("不存在的 openid 应报资源不存在: %v", err)
+	}
+	if _, err = st.UpdateWxProfile("", "谁", ""); err == nil ||
+		!strings.Contains(err.Error(), "openid 不能为空") {
+		t.Fatalf("空 openid 应报错: %v", err)
 	}
 }
 

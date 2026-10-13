@@ -199,10 +199,19 @@ Page({
   onPhone(e) { this.setData({ phone: e.detail.value }) },
   onAddress(e) { this.setData({ address: e.detail.value }) },
 
+  // 地址簿的钥匙是手机号（D18）：登录不带手机号（D31），所以以「下单页刚填的号」优先
+  addrPhone() {
+    const p = String(this.data.phone || '').trim()
+    if (/^1\d{10}$/.test(p)) return p
+    return api.boundPhone()
+  },
+
   pickAddress() {
-    if (!api.boundPhone()) {
-      return this.warn('先登录并绑定手机号，才能用地址簿')
+    const ph = this.addrPhone()
+    if (!ph) {
+      return this.warn('先填收货手机号，才能用地址簿')
     }
+    api.rememberPhone(ph) // 地址簿页要按这个号取
     wx.navigateTo({ url: '/pages/address/list?pick=1' })
     return null
   },
@@ -221,8 +230,10 @@ Page({
     const contact = String(this.data.name || '').trim()
     const address = String(this.data.address || '').trim()
     if (!contact || !address) return this.warn('先填好收货人和地址')
-    if (!api.boundPhone()) return this.warn('先登录并绑定手机号，才能存地址簿')
-    return api.saveAddress({ contact: contact, address: address, isDefault: false }).then(
+    const ph = this.addrPhone()
+    if (!ph) return this.warn('先填收货手机号，才能存地址簿')
+    api.rememberPhone(ph)
+    return api.saveAddress({ contact: contact, address: address, isDefault: false }, ph).then(
       () => {
         this.setData({ addrPicked: true })
         wx.showToast({ title: '已存进地址簿', icon: 'none' })
@@ -233,7 +244,9 @@ Page({
   },
 
   goAddressBook() {
-    if (!api.boundPhone()) return this.warn('先登录并绑定手机号，才能用地址簿')
+    const ph = this.addrPhone()
+    if (!ph) return this.warn('先填收货手机号，才能用地址簿')
+    api.rememberPhone(ph)
     wx.navigateTo({ url: '/pages/address/list' })
     return null
   },
@@ -268,6 +281,9 @@ Page({
         items: items
       })
       .then((r) => {
+        // 下单填过的手机号记进本地会话：手机号是价格身份与地址簿钥匙（D24），
+        // 登录时不问、下单后来记（D31）。
+        api.rememberPhone(phone)
         if (this.data.buyNow) this.setData({ buyNow: false, buyNowLines: [] })
         else store.clearCart()
         this.setData({ submitting: false })

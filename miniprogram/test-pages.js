@@ -170,7 +170,7 @@ async function main() {
   let page = loadPage('pages/index/index.js')
   await page.onShow()
   ok(page.data.products.length === 6, '离线：展示 6 条演示商品')
-  ok(page.data.statusLabel.indexOf('本地演示') >= 0, '离线：胶囊提示本地演示')
+  ok(page.data.online === false, '离线：online=false（首页只显示灰点）')
   page.onCategory({ currentTarget: { dataset: { cat: '饮料' } } })
   ok(page.data.products.length === 2 && page.data.products.every((p) => p.category === '饮料'), '按分类过滤到 2 条饮料')
   page.onCategory({ currentTarget: { dataset: { cat: '全部' } } })
@@ -207,7 +207,10 @@ async function main() {
   await page.onShow()
   ok(page.data.online === true, '在线：online=true')
   ok(page.data.products.length === 2 && page.data.products[0].server === true, '在线：商品来自服务端（2 条）')
-  ok(page.data.statusLabel === '🟢 后端已连接', '在线：胶囊显示已连接')
+  // 第 25 轮（D31）：连接状态只留一个小圆点，页面不再出现「后端已连接」这种开发信息
+  const indexWxml = fs.readFileSync(path.join(ROOT, 'pages/index/index.wxml'), 'utf8')
+  ok(indexWxml.indexOf('sdot') > 0 && indexWxml.indexOf('statusLabel') < 0, '首页店铺条只有状态圆点，不显示状态文案')
+  ok(indexWxml.indexOf('后端已连接') < 0 && indexWxml.indexOf('class="badge') < 0, '首页不再出现「后端已连接」胶囊')
 
   /* ---------- ③ 购物车 / 下单 ---------- */
   section('③ 购物车与下单')
@@ -281,8 +284,8 @@ async function main() {
   global.wx = mkWx(OFFLINE)
   const mine = loadPage('pages/mine/mine.js')
   await mine.onShow()
-  ok(mine.data.statusLabel.indexOf('本地演示') >= 0, '显示当前状态')
-  ok(mine.data.statusDetail.indexOf('不会入库') > 0, '说明离线下单不入库')
+  ok(mine.data.online === false, '离线：连接状态为 false（页面上只显示灰点）')
+  ok(mine.data.statusDetail.indexOf('不会入库') > 0, '开发者选项里才说明离线下单不入库')
   ok(mine.data.shop.name === '啥都有快送', '店铺信息就位')
   mine.onBase({ detail: { value: 'http://192.168.1.9:8093' } })
   await mine.saveBase()
@@ -290,40 +293,55 @@ async function main() {
   ok(global.wx.toasts.indexOf('保存了，但还没连上') >= 0, '保存后仍连不上会如实提示')
   mine.goOrders()
   ok(global.wx.tabs.indexOf('/pages/orders/orders') >= 0, '我的 → 订单 tab')
+  // 第 25 轮（D31）：头像必须是正圆——button 的默认 padding / 行高 / ::after 边框不重置就会变成椭圆
+  const mineWxml = fs.readFileSync(path.join(ROOT, 'pages/mine/mine.wxml'), 'utf8')
+  const mineWxss = fs.readFileSync(path.join(ROOT, 'pages/mine/mine.wxss'), 'utf8')
+  ok(mineWxml.indexOf('后端连接') < 0 && mineWxml.indexOf('mdot') > 0, '不再显示「后端连接」一行，只留状态圆点')
+  ok(mineWxml.indexOf('type="number"') < 0, '登录卡里不再有手机号输入框')
+  ok(mineWxml.indexOf('open-type="chooseAvatar"') > 0 && mineWxml.indexOf('type="nickname"') > 0, '用微信官方「头像昵称填写能力」')
+  ok(mineWxss.indexOf('box-sizing: border-box') > 0 && mineWxss.indexOf('.mavatar-btn::after') > 0, '头像按钮重置了 button 默认样式（真圆）')
 
-  /* ---------- ⑥ 我的：微信登录 ---------- */
-  section('⑥ 我的（微信登录 / 绑定手机号）')
+  /* ---------- ⑥ 我的：微信登录（不绑手机号） ---------- */
+  section('⑥ 我的（微信登录：只要 openid + 头像昵称）')
   const LOGIN_ROUTE = {
     method: 'POST', path: '/api/wx/login',
-    body: { ok: true, openid: 'o_page_1', bound: true, phone: '13800001111', name: '王阿姨', tier: 'wholesale' }
+    body: { ok: true, openid: 'o_page_1', bound: false, phone: '', name: '', nickname: '阿明', avatar: '', tier: 'retail' }
   }
-  global.wx = mkWx(ONLINE.concat([LOGIN_ROUTE]))
+  const PROFILE_ROUTE = {
+    method: 'POST', path: '/api/wx/profile',
+    body: { ok: true, openid: 'o_page_1', nickname: '阿明', avatar: '' }
+  }
+  global.wx = mkWx(ONLINE.concat([LOGIN_ROUTE, PROFILE_ROUTE]))
   const acc = loadPage('pages/mine/mine.js')
   await acc.onShow()
   ok(acc.data.loggedIn === false && acc.data.sessionLabel.indexOf('未登录') >= 0, '未登录：如实显示未登录')
-  // 没填手机号不让登
-  await acc.doLogin()
-  ok(global.wx.toasts.indexOf('请先填手机号（老板建档、给价都靠它）') >= 0, '不填手机号不给登：' + JSON.stringify(global.wx.toasts))
-  // 手机号格式不对
-  acc.onPhone({ detail: { value: '138123' } })
-  await acc.doLogin()
-  ok(global.wx.toasts.indexOf('手机号要 11 位、1 开头') >= 0, '格式不对就拦下来')
-  ok(acc.data.busy === false, '被拦下时 busy 不是卡住的')
-  // 正常登录
-  acc.onPhone({ detail: { value: '13800001111' } })
+  // 第 25 轮（D31）：登录不再问手机号，选好昵称直接登
   acc.onNickname({ detail: { value: '阿明' } })
   const logged = await acc.doLogin()
-  ok(!!logged && logged.openid === 'o_page_1', '登录拿到 openid')
-  ok(acc.data.loggedIn === true && acc.data.bound === true, '登录后页面切到已登录态')
-  ok(acc.data.tierText === '批发', '显示等级文案（不显示枚举值）')
-  ok(acc.data.sessionLabel.indexOf('王阿姨') >= 0 && acc.data.sessionPhone === '13800001111', '显示姓名与手机号：' + acc.data.sessionLabel)
-  ok(acc.data.phone === '' && acc.data.busy === false, '登录成功后清空输入并复位 busy')
+  ok(!!logged && logged.openid === 'o_page_1', '不填手机号也能登录，拿到 openid')
+  ok(acc.data.loggedIn === true, '登录后页面切到已登录态')
+  ok(acc.data.bound === undefined && acc.data.phone === undefined, '登录态里不再有手机号字段')
+  ok(acc.data.sessionPhone === '' && api.boundPhone() === '', '登录不带手机号：会话里没手机号')
+  ok(acc.data.sessionLabel.indexOf('手机号下单时再填') > 0, '如实说明手机号下单时再填：' + acc.data.sessionLabel)
+  ok(acc.data.tierText === '零售', '等级由服务端下发（登录不提权）')
+  ok(acc.data.busy === false, '登录成功后复位 busy')
   ok(global.wx.toasts.filter((t) => String(t).indexOf('登录成功') === 0).length === 1, '有且只有一次登录成功提示')
+  // 头像：chooseAvatar 给的是本机临时路径，真机上先落本地（存不下也无所谓）
+  const av = await acc.onChooseAvatar({ detail: { avatarUrl: 'wxfile://tmp_av.png' } })
+  ok(acc.data.avatar === 'wxfile://tmp_av.png' && av === 'wxfile://tmp_av.png', '选中头像后立刻显示')
+  ok(global.wx._kv['sdy_mp_avatar'] === 'wxfile://tmp_av.png', '头像落到本机缓存，重启不丢')
+  // 已登录时保存头像昵称
+  await acc.saveProfile()
+  ok(global.wx.toasts.indexOf('已保存，下次进来自动带出来') >= 0, '保存头像昵称有反馈：' + JSON.stringify(global.wx.toasts))
+  ok(acc.data.saving === false, '保存后复位 saving')
+  // 下单时记住手机号（手机号是价格身份与地址簿钥匙，D24/D31）
+  ok(api.boundPhone() === '', '下单前会话里没有手机号')
+  api.rememberPhone('13800001111')
+  ok(api.boundPhone() === '13800001111', '下单填过的手机号被记住，价格与地址簿才能用')
   // 退出登录
   await acc.doLogout()
-  ok(acc.data.loggedIn === false && acc.data.bound === false, '退出后回到未登录')
+  ok(acc.data.loggedIn === false, '退出后回到未登录')
   ok(global.wx.toasts.indexOf('已退出登录') >= 0, '退出有明确提示')
-  ok(acc.data.bound === false, '退出后回到可换号再登的状态')
 
   /* ---------- ⑦ 商品详情（浏览 → 详情 → 加购 / 立即购买） ---------- */
   section('⑦ 商品详情页')
@@ -440,11 +458,12 @@ async function main() {
   ])
   global.wx = mkWx(ADDR_ROUTES)
   await api.probe()
-  await api.wxLogin({ phone: '13800001111', nickname: '王阿姨' })
+  await api.wxLogin({ nickname: '王阿姨' })
+  api.rememberPhone('13800001111') // 手机号是下单时填的（D31），地址簿靠它当钥匙（D18）
   const ab = loadPage('pages/address/list.js')
   ab.onLoad({ pick: '1' })
   await ab.onShow()
-  ok(ab.data.loggedIn === true, '绑过号就能看地址簿')
+  ok(ab.data.loggedIn === true, '下单填过手机号就能看地址簿')
   ok(ab.data.list.length === 1 && ab.data.list[0].contact === '王阿姨', '地址来自服务端')
   ok(ab.data.list[0].id === '7', 'id 统一成字符串（dataset 传参不会丢）')
   ab.onAdd()

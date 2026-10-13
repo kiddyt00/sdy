@@ -1,10 +1,18 @@
-// 我的：登录 / 订单状态概览 / 地址簿 / 连接状态（第 24 轮重构）
+// 我的：微信登录（头像昵称）/ 订单状态概览 / 地址簿（第 24 轮重构；第 25 轮 D31 改造）
+// D31 两条口径：① 登录只认微信（openid），**不绑手机号**——手机号是下单时填的收货信息；
+// ② 头像昵称只能用微信官方的「头像昵称填写能力」让用户自己选（微信 2022 起不再静默下发）。
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
 const rules = require('../../utils/rules.js')
 
 const TAB_KEY = 'sdy_mp_order_tab'
 const AVATAR_KEY = 'sdy_mp_avatar'
+
+// 服务端只存得下 http(s) 地址：chooseAvatar 给的是本机临时路径，
+// 直接存进去下次任何设备都显示不出来（要真跨设备得先有文件上传接口，暂时不做）。
+function avatarForServer(path) {
+  return /^https?:\/\//.test(String(path || '')) ? String(path) : ''
+}
 
 Page({
   data: {
@@ -13,16 +21,15 @@ Page({
     statusDetail: '',
     apiBase: '',
     cartCount: 0,
-    // 登录态（第 23 轮 / D28）
+    // 登录态（第 23 轮 / D28；第 25 轮 D31：不再有 phone / bound）
     loggedIn: false,
-    bound: false,
     sessionLabel: '',
     sessionName: '',
     sessionPhone: '',
     tierText: '零售',
-    phone: '',
     nickname: '',
     busy: false,
+    saving: false,
     avatar: '',
     devMode: false,
     counts: { pending: 0, delivering: 0, ready: 0, done: 0 },
@@ -49,16 +56,17 @@ Page({
     })
   },
 
-  // 把登录态同步到页面（退出/登录后都调一次）
+  // 把登录态同步到页面（登录/退出/换头像昵称后都调一次）
   syncSession() {
     const s = api.session()
     this.setData({
       loggedIn: api.isLoggedIn(),
-      bound: !!(s && s.phone),
       sessionLabel: api.sessionLabel(),
-      sessionName: (s && s.name) || '',
+      sessionName: api.displayName(),
       sessionPhone: (s && s.phone) || '',
-      tierText: rules.tierLabel(s && s.tier)
+      tierText: rules.tierLabel(s && s.tier),
+      // 昵称优先用本地的（用户刚在输入框里改的），没有就用服务端带回来的
+      nickname: this.data.nickname || (s && (s.nickname || '')) || ''
     })
   },
 
@@ -69,64 +77,56 @@ Page({
     } catch (e) { /* 忽略 */ }
   },
 
-  // open-type="chooseAvatar" 回传的临时头像，只存在本机（服务端没存头像字段）
+  // 把 chooseAvatar 给的临时文件存成小程序本地永久文件，否则重启后头像就白了
+  persistAvatar(tempPath) {
+    return new Promise((resolve) => {
+      const fs = (typeof wx !== 'undefined' && wx.getFileSystemManager) ? wx.getFileSystemManager() : null
+      if (!tempPath || !fs || typeof fs.saveFile !== 'function') {
+        resolve(tempPath || '')
+        return
+      }
+      fs.saveFile({
+        tempFilePath: tempPath,
+        success: (r) => resolve((r && r.savedFilePath) || tempPath),
+        fail: () => resolve(tempPath) // 存不下就用临时路径先显示，至少这次是好的
+      })
+    })
+  },
+
+  // open-type="chooseAvatar" 回传用户选的头像（登录前后都能点）
   onChooseAvatar(e) {
     const url = (e.detail && e.detail.avatarUrl) || ''
-    if (!url) return null
-    this.setData({ avatar: url })
-    try {
-      wx.setStorageSync(AVATAR_KEY, url)
-    } catch (err) { /* 忽略 */ }
-    return url
+    if (!url) return Promise.resolve('')
+    return this.persistAvatar(url).then((saved) => {
+      this.setData({ avatar: saved })
+      try {
+        wx.setStorageSync(AVATAR_KEY, saved)
+      } catch (err) { /* 忽略 */ }
+      // 已登录：顺手同步给服务端（只有 http(s) 地址服务端才用得上）
+      const forServer = avatarForServer(saved)
+      if (this.data.loggedIn && forServer) return this.pushProfile({ avatar: forServer })
+      return saved
+    })
   },
 
-  // 订单状态条：把想看的 tab 存下来，切到订单页读走（tab 页不能带参数）
-  goOrdersWith(e) {
-    const key = (e.currentTarget.dataset.key) || ''
-    try {
-      wx.setStorageSync(TAB_KEY, key)
-    } catch (err) { /* 忽略 */ }
-    wx.switchTab({ url: '/pages/orders/orders' })
-  },
-
-  loadCounts() {
-    return api.listOrders('').then((list) => {
-      const c = { pending: 0, delivering: 0, ready: 0, done: 0 }
-      ;(list || []).forEach((o) => {
-        if (c[o.status] !== undefined) c[o.status] += 1
-      })
-      this.setData({ counts: c })
-      return c
-    }, () => null)
-  },
-
-  onPhone(e) {
-    this.setData({ phone: e.detail.value })
-  },
   onNickname(e) {
-    this.setData({ nickname: e.detail.value })
+    this.setData({ nickname: (e.detail && e.detail.value) || '' })
   },
 
-  // 微信登录：没绑过手机号就先填手机号；价格与等级仍由店里设定（不因登录变批发价）
+  // 登录：只换 openid，不填手机号（手机号下单时填）；头像昵称有就带上
   doLogin() {
     if (this.data.busy) return Promise.resolve(null)
-    const phone = String(this.data.phone || '').trim()
-    if (!this.data.bound && !phone) {
-      this.toast('请先填手机号（老板建档、给价都靠它）')
-      return Promise.resolve(null)
-    }
-    if (phone && !/^1\d{10}$/.test(phone)) {
-      this.toast('手机号要 11 位、1 开头')
-      return Promise.resolve(null)
-    }
     this.setData({ busy: true })
     return api
-      .wxLogin({ phone: phone, nickname: this.data.nickname })
+      .wxLogin({
+        nickname: String(this.data.nickname || '').trim(),
+        avatar: avatarForServer(this.data.avatar)
+      })
       .then((s) => {
-        this.setData({ busy: false, phone: '', nickname: '' })
+        this.setData({ busy: false })
         this.syncSession()
         this.loadCounts()
-        this.toast('登录成功：' + (s.name || '微信顾客') + ' · ' + rules.tierLabel(s.tier))
+        this.toast('登录成功：' + (api.displayName() || '微信顾客') + ' · ' + rules.tierLabel(s.tier))
         return s
       })
       .catch((e) => {
@@ -136,10 +136,42 @@ Page({
       })
   },
 
+  // 已登录时保存头像昵称（服务端空值＝保留原值）
+  pushProfile(patch) {
+    return api.saveProfile(patch).then((s) => {
+      this.syncSession()
+      return s
+    })
+  },
+
+  saveProfile() {
+    if (!this.data.loggedIn) {
+      this.toast('先登录再保存头像昵称')
+      return Promise.resolve(null)
+    }
+    if (this.data.saving) return Promise.resolve(null)
+    this.setData({ saving: true })
+    return this.pushProfile({
+      nickname: String(this.data.nickname || '').trim(),
+      avatar: avatarForServer(this.data.avatar)
+    })
+      .then(() => {
+        this.setData({ saving: false })
+        this.toast('已保存，下次进来自动带出来')
+        return null
+      })
+      .catch((e) => {
+        this.setData({ saving: false })
+        this.toast(e.message)
+        return null
+      })
+  },
+
   doLogout() {
     return this.confirm('退出登录', '只是让这台手机忘掉登录状态；订单、档案与价格不受影响。').then((yes) => {
       if (!yes) return null
       api.clearSession()
+      this.setData({ nickname: '' })
       this.syncSession()
       this.loadCounts()
       this.toast('已退出登录')
@@ -182,6 +214,26 @@ Page({
 
   toggleDev() {
     this.setData({ devMode: !this.data.devMode })
+  },
+
+  // 订单状态条：把想看的 tab 存下来，切到订单页读走（tab 页不能带参数）
+  goOrdersWith(e) {
+    const key = (e.currentTarget.dataset.key) || ''
+    try {
+      wx.setStorageSync(TAB_KEY, key)
+    } catch (err) { /* 忽略 */ }
+    wx.switchTab({ url: '/pages/orders/orders' })
+  },
+
+  loadCounts() {
+    return api.listOrders('').then((list) => {
+      const c = { pending: 0, delivering: 0, ready: 0, done: 0 }
+      ;(list || []).forEach((o) => {
+        if (c[o.status] !== undefined) c[o.status] += 1
+      })
+      this.setData({ counts: c })
+      return c
+    }, () => null)
   },
 
   goOrders() {
