@@ -510,6 +510,111 @@ fresh();
   if (had) global.window = savedWin; else delete global.window;
 }
 
-console.log('\n========================================');
-console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
-process.exit(failed ? 1 : 0);
+/* ============ ⑫ 微信用户角色（任务池⑫ / D32） ============
+ * setWxRole / listWxUsers 是异步的，所以这一节放到最后用 async 跑，跑完再汇总退出码。
+ * 用一个内存「假 SdyApi」当服务端真源：POST 改完，下一次 GET 就能看到新角色（页面正是靠重拉刷新）。
+ */
+(async function main() {
+  section('⑫ 微信用户角色（D32）');
+  const U1 = 'oX9k2LmQwErTyUiOpAsDfGhJkLz1';
+  const U2 = 'oYb8nMpRvWxYzAbCdEfGhIjKlMn2';
+  const U3 = 'oZc7oNqSwXyZaBcDeFgHiJkLmNo3';
+  const server = [
+    { openid: U1, unionid: 'u1', phone: '13800001111', nickname: '张三', avatar: 'https://x/a.png', role: 'customer', createdAt: '2026-04-01', updatedAt: '2026-04-01', lastLogin: '2026-05-01 09:30' },
+    { openid: U2, unionid: 'u2', phone: '', nickname: '李四', avatar: '', role: 'staff', createdAt: '2026-04-02', updatedAt: '2026-04-02', lastLogin: '2026-05-02 18:02' },
+    { openid: U3, unionid: '', phone: '13900002222', nickname: '', avatar: '', role: '老板', createdAt: '', updatedAt: '', lastLogin: '' }
+  ];
+  const calls = [];
+  const hadSdy = Object.prototype.hasOwnProperty.call(global, 'SdyApi');
+  const savedSdy = global.SdyApi;
+  global.SdyApi = {
+    on: () => true,
+    req: async (method, path, body) => {
+      calls.push({ method: method, path: path, body: body });
+      if (method === 'GET' && path.indexOf('/api/wx/users') === 0) return { items: server, total: server.length };
+      if (method === 'POST' && path === '/api/wx/role') {
+        if (!body || !body.openid) throw new Error('缺少 openid（让对方先用小程序登录一次）');
+        const hit = server.filter(u => u.openid === body.openid)[0];
+        if (!hit) throw new Error('用户不存在');
+        hit.role = body.role;
+        return { ok: true, openid: body.openid, role: body.role, nickname: hit.nickname, phone: hit.phone, lastLoginAt: hit.lastLogin };
+      }
+      throw new Error('no route ' + path);
+    }
+  };
+
+  // —— 纯函数：标签 / 归一化 / 截断 ——
+  ok(Admin.roleLabel('customer') === '顾客' && Admin.roleLabel('staff') === '员工', '角色中文标签：customer→顾客、staff→员工');
+  ok(Admin.roleLabel('老板') === '顾客' && Admin.roleLabel('') === '顾客', '未知 / 空角色一律按顾客显示');
+  ok(Admin.validWxRole('staff') === true && Admin.validWxRole('boss') === false, '角色白名单只有 customer / staff');
+  const nn = Admin.normalizeWxUser({ openid: U1, role: '奇怪', nickname: null, avatar: undefined });
+  ok(nn.role === 'customer' && nn.nickname === '' && nn.avatar === '' && nn.phone === '' && nn.lastLogin === '',
+     '归一化：未知角色→customer、缺字段→空串（渲染层不崩）');
+  ok(Admin.shortOpenid(U1) === 'oX9k2L…kLz1' && Admin.shortOpenid('short') === 'short', 'openid 长截断（首 6+…+末 4）、短照原样');
+
+  // —— 渲染：角色标签 / 相反按钮 / 头像 / 截断 ——
+  const html = Admin.renderWxUsers(server);
+  ok(html.indexOf('<span class="badge st-done">员工</span>') > -1, '员工行给明显绿色标签 .badge.st-done');
+  ok(html.indexOf('<span class="badge">顾客</span>') > -1, '顾客行给「顾客」标签（未知角色也按顾客渲染）');
+  ok(html.indexOf('设为员工') > -1 && html.indexOf('设为顾客') > -1, '按钮按当前角色给相反动作文案');
+  ok(html.indexOf("wxToggleRole('" + U1 + "','staff')") > -1, '顾客行按钮 → wxToggleRole(openid, staff)');
+  ok(html.indexOf("wxToggleRole('" + U2 + "','customer')") > -1, '员工行按钮 → wxToggleRole(openid, customer)');
+  ok(html.indexOf('<img class="wxavatar" src="https://x/a.png"') > -1, '有 avatar 才渲染 <img>（加载失败自动 remove）');
+  ok(html.indexOf('wxavatar-ph') > -1 && html.indexOf('>李<') > -1, '没头像用昵称首字占位（空昵称给 👤）');
+  ok(html.indexOf('title="' + U1 + '"') > -1 && html.indexOf('oX9k2L…kLz1') > -1, 'openid 列表截断、全量放 title');
+  ok(html.indexOf('13800001111') > -1 && html.indexOf('—') > -1, '手机号照常显示，缺手机号给「—」');
+  ok(html.indexOf('2026-05-01 09:30') > -1, '最后登录时间显示后端原值');
+  ok(html.indexOf('<table class="table">') > -1 && html.indexOf('头像') > -1, '用现有 .table 结构（风格与其它面板一致）');
+  ok(Admin.renderWxUsers([]).indexOf('还没有微信用户') > -1, '空列表给友好中文提示');
+  ok(Admin.renderWxUsers(null).indexOf('还没有微信用户') > -1 && Admin.renderWxUsers(undefined).indexOf('<table') < 0,
+     'null / undefined 当空列表处理，不抛错');
+
+  // —— 拉列表：GET + limit + 归一化 ——
+  calls.length = 0;
+  const list = await Admin.listWxUsers();
+  ok(calls.length === 1 && calls[0].method === 'GET' && calls[0].path === '/api/wx/users?limit=200',
+     'listWxUsers → GET /api/wx/users?limit=200');
+  ok(list.length === 3 && list[2].role === 'customer', '列表归一化：未知角色落回 customer');
+  await Admin.listWxUsers(50);
+  ok(calls[1].path === '/api/wx/users?limit=50', 'limit 参数透传');
+
+  // —— 设角色：POST body / 参数校验 / 错误透传 ——
+  calls.length = 0;
+  const r = await Admin.setWxRole(U1, 'staff');
+  ok(calls.length === 1 && calls[0].method === 'POST' && calls[0].path === '/api/wx/role',
+     '点「设为员工」→ POST /api/wx/role');
+  ok(calls[0].body && calls[0].body.openid === U1 && calls[0].body.role === 'staff',
+     'body 正确：' + JSON.stringify(calls[0].body));
+  ok(calls[0].body && Object.keys(calls[0].body).length === 2, 'body 只带 openid / role 两个字段');
+  ok(r && r.ok === true && r.role === 'staff', '成功响应透传（ok / role）');
+  const after = await Admin.listWxUsers();
+  ok(after[0].role === 'staff' && Admin.renderWxUsers(after).indexOf("wxToggleRole('" + U1 + "','customer')") > -1,
+     '切换成功后重拉列表：该行按钮变「设为顾客」');
+  await Admin.setWxRole(U1, 'customer');
+  ok(server[0].role === 'customer', '再切一次改回顾客，服务端角色回落');
+
+  let msg = '';
+  try { await Admin.setWxRole('', 'staff'); } catch (e) { msg = e.message; }
+  ok(msg.indexOf('缺少 openid') > -1, '空 openid → 中文报错：' + msg);
+  msg = '';
+  try { await Admin.setWxRole(U1, 'boss'); } catch (e) { msg = e.message; }
+  ok(msg.indexOf('角色只能是') > -1, '非法角色 → 拦截：' + msg);
+  msg = '';
+  try { await Admin.setWxRole('查无此人', 'staff'); } catch (e) { msg = e.message; }
+  ok(msg.indexOf('用户不存在') > -1, '接口报错原样透传（页面据此 toast）：' + msg);
+
+  // —— 离线：微信用户只在服务端，必须给中文提示而不是静默 ——
+  global.SdyApi.on = () => false;
+  msg = '';
+  try { await Admin.listWxUsers(); } catch (e) { msg = e.message; }
+  ok(msg.indexOf('未连接后端') > -1, '离线拉列表 → 中文提示：' + msg);
+  msg = '';
+  try { await Admin.setWxRole(U1, 'staff'); } catch (e) { msg = e.message; }
+  ok(msg.indexOf('未连接后端') > -1, '离线设角色 → 中文提示：' + msg);
+
+  if (hadSdy) global.SdyApi = savedSdy; else delete global.SdyApi;
+
+  console.log('\n========================================');
+  console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
+  process.exit(failed ? 1 : 0);
+})();

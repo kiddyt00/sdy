@@ -3,7 +3,9 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -238,6 +240,8 @@ var schemaStmts = []string{
 		phone TEXT NOT NULL DEFAULT '',
 		nickname TEXT NOT NULL DEFAULT '',
 		avatar TEXT NOT NULL DEFAULT '',
+		role TEXT NOT NULL DEFAULT 'customer',
+		staff_token TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL DEFAULT '',
 		last_login_at TEXT NOT NULL DEFAULT ''
@@ -277,6 +281,9 @@ func Open(path string, cfg pricing.Config) (*Store, error) {
 		{"customer", "tier", "TEXT NOT NULL DEFAULT 'retail'"},
 		// 第 25 轮（D31）：微信头像与昵称——昵称从登录参数挪到可单独保存的档案字段。
 		{"wx_user", "avatar", "TEXT NOT NULL DEFAULT ''"},
+		// 第 26 轮（D32）：角色（顾客 / 员工）与员工会话令牌——后台管角色，登录时选身份。
+		{"wx_user", "role", "TEXT NOT NULL DEFAULT 'customer'"},
+		{"wx_user", "staff_token", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := ensureColumn(db, c.table, c.column, c.decl); err != nil {
 			db.Close()
@@ -1200,9 +1207,22 @@ type WxUser struct {
 	Phone     string `json:"phone,omitempty"`
 	Nickname  string `json:"nickname,omitempty"`
 	Avatar    string `json:"avatar,omitempty"`
+	Role      string `json:"role"`
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 	LastLogin string `json:"lastLoginAt,omitempty"`
+}
+
+// 第 26 轮（D32）：微信账号的两种角色。后台（管理端 / 员工管理页）改这一列，
+// 小程序登录时按它决定「能不能以员工身份进来」。**登录本身永远不提权**。
+const (
+	RoleCustomer = "customer"
+	RoleStaff    = "staff"
+)
+
+// ValidRole 角色白名单：只认顾客与员工两个值，避免写进乱七八糟的字符串。
+func ValidRole(r string) bool {
+	return r == RoleCustomer || r == RoleStaff
 }
 
 // ValidPhone 大陆手机号粗校验：11 位、1 开头、全数字，防止把乱码绑成顾客身份。
@@ -1303,14 +1323,17 @@ func (s *Store) GetWxUser(openid string) (WxUser, bool, error) {
 		return WxUser{}, false, fmt.Errorf("%w: openid 不能为空", ErrBadInput)
 	}
 	var u WxUser
-	err := s.db.QueryRow(`SELECT openid,unionid,phone,nickname,avatar,created_at,updated_at,last_login_at
+	err := s.db.QueryRow(`SELECT openid,unionid,phone,nickname,avatar,role,created_at,updated_at,last_login_at
 		FROM wx_user WHERE openid=?`, openid).
-		Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.Avatar, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
+		Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.Avatar, &u.Role, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WxUser{}, false, nil
 	}
 	if err != nil {
 		return WxUser{}, false, err
+	}
+	if u.Role == "" {
+		u.Role = RoleCustomer
 	}
 	return u, true, nil
 }
@@ -1321,7 +1344,7 @@ func (s *Store) ListWxUsers(limit int) ([]WxUser, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	rows, err := s.db.Query(`SELECT openid,unionid,phone,nickname,avatar,created_at,updated_at,last_login_at
+	rows, err := s.db.Query(`SELECT openid,unionid,phone,nickname,avatar,role,created_at,updated_at,last_login_at
 		FROM wx_user ORDER BY last_login_at DESC, openid LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("查询微信绑定失败: %w", err)
@@ -1330,12 +1353,80 @@ func (s *Store) ListWxUsers(limit int) ([]WxUser, error) {
 	out := make([]WxUser, 0, 16)
 	for rows.Next() {
 		var u WxUser
-		if err := rows.Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.Avatar, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin); err != nil {
+		if err := rows.Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.Avatar, &u.Role,
+			&u.CreatedAt, &u.UpdatedAt, &u.LastLogin); err != nil {
 			return nil, err
+		}
+		if u.Role == "" {
+			u.Role = RoleCustomer
 		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// SetWxUserRole 后台改角色（第 26 轮 / D32）：顾客 ↔ 员工。
+// 降级为顾客时顺手清掉员工令牌——免得「人已经被撤了，手机上的工作台还能用」。
+func (s *Store) SetWxUserRole(openid, role string) (WxUser, error) {
+	openid = strings.TrimSpace(openid)
+	role = strings.TrimSpace(role)
+	if openid == "" {
+		return WxUser{}, fmt.Errorf("%w: openid 不能为空", ErrBadInput)
+	}
+	if !ValidRole(role) {
+		return WxUser{}, fmt.Errorf("%w: 角色只能是 customer（顾客）或 staff（员工）", ErrBadInput)
+	}
+	res, err := s.db.Exec(`UPDATE wx_user SET role=?, staff_token=CASE WHEN ?=? THEN staff_token ELSE '' END, updated_at=? WHERE openid=?`,
+		role, role, RoleStaff, nowStr(), openid)
+	if err != nil {
+		return WxUser{}, fmt.Errorf("设置角色失败: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return WxUser{}, fmt.Errorf("%w: 微信用户 %s（让它先用小程序登录一次）", ErrNotFound, openid)
+	}
+	u, _, err := s.GetWxUser(openid)
+	return u, err
+}
+
+// RotateStaffToken 员工登录时换发一枚新令牌（每次登录轮换，旧的立刻失效）。
+// 令牌只是「这台手机是员工」的凭据，能看的都还是同一套接口；32 字节随机，够用。
+func (s *Store) RotateStaffToken(openid string) (string, error) {
+	openid = strings.TrimSpace(openid)
+	if openid == "" {
+		return "", fmt.Errorf("%w: openid 不能为空", ErrBadInput)
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("生成员工令牌失败: %w", err)
+	}
+	token := hex.EncodeToString(buf)
+	res, err := s.db.Exec(`UPDATE wx_user SET staff_token=?, updated_at=? WHERE openid=?`, token, nowStr(), openid)
+	if err != nil {
+		return "", fmt.Errorf("保存员工令牌失败: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", fmt.Errorf("%w: 微信用户 %s", ErrNotFound, openid)
+	}
+	return token, nil
+}
+
+// GetStaffByToken 用令牌换员工身份；令牌不存在、或那个人已经不是员工了，都返回 false。
+func (s *Store) GetStaffByToken(token string) (WxUser, bool, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return WxUser{}, false, nil
+	}
+	var u WxUser
+	err := s.db.QueryRow(`SELECT openid,unionid,phone,nickname,avatar,role,created_at,updated_at,last_login_at
+		FROM wx_user WHERE staff_token=? AND role=?`, token, RoleStaff).
+		Scan(&u.OpenID, &u.UnionID, &u.Phone, &u.Nickname, &u.Avatar, &u.Role, &u.CreatedAt, &u.UpdatedAt, &u.LastLogin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WxUser{}, false, nil
+	}
+	if err != nil {
+		return WxUser{}, false, err
+	}
+	return u, true, nil
 }
 
 // Courier 配送员（任务池⑧ / D25）：原来只存在浏览器 localStorage，换台设备就没人可派单。

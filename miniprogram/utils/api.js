@@ -61,7 +61,7 @@ function setBase(url) {
 }
 
 // ---------- 请求 ----------
-function request(method, path, data) {
+function request(method, path, data, header) {
   return new Promise((resolve, reject) => {
     const b = base()
     if (typeof wx === 'undefined' || !wx || typeof wx.request !== 'function') {
@@ -73,7 +73,7 @@ function request(method, path, data) {
       method: method,
       data: data || undefined,
       timeout: TIMEOUT_MS,
-      header: { 'content-type': 'application/json' },
+      header: Object.assign({ 'content-type': 'application/json' }, header || {}),
       success(res) {
         const d = res && res.data !== undefined ? res.data : {}
         if (res && res.statusCode >= 200 && res.statusCode < 300) {
@@ -248,6 +248,14 @@ function getProduct(code) {
   return request('GET', '/api/products/' + encodeURIComponent(c) + qs).then(mapProduct)
 }
 
+// 全部商品（含已下架）——员工端库存页用：顾客端只看上架，员工要能看见下架的货（D23）。
+function listAllProducts(keyword) {
+  const kw = String(keyword || '').trim()
+  if (!state.online) return Promise.resolve(localProducts(kw))
+  const qs = kw ? '?keyword=' + encodeURIComponent(kw) : ''
+  return request('GET', '/api/products' + qs).then((d) => (d.items || []).map(mapProduct))
+}
+
 // 分类与件数（顾客端只看上架商品）
 function listCategories() {
   if (!state.online) {
@@ -339,7 +347,11 @@ function wxLogin(opts) {
         if (o.phone) body.phone = String(o.phone).trim()
         if (o.nickname) body.nickname = String(o.nickname).trim()
         if (o.avatar) body.avatar = String(o.avatar).trim()
+        // 登录时可选身份（第 26 轮 / D32）：顾客 / 员工。选员工要服务端认（后台把角色改成 staff
+        // 才行），不是客户端说了算；没被标成员工的微信号选员工会被 403 挡回来。
+        if (o.role) body.role = String(o.role).trim()
         request('POST', '/api/wx/login', body).then((d) => {
+          const role = d.role === 'staff' ? 'staff' : 'customer'
           const s = saveSession({
             openid: d.openid || '',
             bound: !!d.bound,
@@ -348,6 +360,11 @@ function wxLogin(opts) {
             nickname: d.nickname || o.nickname || '',
             avatar: d.avatar || o.avatar || '',
             tier: d.tier || rules.TIER_RETAIL,
+            // 角色由服务端下发；员工令牌只在员工账号登录时才有（每次登录轮换）
+            role: role,
+            staffToken: d.staffToken || '',
+            // 这次要看的界面：选了员工且服务端认，就直接进工作台
+            view: role === 'staff' && o.role === 'staff' ? 'staff' : 'customer',
             at: Date.now()
           })
           sdel(LS_PRODUCTS_KEY) // 等级可能变了，价格缓存作废
@@ -380,6 +397,99 @@ function saveProfile(opts) {
     }))
     return next
   })
+}
+
+// ---------- 员工身份与员工界面（第 26 轮 / D32） ----------
+// 老板在管理后台给微信号定角色：顾客（customer）或员工（staff）。员工 = 管理后台同权限。
+// 「角色」是服务端下发的身份，「界面」（view）只是这台手机上的一个开关：同一个人
+// 可以随时切回顾客版买东西，切回来不用重新登录。
+function sessionRole() {
+  const s = session()
+  return s && s.role === 'staff' ? 'staff' : 'customer'
+}
+function isStaff() {
+  return sessionRole() === 'staff'
+}
+function staffToken() {
+  const s = session()
+  return s && s.staffToken ? String(s.staffToken) : ''
+}
+function view() {
+  const s = session()
+  return s && s.view === 'staff' ? 'staff' : 'customer'
+}
+function setView(v) {
+  const s = session()
+  if (!s) return null
+  return saveSession(Object.assign({}, s, { view: v === 'staff' ? 'staff' : 'customer' }))
+}
+function staffHeaders() {
+  const t = staffToken()
+  return t ? { 'X-Staff-Token': t } : {}
+}
+// 员工工作台：今日营业额/单数、待处理单、低库存、最近流水（一次取回）
+function staffOverview() {
+  if (!isStaff()) return Promise.reject(new Error('这个微信号还不是员工'))
+  if (!state.online) return Promise.reject(new Error('后端未连接：员工工作台要连上服务端才能用'))
+  return request('GET', '/api/staff/overview', undefined, staffHeaders())
+}
+// 扫码台（**只读**，D8）：扫 69 码 → 是不是本店商品 / 库存多少 / 卖多少钱 / 最近怎么动的。
+// 扫码本身绝不动库存，入库出库盘点都要员工再点一下（changeStock）。
+function staffScan(code) {
+  const c = String(code == null ? '' : code).trim()
+  if (!c) return Promise.reject(new Error('条码为空'))
+  if (!isStaff()) return Promise.reject(new Error('这个微信号还不是员工'))
+  if (!state.online) return Promise.reject(new Error('后端未连接：扫码台要连上服务端才能用'))
+  return request('GET', '/api/staff/scan?code=' + encodeURIComponent(c), undefined, staffHeaders())
+}
+// 员工改库存：入库 stock_in（qty>0）/ 出库 adjust（qty 是增量，为负）/ 盘点 stock_take（qty=实盘数）。
+// 服务端在一个事务里改库存 + 写流水，by 记在流水上（D25）。
+function changeStock(code, kind, qty, reason, by) {
+  const c = String(code == null ? '' : code).trim()
+  if (!c) return Promise.reject(new Error('商品条码为空'))
+  if (!isStaff()) return Promise.reject(new Error('这个微信号还不是员工'))
+  if (!state.online) return Promise.reject(new Error('后端未连接：改库存要连上服务端才能用'))
+  return request('POST', '/api/stock/change', {
+    code: c,
+    kind: String(kind || 'stock_in'),
+    qty: num(qty),
+    reason: String(reason || '员工小程序操作'),
+    by: String(by || displayName() || '员工')
+  })
+}
+// 建档 / 改档案（员工用）。不带 stock 就完全不碰库存（D16），上下架另走 setOnSale（D23）。
+function saveProduct(p) {
+  const o = p || {}
+  const code = String(o.code == null ? '' : o.code).trim()
+  if (!code) return Promise.reject(new Error('商品条码不能为空'))
+  if (!String(o.name || '').trim()) return Promise.reject(new Error('商品名称不能为空'))
+  if (!isStaff()) return Promise.reject(new Error('这个微信号还不是员工'))
+  if (!state.online) return Promise.reject(new Error('后端未连接：建档要连上服务端才能用'))
+  const body = {
+    code: code,
+    name: String(o.name).trim(),
+    brand: String(o.brand || '').trim(),
+    spec: String(o.spec || '').trim(),
+    category: String(o.category || '未分类').trim() || '未分类',
+    img: String(o.img || ''),
+    costPrice: num(o.costPrice),
+    salePrice: num(o.salePrice),
+    wholesalePrice: num(o.wholesalePrice),
+    refPrice: num(o.refPrice),
+    unit: String(o.unit || '件').trim() || '件',
+    isWholesale: !!o.isWholesale
+  }
+  // 只有明确传了 stock 才覆盖库存：编辑档案默认不动库存（D16）
+  if (o.stock !== undefined && o.stock !== null && o.stock !== '') body.stock = num(o.stock)
+  return request('POST', '/api/products', body)
+}
+// 上下架（D23）：只改状态，绝不改库存
+function setOnSale(codes, on) {
+  const list = (codes || []).map((c) => String(c).trim()).filter(Boolean)
+  if (!list.length) return Promise.reject(new Error('先选商品'))
+  if (!isStaff()) return Promise.reject(new Error('这个微信号还不是员工'))
+  if (!state.online) return Promise.reject(new Error('后端未连接：上下架要连上服务端才能用'))
+  return request('POST', '/api/products/onsale', { codes: list, onSale: !!on })
 }
 
 // ---------- 订单 ----------
@@ -595,6 +705,7 @@ module.exports = {
   probe: probe,
   status: status,
   listProducts: listProducts,
+  listAllProducts: listAllProducts,
   getProduct: getProduct,
   listCategories: listCategories,
   resolveBarcode: resolveBarcode,
@@ -605,6 +716,18 @@ module.exports = {
   saveSession: saveSession,
   clearSession: clearSession,
   isLoggedIn: isLoggedIn,
+  // 员工身份（第 26 轮 / D32）
+  sessionRole: sessionRole,
+  isStaff: isStaff,
+  staffToken: staffToken,
+  staffHeaders: staffHeaders,
+  view: view,
+  setView: setView,
+  staffOverview: staffOverview,
+  staffScan: staffScan,
+  changeStock: changeStock,
+  saveProduct: saveProduct,
+  setOnSale: setOnSale,
   boundPhone: boundPhone,
   displayName: displayName,
   sessionLabel: sessionLabel,

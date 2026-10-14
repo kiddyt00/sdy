@@ -261,6 +261,99 @@ const Admin = (() => {
     return notes[ph];
   }
 
+  /* ---------------- 微信用户角色（任务池⑫ / D32） ----------------
+   * 小程序登录会把每个微信号沉淀成一条用户记录（openid 是唯一身份，手机号可能没有）。
+   * 老板在这里把某个微信号改成「员工」——员工登录小程序就能进工作台（管理端同权限）；
+   * 改回「顾客」时服务端顺手清掉员工令牌（人撤了，那台手机上的工作台立刻进不去）。
+   * 角色只有两种：customer 顾客（默认）/ staff 员工；未知取值一律按顾客显示。
+   */
+  const WX_ROLES = [
+    { v: 'customer', label: '顾客' },
+    { v: 'staff', label: '员工' }
+  ];
+  function validWxRole(role) { return WX_ROLES.some(x => x.v === role); }
+  function roleLabel(role) {
+    const hit = WX_ROLES.find(x => x.v === role);
+    return hit ? hit.label : '顾客';                  // 未知角色按顾客显示
+  }
+  // 服务端字段 → 页面模型：缺字段给空串/默认值，渲染层永远不崩（纯函数，可单测）
+  function normalizeWxUser(u) {
+    const x = u || {};
+    return {
+      openid: String(x.openid == null ? '' : x.openid),
+      unionid: String(x.unionid == null ? '' : x.unionid),
+      phone: String(x.phone == null ? '' : x.phone),
+      nickname: String(x.nickname == null ? '' : x.nickname),
+      avatar: String(x.avatar == null ? '' : x.avatar),
+      role: validWxRole(x.role) ? x.role : 'customer',
+      createdAt: x.createdAt || '',
+      updatedAt: x.updatedAt || '',
+      lastLogin: x.lastLogin || ''
+    };
+  }
+  // openid 有 28 位左右，列表里截断显示（全量放 title），后 4 位用于人工核对
+  function shortOpenid(openid) {
+    const s = String(openid == null ? '' : openid);
+    return s.length > 12 ? s.slice(0, 6) + '…' + s.slice(-4) : s;
+  }
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+  // 微信用户只存在服务端（本地演示没有），离线统一抛一句中文，由页面渲染成空状态
+  async function listWxUsers(limit) {
+    if (typeof SdyApi === 'undefined' || !SdyApi.on()) throw new Error('未连接后端，微信用户列表要连上服务器才能看');
+    const n = Number(limit) > 0 ? Number(limit) : 200;
+    const res = await SdyApi.req('GET', '/api/wx/users?limit=' + n);
+    return ((res && res.items) || []).map(normalizeWxUser);
+  }
+  // 设角色（POST /api/wx/role）：customer ↔ staff。真源在服务端，改完必须重新拉列表
+  async function setWxRole(openid, role) {
+    const id = String(openid == null ? '' : openid).trim();
+    if (!id) throw new Error('缺少 openid（让对方先用小程序登录一次）');
+    const r = String(role == null ? '' : role).trim() || 'customer';
+    if (!validWxRole(r)) throw new Error('角色只能是 customer / staff');
+    if (typeof SdyApi === 'undefined' || !SdyApi.on()) throw new Error('未连接后端，无法修改角色');
+    const res = await SdyApi.req('POST', '/api/wx/role', { openid: id, role: r });
+    return res || { ok: true, openid: id, role: r };
+  }
+  // 头像：有 avatar 才渲染 <img>（加载失败自动 remove，露出下面的首字占位）
+  function wxAvatarHTML(u) {
+    const x = u || {};
+    if (x.avatar) return '<img class="wxavatar" src="' + escHtml(x.avatar) + '" alt="" loading="lazy" onerror="this.remove()">';
+    const ch = String(x.nickname || '').trim().slice(0, 1) || '👤';
+    return '<span class="wxavatar wxavatar-ph">' + escHtml(ch) + '</span>';
+  }
+  // 用户列表（纯函数，返回 HTML 串；页面只负责塞进 #wxUserList）
+  function renderWxUsers(users) {
+    const list = Array.isArray(users) ? users : [];
+    if (!list.length) return '<div class="empty"><span class="big">👥</span>还没有微信用户：让对方先用小程序登录一次，这里就会出现</div>';
+    const rows = list.map(u => {
+      const role = validWxRole(u.role) ? u.role : 'customer';
+      const to = role === 'staff' ? 'customer' : 'staff';       // 按钮指向的相反角色
+      const badge = role === 'staff'
+        ? '<span class="badge st-done">员工</span>'
+        : '<span class="badge">顾客</span>';
+      const openid = String(u.openid || '');
+      return '<tr>' +
+        '<td><div class="pcell">' + wxAvatarHTML(u) + '</div></td>' +
+        '<td><b>' + escHtml(u.nickname || '（未留昵称）') + '</b>' +
+          '<div class="muted mono" style="font-size:11.5px" title="' + escHtml(openid) + '">' + escHtml(shortOpenid(openid)) + '</div></td>' +
+        '<td>' + escHtml(u.phone || '—') + '</td>' +
+        '<td>' + badge + '</td>' +
+        '<td class="muted" style="font-size:12px">' + escHtml(u.lastLogin || '—') + '</td>' +
+        '<td><button class="btn btn-xs' + (to === 'staff' ? ' btn-primary' : '') + '"' +
+          ' onclick="wxToggleRole(\'' + escHtml(openid) + '\',\'' + to + '\')">' +
+          (to === 'staff' ? '设为员工' : '设为顾客') + '</button></td>' +
+        '</tr>';
+    }).join('');
+    return '<table class="table"><thead><tr>' +
+      '<th style="width:52px">头像</th><th>昵称 / 微信号</th><th>手机号</th>' +
+      '<th style="width:76px">角色</th><th>最后登录</th><th style="width:96px">操作</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
   // ---------------- 商品档案（建档 / 编辑 / 删除 · 任务池①） ----------------
   // 不变量：① 编辑表单不改库存（库存只走库存页）；② 删除要求库存为 0 且无进行中订单。
   const DEFAULT_UNIT = '件';
@@ -874,6 +967,14 @@ const Admin = (() => {
     refreshCustomers: refreshCustomers,
     setTier: setTier,
     saveCustomerNote: saveCustomerNote,
+    WX_ROLES: WX_ROLES,
+    validWxRole: validWxRole,
+    roleLabel: roleLabel,
+    normalizeWxUser: normalizeWxUser,
+    shortOpenid: shortOpenid,
+    listWxUsers: listWxUsers,
+    setWxRole: setWxRole,
+    renderWxUsers: renderWxUsers,
     saveCourier: saveCourier,
     recordStockEntry: recordStockEntry
   };

@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "库存找货",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "staff-nav": "/components/staff-nav/index"
+  }
+}

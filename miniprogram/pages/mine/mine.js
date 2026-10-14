@@ -31,6 +31,15 @@ Page({
     nickname: '',
     busy: false,
     avatar: '',
+    // 员工身份（第 26 轮 / D32）：登录时选「顾客 / 员工」，看到的界面不一样；
+    // 员工身份由服务端按微信号下发，这里只是本地的一个选择。
+    loginRole: 'customer',
+    roleOptions: [
+      { key: 'customer', label: '我是顾客' },
+      { key: 'staff', label: '我是员工' }
+    ],
+    isStaff: false,
+    staffView: false,
     counts: { pending: 0, delivering: 0, ready: 0, done: 0 },
     orderGrid: [
       { key: 'pending', label: '待处理', icon: 'tosend' },
@@ -64,6 +73,9 @@ Page({
       sessionName: api.displayName(),
       sessionPhone: (s && s.phone) || '',
       tierText: rules.tierLabel(s && s.tier),
+      // 第 26 轮 / D32：员工身份看服务端定，员工入口看本机界面开关
+      isStaff: api.sessionRole() === 'staff',
+      staffView: api.view() === 'staff',
       // 昵称优先用本地的（用户刚在输入框里改的），没有就用服务端带回来的
       nickname: this.data.nickname || (s && (s.nickname || '')) || ''
     })
@@ -117,19 +129,39 @@ Page({
     this.setData({ nickname: (e.detail && e.detail.value) || '' })
   },
 
+  // 登录前选身份（第 26 轮 / D32）：选员工只是「我想进员工界面」，
+  // 服务端还得认这个微信号是员工才行（不是员工会被 403 挡回来，文案就是老板该怎么办）。
+  pickRole(e) {
+    const key = (e.currentTarget.dataset.key) || 'customer'
+    this.setData({ loginRole: key === 'staff' ? 'staff' : 'customer' })
+  },
+
   // 登录：只换 openid，不填手机号（手机号下单时填）；头像昵称有就带上
   doLogin() {
     if (this.data.busy) return Promise.resolve(null)
     this.setData({ busy: true })
+    const role = this.data.loginRole === 'staff' ? 'staff' : 'customer'
     return api
       .wxLogin({
         nickname: String(this.data.nickname || '').trim(),
-        avatar: avatarForServer(this.data.avatar)
+        avatar: avatarForServer(this.data.avatar),
+        role: role
       })
       .then((s) => {
         this.setData({ busy: false })
         this.syncSession()
         this.loadCounts()
+        // 选员工身份进来的：直接送进工作台（选顾客身份的员工就还留在顾客版，
+        // 「我的」里会多一张「员工工作台」的卡片让他随时过去）
+        if (role === 'staff' && api.sessionRole() === 'staff') {
+          this.toast('员工身份登录成功')
+          api.setView('staff')
+          this.syncSession()
+          setTimeout(() => {
+            if (typeof wx !== 'undefined' && wx.reLaunch) wx.reLaunch({ url: '/pages/staff/home' })
+          }, 400)
+          return s
+        }
         this.toast('登录成功：' + (api.displayName() || '微信顾客') + ' · ' + rules.tierLabel(s.tier))
         return s
       })
@@ -149,7 +181,7 @@ Page({
       try {
         wx.removeStorageSync(AVATAR_KEY)
       } catch (err) { /* 忽略 */ }
-      this.setData({ nickname: '', avatar: '' })
+      this.setData({ nickname: '', avatar: '', loginRole: 'customer' })
       this.syncSession()
       this.loadCounts()
       this.toast('已退出登录')
@@ -207,6 +239,15 @@ Page({
   },
   goIndex() {
     if (typeof wx !== 'undefined' && wx.switchTab) wx.switchTab({ url: '/pages/index/index' })
+  },
+  // 员工工作台入口（第 26 轮 / D32）：本机界面切到员工版再跳过去；
+  // 员工页里自会校验服务端身份和令牌，不是员工会被弹回来。
+  goStaff() {
+    if (!this.data.isStaff) return null
+    api.setView('staff')
+    this.syncSession()
+    if (typeof wx !== 'undefined' && wx.reLaunch) wx.reLaunch({ url: '/pages/staff/home' })
+    return null
   },
   callShop() {
     const p = (getApp().globalData && getApp().globalData.settings && getApp().globalData.settings.phone) || ''

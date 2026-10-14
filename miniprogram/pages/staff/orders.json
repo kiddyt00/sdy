@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "订单处理",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "staff-nav": "/components/staff-nav/index"
+  }
+}

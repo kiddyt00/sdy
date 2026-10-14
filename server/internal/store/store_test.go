@@ -1247,3 +1247,69 @@ func TestListCategories(t *testing.T) {
 		}
 	}
 }
+
+// TestWxUserRoleAndStaffToken 员工角色与员工令牌（第 26 轮 / D32）：
+// 角色只能由后台改、令牌每次登录轮换、降级回顾客必须立刻清掉令牌。
+func TestWxUserRoleAndStaffToken(t *testing.T) {
+	st := newTestStore(t)
+
+	if _, err := st.SetWxUserRole("o_none", RoleStaff); err == nil {
+		t.Errorf("还没登录过的 openid 改角色应报错（先让它用小程序登录一次）")
+	}
+	u, err := st.BindWxUser("o_s", "u_s", "", "阿明", "")
+	if err != nil {
+		t.Fatalf("登录失败: %v", err)
+	}
+	if u.Role != RoleCustomer {
+		t.Fatalf("新用户默认角色应是顾客: %+v", u)
+	}
+	if _, err := st.SetWxUserRole("o_s", "boss"); err == nil {
+		t.Errorf("非法角色应报错")
+	}
+	if u, err = st.SetWxUserRole("o_s", RoleStaff); err != nil || u.Role != RoleStaff {
+		t.Fatalf("设成员工失败: %v %+v", err, u)
+	}
+
+	if _, ok, err := st.GetStaffByToken(""); err != nil || ok {
+		t.Errorf("空令牌不该换到身份: ok=%v err=%v", ok, err)
+	}
+	tok1, err := st.RotateStaffToken("o_s")
+	if err != nil || len(tok1) != 64 {
+		t.Fatalf("签发员工令牌失败: %v %q", err, tok1)
+	}
+	got, ok, err := st.GetStaffByToken(tok1)
+	if err != nil || !ok || got.OpenID != "o_s" || got.Role != RoleStaff {
+		t.Fatalf("令牌应换到员工身份: err=%v ok=%v %+v", err, ok, got)
+	}
+	tok2, err := st.RotateStaffToken("o_s")
+	if err != nil || tok2 == tok1 {
+		t.Fatalf("令牌应每次登录轮换: %v", err)
+	}
+	if _, ok, _ := st.GetStaffByToken(tok1); ok {
+		t.Errorf("轮换后旧令牌应立刻失效")
+	}
+
+	if _, err := st.SetWxUserRole("o_s", RoleCustomer); err != nil {
+		t.Fatalf("降级失败: %v", err)
+	}
+	if _, ok, _ := st.GetStaffByToken(tok2); ok {
+		t.Errorf("降级回顾客后令牌应失效（人撤了，手机上的工作台不能再进）")
+	}
+
+	if _, err := st.SetWxUserRole("o_s", RoleStaff); err != nil {
+		t.Fatalf("再提员工失败: %v", err)
+	}
+	if _, err := st.RotateStaffToken("o_s"); err != nil {
+		t.Fatalf("再签令牌失败: %v", err)
+	}
+	list, err := st.ListWxUsers(10)
+	if err != nil || len(list) != 1 || list[0].Role != RoleStaff {
+		t.Fatalf("微信用户列表应带出角色: %v %+v", err, list)
+	}
+	if !ValidRole(RoleStaff) || !ValidRole(RoleCustomer) || ValidRole("") || ValidRole("STAFF") {
+		t.Errorf("ValidRole 口径不对（只认 customer / staff 两个小写值）")
+	}
+	if _, err := st.RotateStaffToken(""); err == nil {
+		t.Errorf("空 openid 签令牌应报错")
+	}
+}

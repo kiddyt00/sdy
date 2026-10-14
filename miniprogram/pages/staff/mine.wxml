@@ -1,0 +1,62 @@
+<!-- 员工「我的」（第 26 轮 / D32） -->
+<view class="spage">
+  <view class="hero">
+    <view class="mecard-top">
+      <image wx:if="{{avatar}}" class="savatar" src="{{avatar}}" mode="aspectFill" />
+      <view wx:else class="savatar ph">🙂</view>
+      <view class="sinfo">
+        <view class="sname">{{name}}</view>
+        <view class="srole">{{roleText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="mecard">
+    <view class="mrowline">
+      <text class="mk">身份</text>
+      <text class="mv">{{roleText}}</text>
+    </view>
+    <view class="mrowline">
+      <text class="mk">手机号</text>
+      <text class="mv">{{phone}}</text>
+    </view>
+    <view class="mrowline">
+      <text class="mk">微信号标识</text>
+      <text class="mv">…{{openid}}</text>
+    </view>
+  </view>
+
+  <view class="mecard">
+    <view class="mrowline">
+      <text class="mk">店铺</text>
+      <text class="mv">{{shop.name}}</text>
+    </view>
+    <view class="mrowline">
+      <text class="mk">营业时间</text>
+      <text class="mv">{{shop.hours}}</text>
+    </view>
+    <view class="mrowline" wx:if="{{shop.address}}">
+      <text class="mk">门店地址</text>
+      <text class="mv">{{shop.address}}</text>
+    </view>
+    <view class="mrowline" bindtap="callShop">
+      <text class="mk">联系电话</text>
+      <text class="mv">{{shop.phone || '未填写'}}</text>
+    </view>
+  </view>
+
+  <view class="mecard">
+    <view class="mrowline" bindtap="switchCustomer">
+      <text class="mk">切回顾客版</text>
+      <text class="mv">去买东西 ›</text>
+    </view>
+  </view>
+
+  <view class="mecard">
+    <view class="mexit" bindtap="logout">退出登录</view>
+  </view>
+
+  <view class="mver">啥都有快送 · 小程序 {{version}}</view>
+  <view class="sbottom"></view>
+</view>
+<staff-nav active="mine" />

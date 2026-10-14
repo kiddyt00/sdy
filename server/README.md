@@ -8,10 +8,10 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `server/cmd/server/main.go` | 进程入口（583 行）：环境变量、建库与种子数据、路由表、CORS/日志中间件、超时与优雅退出、云端条码 HTTP 客户端 |
-| `server/cmd/server/main_test.go` | HTTP 层单测（453 行，7 个）：商品建档/编辑/删除全流程、库存语义、**商品上下架语义**、**收货地址簿全流程**、**管理端干净地址 `/admin`（含 `/admin/` 301）**、**批发价与顾客等级全流程**、CORS 预检 |
-| `server/internal/store/store.go` | 数据层（1091 行）：7 张表、事务下单、状态机、库存回补、商品档案增删改校验、**商品上下架（`on_sale` + `ensureColumn` 幂等迁移）**、**批发价与顾客等级（`wholesale_price` / `customer.tier`）**、**收货地址簿**、条码字典 |
-| `server/internal/store/store_test.go` | 数据层单测（813 行，19 个） |
+| `server/cmd/server/main.go` | 进程入口（1140 行）：环境变量、建库与种子数据、路由表、CORS/日志中间件、超时与优雅退出、云端条码 HTTP 客户端、**员工接口与 `X-Staff-Token` 令牌鉴权（第 26 轮 D32）** |
+| `server/cmd/server/main_test.go` | HTTP 层单测（985 行，12 个）：商品建档/编辑/删除全流程、库存语义、**商品上下架语义**、**收货地址簿全流程**、**管理端干净地址 `/admin`（含 `/admin/` 301）**、**批发价与顾客等级全流程**、**员工角色与扫码 HTTP 全流程 `TestStaffRoleAndScanHTTPFlow`（第 26 轮 D32，含「连扫三次库存不变」断言）**、CORS 预检 |
+| `server/internal/store/store.go` | 数据层（1760 行）：7 张表、事务下单、状态机、库存回补、商品档案增删改校验、**微信用户角色与员工令牌（`role` / `staff_token` + `SetWxUserRole` / `RotateStaffToken` / `GetStaffByToken`，第 26 轮 D32）**、**商品上下架（`on_sale` + `ensureColumn` 幂等迁移）**、**批发价与顾客等级（`wholesale_price` / `customer.tier`）**、**收货地址簿**、条码字典 |
+| `server/internal/store/store_test.go` | 数据层单测（1315 行，27 个，含第 26 轮 `TestWxUserRoleAndStaffToken`：角色合法性、设员工后按令牌取人、降回顾客清空令牌、令牌轮换与旧令牌失效） |
 | `server/internal/pricing/pricing.go` | 价格与配送规则（146 行）：防线、运费、**顾客等级与有效价 `EffectivePrice`**，与 `web/pricing.js` 语义一致 |
 | `server/internal/pricing/pricing_test.go` | 规则单测（129 行，5 个） |
 | `server/internal/barcode/barcode.go` | 条码解析链（143 行）：商品档案 → 本地字典 → 云端，含查无 TTL 与失败熔断 |
@@ -110,9 +110,12 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | GET | `/api/barcode/resolve?code=` | 条码解析链：商品档案 → 本地字典 → 云端；查到永久回填字典，查无标记 90 天，连续失败 5 次熔断当日 |
 | GET | `/api/barcode/lib?limit=` | 条码字典层列表（默认 200 条，只读） |
 | GET | `/api/pricing/check` | 比价防线巡检，返回 `{total, over, violations}` |
-| POST | `/api/wx/login` | **微信登录唯一入口**（D28；第 25 轮 D31 起 `phone` 可选）：`{code, phone?, nickname?, avatar?}`；`code` 来自小程序 `wx.login`，服务端用 `WX_APPID`/`WX_SECRET` 调 `sns/jscode2session` 换 `openid`（**session_key 只留服务端、不回传**），把 openid 绑到手机号档案（`EnsureCustomer` 建档但**只补空姓名、不覆盖老板维护的姓名**，手机号必须 11 位且 1 开头）；**`phone` 不传也能登录**（第 25 轮 D31：手机号是价格身份与地址簿钥匙，推迟到下单时填；不传=保留原绑定，`name` 初值用微信昵称、只有已绑手机号且顾客档案有名字时才用档案名）；成功返回 `{ok, openid, bound, phone, name, nickname, avatar, tier}`；`code` 为空 → `400`，微信侧错误（code 失效 / AppSecret 不对 → `-10008` 一类）原文透出，服务端没配 `WX_APPID`/`WX_SECRET` → `503 微信登录未配置（服务端缺少 WX_APPID / WX_SECRET）`；**登录不提权**：新顾客一律零售档，批发/白名单只能老板在管理端改（D24） |
+| POST | `/api/wx/login` | **微信登录唯一入口**（D28；第 25 轮 D31 起 `phone` 可选）：`{code, phone?, nickname?, avatar?}`；`code` 来自小程序 `wx.login`，服务端用 `WX_APPID`/`WX_SECRET` 调 `sns/jscode2session` 换 `openid`（**session_key 只留服务端、不回传**），把 openid 绑到手机号档案（`EnsureCustomer` 建档但**只补空姓名、不覆盖老板维护的姓名**，手机号必须 11 位且 1 开头）；**`phone` 不传也能登录**（第 25 轮 D31：手机号是价格身份与地址簿钥匙，推迟到下单时填；不传=保留原绑定，`name` 初值用微信昵称、只有已绑手机号且顾客档案有名字时才用档案名）；成功返回 `{ok, openid, bound, phone, name, nickname, avatar, tier}`；`code` 为空 → `400`，微信侧错误（code 失效 / AppSecret 不对 → `-10008` 一类）原文透出，服务端没配 `WX_APPID`/`WX_SECRET` → `503 微信登录未配置（服务端缺少 WX_APPID / WX_SECRET）`；**登录不提权**：新顾客一律零售档，批发/白名单只能老板在管理端改（D24）；**第 26 轮 D32 起 body 新增可选 `role`**：缺省是顾客，非法值 → `400 身份只能是 customer（顾客）或 staff（员工）`，**选了员工但后台没把这个微信号标成员工 → `403 这个微信号还不是员工，请让老板在管理后台把角色改成员工`**（客户端自己点不出权限）；响应新增 `role` / `wantRole`，**是员工就一律回 64 位 `staffToken`**（32 字节 `crypto/rand` → 64 位 hex，**每次员工登录轮换、旧令牌立刻失效**；即使这次选了顾客身份也回令牌，只为「我的」页一键进工作台方便，**不是提权**——员工本来就跟管理后台同权限） |
 | POST | `/api/wx/profile` | **保存微信头像昵称**（第 25 轮 D31）：`{openid, nickname, avatar}`；**空值保留原值**（只换头像不清昵称），昵称截 20 rune、头像 ≤512 rune（超了报「头像地址过长」），openid 不存在 → `404 资源不存在`，缺 openid → `400 缺少 openid（先登录再保存头像昵称）`，非 POST → `405`；成功返回 `{ok, openid, nickname, avatar}` |
-| GET | `/api/wx/users` | 已绑过的微信用户（只读，管理端排查用）：`{items:[{openid, unionid, phone, nickname, createdAt, updatedAt, lastLogin}], total}` |
+| GET | `/api/wx/users` | 已绑过的微信用户（只读；第 26 轮起也是 Web 管理端「用户角色」面板的数据源）：`{items:[{openid, unionid, phone, nickname, role, createdAt, updatedAt, lastLogin}], total}`；**不下发 `staff_token`**（令牌故意不进 `store.WxUser`，防止列表接口泄露） |
+| POST | `/api/wx/role` | **设定微信用户角色（第 26 轮 D32，管理后台唯一入口）**：`{openid, role}`，`role` 只认 `customer` / `staff`（`store.ValidRole`，非法 → `400 角色只能是 customer（顾客）或 staff（员工）`），缺 openid → `400 缺少 openid（让对方先用小程序登录一次）`，未知 openid → `微信用户 <openid>（让它先用小程序登录一次）`；**改成顾客时 `staff_token` 一并清空**（令牌立刻失效），改员工后可让对方以员工身份重新登录拿新令牌 |
+| GET | `/api/staff/overview` | **员工工作台聚合（第 26 轮 D32）**：请求头 `X-Staff-Token`（也接受 `?staff=` 兜底），失败一律 `401 员工身份已失效，请用员工身份重新登录`；返回 `stats{todayRevenue, todayOrders, pending, lowStockCount, products}` + `pendingOrders`（最多 5 条）+ `lowStockItems`（最多 5 条）+ `recent`（最近 5 条库存流水）；低库存阈值 **5**（与 Web 管理端同一口径） |
+| GET | `/api/staff/scan?code=` | **员工扫码台查询（第 26 轮 D32）**：同样 `X-Staff-Token` 鉴权；命中已建档条码返回 `product`，未建档返回条码解析结果 `resolve`，并附该条码最近 5 条流水；**扫码绝不改库存（D8 不变量）**——入库 / 出库 / 盘点仍走既有的 `POST /api/stock/change` |
 | GET | `/admin` | 管理端干净地址：直接把 `STATIC_DIR/admin.html` 吐出来；`/admin/` 带尾斜杠会 301 到 `/admin`（带斜杠时页面内相对路径基准变成 `/admin/`，`assets/theme.css` 等会 404）；旧 `/admin.html` 继续可用 |
 | — | `/`（其余路径） | 静态文件（`STATIC_DIR`） |
 
@@ -124,7 +127,7 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy/server
-go test ./... -count=1        # 48 个单测
+go test ./... -count=1        # 50 个单测
 ./smoke.sh                    # 起真服务跑 HTTP 全流程
 ```
 
@@ -134,10 +137,10 @@ go test ./... -count=1        # 48 个单测
 | --- | --- | --- |
 | `server/internal/barcode` | 6 | `TestResolveProductFirst`、`TestResolveLibSecond`、`TestResolveCloudBackfill`、`TestResolveCloudNotFoundTTL`、`TestResolveCircuitBreaker`、`TestResolveEdgeCases` |
 | `server/internal/pricing` | 5 | `TestDeliveryFee`、`TestDeliveryFeeCustomConfig`、`TestCheckRetailPrice`、`TestPricingCheck`、`TestEffectivePrice` |
-| `server/internal/store` | 26 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook`、`TestProductOnSaleSemantics`、`TestOnSaleColumnMigration`、`TestCustomerTierWholesalePrice`、`TestTierColumnMigration`、**`TestStockChangeAudit`、`TestStockLogCap`、`TestCouriersPersist`、`TestStoreSettings`、`TestCustomerNote`（D25）、**`TestWxUserBind`（D28：昵称超 20 字截断不报错、坏手机号不建档、`EnsureCustomer` 不覆盖已维护姓名）**、**`TestListCategories`（第 24 轮：空/空白分类归「未分类」、件数降序同名升序、`onSale=1` 过滤、无数据返回非 nil 空数组）** |
-| `server/cmd/server` | 11 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestProductOnSaleHTTPFlow`、`TestAddressHTTPFlow`、`TestAdminCleanURL`、`TestHealthzAndOptions`、`TestCustomerTierHTTPFlow`、**`TestStockChangeHTTPFlow`、`TestCourierSettingsNoteHTTPFlow`（D25）、`TestWxLoginHTTPFlow`（D28：未配置 → 503、缺 code → 400、微信侧错误原样透出、绑定后等级仍由档案决定）**、**`TestProductDetailAndCategoriesHTTPFlow`（第 24 轮：详情有效价 / 未知条码 404 / 非 GET 405 / 分类 `onSale=1` 过滤）** |
+| `server/internal/store` | 27 | `TestUpsertAndGetProduct`、`TestListProductsFilter`、`TestSetStockMarksPending`、`TestCreateOrderPickup`、`TestCreateOrderDeliveryFee`、`TestCreateOrderValidation`、`TestCreateOrderInsufficientStock`、`TestAdvanceOrderStateMachine`、`TestCancelOrderRestoresStock`、`TestListOrdersAndCustomer`、`TestListLib`、`TestUpsertProductValidation`、`TestUpsertProductPriceGuard`、`TestDeleteProductGuard`、`TestAddressBook`、`TestProductOnSaleSemantics`、`TestOnSaleColumnMigration`、`TestCustomerTierWholesalePrice`、`TestTierColumnMigration`、**`TestStockChangeAudit`、`TestStockLogCap`、`TestCouriersPersist`、`TestStoreSettings`、`TestCustomerNote`（D25）、**`TestWxUserBind`（D28：昵称超 20 字截断不报错、坏手机号不建档、`EnsureCustomer` 不覆盖已维护姓名）**、**`TestListCategories`（第 24 轮：空/空白分类归「未分类」、件数降序同名升序、`onSale=1` 过滤、无数据返回非 nil 空数组）** **`TestWxUserRoleAndStaffToken`（第 26 轮 D32：`ValidRole` 只认 `customer` / `staff`（其余一律非法）、`SetWxUserRole` 设成员工后 `GetStaffByToken` 能认、**角色改回顾客时 `staff_token` 被清空**、`RotateStaffToken` 每次给新的 64 位 hex 且旧令牌立刻失效、未知 openid 报「微信用户 …（让它先用小程序登录一次）」）** |
+| `server/cmd/server` | 12 | `TestProductHTTPFlow`、`TestProductStockSemantics`、`TestProductOnSaleHTTPFlow`、`TestAddressHTTPFlow`、`TestAdminCleanURL`、`TestHealthzAndOptions`、`TestCustomerTierHTTPFlow`、**`TestStockChangeHTTPFlow`、`TestCourierSettingsNoteHTTPFlow`（D25）、`TestWxLoginHTTPFlow`（D28：未配置 → 503、缺 code → 400、微信侧错误原样透出、绑定后等级仍由档案决定）**、**`TestProductDetailAndCategoriesHTTPFlow`（第 24 轮：详情有效价 / 未知条码 404 / 非 GET 405 / 分类 `onSale=1` 过滤）** **`TestStaffRoleAndScanHTTPFlow`（第 26 轮 D32：`/api/wx/role` 设角色、登录带 `role=staff` 拿 64 位令牌、`X-Staff-Token` 打通 `/api/staff/overview` 与 `/api/staff/scan`、非员工选员工身份 → **403**、坏令牌 / 无令牌 → **401**，并**连扫三次断言库存不变**（D8）**）** |
 
-合计 **48 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
+合计 **50 个单测**，本机实测 `go test ./... -count=1` 全部通过（`gofmt -l .` 无输出、`go vet ./...` 干净）。
 
 `./smoke.sh` 会 `go build` 一个临时二进制，用 `mktemp` 建临时库（**不碰 `server/data/sdy.db`**），起在 `127.0.0.1:8099`（`SMOKE_PORT` 可改，**默认不占用 8093**），轮询 `/healthz` 就绪后依次验证 8 项：健康检查 → 商品数 → 条码解析 → 下单 → 下单后库存 → 非法流转返回 409 → 取消回补库存 → 比价巡检，最后退出并清理进程与临时文件。实测输出以 `✅ 冒烟通过` 结束（下单示例：`6901234567892` 库存 120 → 118，取消后回到 120）。
 
@@ -161,6 +164,7 @@ go vet ./...
 - **价格防线**：`salePrice ≤ round2(refPrice × 0.95)`；批发商品（`ExcludeWholesale: true`）与无参考价（`refPrice <= 0`）自动跳过。默认配置：自提 0 元、满 30 元免运费否则 3 元。
 - **商品档案校验**：`POST /api/products` 在 store 层校验条码/名称必填、价格非负、库存非负，并**在服务端执行比价防线**（`UpsertProduct` 内调 `pricing.CheckRetailPrice`，超价返回 `400`，批发与无参考价豁免）；缺省单位补「件」、分类补「未分类」。**`stock` 不传 = 保留原库存**（指针区分「没传」与「传 0」），保证管理端编辑表单不会误清库存。
 - **删除商品档案**：`DeleteProduct` 先查在库量与进行中订单，再删行；**条码字典层（`barcode_lib`）不删**——D6 的永久沉淀，删档后扫码仍能识别。
+- **D32 员工身份与员工扫码工作台（第 26 轮）**：① **小程序里只有两种角色**——`store.RoleCustomer = 'customer'`（默认）/ `store.RoleStaff = 'staff'`，`store.ValidRole(r)` 只认这两个小写值；`wx_user` 加 `role TEXT NOT NULL DEFAULT 'customer'` 与 `staff_token TEXT NOT NULL DEFAULT ''`，**都走 `ensureColumn` 幂等迁移**（老库直接升、不重建表）。② **角色只能由管理后台给**：`SetWxUserRole(openid, role)` 供 `POST /api/wx/role` 使用，未知 openid 报「微信用户 %s（让它先用小程序登录一次）」；**改成顾客时把 `staff_token` 一并清空**（`UPDATE ... SET role=?, staff_token=''`），改员工时不动旧令牌（对方重新登录即轮换）。③ **令牌与用户结构体分家**：`store.WxUser` **不带令牌字段**，`GET /api/wx/users` 不可能泄露令牌；`RotateStaffToken(openid)` 用 32 字节 `crypto/rand` → 64 位 hex 写回 `staff_token`，`GetStaffByToken(token)` 反查员工——**每次员工登录都轮换，旧令牌立刻失效**。④ **登录侧**：`POST /api/wx/login` 的 `role` 可选（缺省顾客，非法 400），**选了员工但后台没标成员工 → 403**「这个微信号还不是员工，请让老板在管理后台把角色改成员工」——「客户端自己点不出权限」是这一轮的硬口径；响应加 `role` / `wantRole`，**是员工就一律回 64 位 `staffToken`**（含这次选了顾客身份的情况，只为「我的」页一键进工作台方便，**不是提权**：员工与 Web 管理后台同权限）。⑤ **两个员工聚合接口用 `X-Staff-Token` 守**（也接受 `?staff=` 兜底，失败一律 `401 员工身份已失效，请用员工身份重新登录`）：`GET /api/staff/overview`（`stats` + 待处理前 5 + 低库存前 5（阈值 **5**，与 Web 管理端同口径）+ 最近 5 条流水）、`GET /api/staff/scan?code=`（命中返 `product`、未建档返 `resolve` + 该条码最近 5 条流水）；**扫码只读不变量不变（D8）**——入库 / 出库 / 盘点仍走 `POST /api/stock/change`，由小程序再点一下并二次确认。⑥ **员工是全权限**（能改价 / 删商品 / 改顾客等级），所以员工的写操作复用既有开放接口，**只有上面两个聚合接口带令牌**；**站点级管理端鉴权仍是遗留项**（管理端接口本身无鉴权，历史遗留，如实记）。⑦ **界面开关 ≠ 身份**：小程序 `setView('customer')` 只切回顾客版界面，服务端角色与令牌都还在；只有老板在后台把角色改回顾客，令牌才失效。
 - **D31 登录与信息展示收敛（第 25 轮）**：① **登录不要手机号**——`/api/wx/login` 的 `phone` 变可选，不传就是「这台微信是谁」的登录，手机号推迟到下单时填（前端 `api.rememberPhone()` 记住）；**空 `phone` = 保留原绑定**（`phone = CASE WHEN excluded.phone<>'' THEN excluded.phone ELSE wx_user.phone END`），头像同理。② `wx_user` 加 `avatar TEXT NOT NULL DEFAULT ''`（走 `ensureColumn` 幂等迁移，线上库不用手工改表）。③ 新增 `POST /api/wx/profile`（`UpdateWxProfile`）：空值保留原值、昵称截 20 rune、头像 >512 rune 报「头像地址过长」。④ **头像不落服务端文件**——小程序 `chooseAvatar` 给的是临时本地路径，客户端用 `wx.getFileSystemManager().saveFile` 落永久文件，且**只有 http(s) 地址才回传**（`wxfile://` 存上去没意义）。⑤ **顾客端不露开发信息**：连接状态只留小圆点（Web 是 `.dot-mode`、小程序是 `.sdot`），**管理端保留详细徽标**。
 - **D28 微信登录**：`wx.login` 的 `code` 只用于服务端换 `openid`（`sns/jscode2session`），**session_key 不出服务器**；`wx_user` 表存 `openid`/`unionid`/`phone`/`nickname`/`avatar`/时间戳（时间是 RFC3339 字符串），`BindWxUser` 对超长昵称**截断不报错**（绝不让登录因为昵称失败），`EnsureCustomer` 只在新名字为空时补名、**绝不覆盖老板维护的姓名**，`ValidPhone` 把坏手机号挡在登录之外。**登录不提权**：手机号仍是价格身份（`customer.tier`），新顾客一律零售档，批发价/白名单只能管理端改（D24 不变）；cookie 与 token 都不发，openid 就是客户端要记住的全部。未配置 `WX_APPID`/`WX_SECRET` 时接口返 `503` 且**其它接口完全不受影响**——所以本机演示与没配密钥的生产环境都能照常跑。
 - **D18 收货地址簿**：`customer_address` 按手机号一档多条（`phone` 建索引），`ListAddresses/SaveAddress/GetAddress/DeleteAddress` 四个方法守住三条语义——第一条自动为默认、`isDefault=true` 时摘掉同号其它默认、删掉默认后由最早一条顶替；`SaveAddress` 不传 `isDefault` 时**不动原有默认标记**（避免改门牌丢默认），更新不存在的 `id` 返回 `404`。订单里存的仍是下单当时的地址快照，改地址簿不影响历史订单。
@@ -210,7 +214,7 @@ cp .env.example .env         # 填 BARCODE_APPCODE 等（.env 不入库）
 
 - [`../README.md`](../README.md) — 仓库总览、里程碑状态、测试矩阵
 - [`../开发计划.html`](../开发计划.html) — 路线图（M4 后端、M6 部署）
-- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账（D6 双库、D8 扫码只读、D12 单一真源、D18 收货地址簿、D23 商品上下架、D24 批发价与顾客等级、D25 消灭 localStorage 单点与库存审计等）
+- [`../细节讨论记录.html`](../细节讨论记录.html) — 决策台账（D6 双库、D8 扫码只读、D12 单一真源、D18 收货地址簿、D23 商品上下架、D24 批发价与顾客等级、D25 消灭 localStorage 单点与库存审计、D32 员工身份与员工扫码工作台等）
 - [`../独立小程序商城可行性分析与架构方案.html`](../独立小程序商城可行性分析与架构方案.html) — 架构与实现现状
 - [`../web/README.md`](../web/README.md) — 商城 Web 端（`web/sdy-api.js` 是它的数据通道）
 - [`../barcode-demo/README.md`](../barcode-demo/README.md) — 扫码台（`barcode-demo/bd-api.js` 是它的数据通道）

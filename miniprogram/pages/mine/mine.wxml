@@ -17,10 +17,19 @@
          微信唯一允许拿到真实头像的入口是 button 的 chooseAvatar 能力，
          所以登录按钮本身就是头像按钮：点一下 → 选「使用微信头像」→ 顺手把登录做完。 -->
     <view class="mlogin" wx:if="{{!loggedIn}}">
+      <!-- 身份选择（第 26 轮 / D32）：店员用员工身份进来，看到的是一套工作台 -->
+      <view class="lroles">
+        <view class="lrole {{loginRole === item.key ? 'on' : ''}}" wx:for="{{roleOptions}}" wx:key="key" data-key="{{item.key}}" bindtap="pickRole">{{item.label}}</view>
+      </view>
       <input class="lnick" type="nickname" value="{{nickname}}" maxlength="20" placeholder="微信昵称（可留空）" placeholder-class="lnick-ph" bindinput="onNickname" />
       <button class="lbtn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar" disabled="{{busy}}">{{busy ? '登录中…' : '微信一键登录'}}</button>
       <view class="ltip">点按钮 → 第一项「使用微信头像」→ 就用你的微信头像登录，以后进来自动带出来。手机号只在下单填收货信息时用。</view>
     </view>
+  </view>
+
+  <!-- 员工但这次以顾客身份进来的：留一个随时回工作台的入口 -->
+  <view class="mcard" wx:if="{{loggedIn && isStaff && !staffView}}">
+    <van-cell title="员工工作台" icon="scan" value="扫码找货 · 库存管理" is-link bind:click="goStaff" />
   </view>
 
   <view class="mgrid">
@@ -51,6 +60,6 @@
   </view>
 
   <view class="mfoot">
-    <text class="mf-ver">啥都有快送 · 小程序 0.4.0</text>
+    <text class="mf-ver">啥都有快送 · 小程序 0.5.0</text>
   </view>
 </view>

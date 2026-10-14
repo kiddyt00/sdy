@@ -1,0 +1,30 @@
+@import "../../styles/staff.wxss";
+
+.tabs { white-space: nowrap; margin-bottom: 14rpx; }
+.tab {
+  display: inline-block;
+  background: #fff;
+  border-radius: 999rpx;
+  padding: 10rpx 26rpx;
+  margin-right: 12rpx;
+  font-size: 25rpx;
+  color: #4b5563;
+}
+.tab.on { background: #16a34a; color: #fff; font-weight: 600; }
+
+.ocard { background: #fff; border-radius: 20rpx; padding: 22rpx; margin-bottom: 14rpx; }
+.orow { display: flex; align-items: center; justify-content: space-between; }
+.onum { font-size: 27rpx; font-weight: 700; }
+.ostat { font-size: 23rpx; border-radius: 999rpx; padding: 4rpx 16rpx; background: #f3f4f6; color: #6b7280; }
+.ostat.s-pending { background: #fef3c7; color: #92400e; }
+.ostat.s-delivering { background: #dbeafe; color: #1d4ed8; }
+.ostat.s-ready { background: #dcfce7; color: #15803d; }
+.ostat.s-done { background: #f3f4f6; color: #6b7280; }
+.ostat.s-cancelled { background: #fee2e2; color: #b91c1c; }
+.osub { font-size: 23rpx; color: #9ca3af; margin-top: 8rpx; }
+.ogoods { font-size: 26rpx; color: #374151; margin-top: 10rpx; }
+.oaddr { font-size: 24rpx; color: #6b7280; margin-top: 8rpx; }
+.orow2 { display: flex; align-items: center; justify-content: space-between; margin-top: 12rpx; }
+.oamount { font-size: 30rpx; font-weight: 700; color: #dc2626; }
+.ophone { font-size: 24rpx; color: #15803d; }
+.acts { display: flex; gap: 12rpx; margin-top: 16rpx; }

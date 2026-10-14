@@ -827,3 +827,159 @@ func TestProductDetailAndCategoriesHTTPFlow(t *testing.T) {
 		t.Errorf("POST 分类应 405，实际 %d", code)
 	}
 }
+
+// TestStaffRoleAndScanHTTPFlow 员工角色 → 工作台 → 扫码台（第 26 轮 / D32）。
+// 关键口径：选员工身份必须后台先授权（403）、令牌每次登录轮换、员工接口要令牌、
+// 扫码只读（扫一百次库存也不许动，D8）。
+func TestStaffRoleAndScanHTTPFlow(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("js_code") == "STAFF" {
+			_, _ = w.Write([]byte(`{"openid":"o_STAFF","unionid":"u_S","session_key":"sk"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"openid":"o_CUST","unionid":"u_C","session_key":"sk"}`))
+	}))
+	defer fake.Close()
+	ts := newTestServerWx(t, wxConf{appid: "wx_test", secret: secretForTest, apiBase: fake.URL})
+
+	// doH：带自定请求头（员工令牌走 X-Staff-Token）
+	doH := func(method, path, body, token string) (int, string) {
+		t.Helper()
+		var r *http.Request
+		var err error
+		if body == "" {
+			r, err = http.NewRequest(method, ts.URL+path, nil)
+		} else {
+			r, err = http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+		}
+		if err != nil {
+			t.Fatalf("构造请求失败: %v", err)
+		}
+		if token != "" {
+			r.Header.Set("X-Staff-Token", token)
+		}
+		res, err := ts.Client().Do(r)
+		if err != nil {
+			t.Fatalf("发请求失败: %v", err)
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(raw)
+	}
+
+	// ① 员工微信号先以「顾客」身份登录一次（后台才有这条记录）
+	code, body := doH(http.MethodPost, "/api/wx/login", `{"code":"STAFF"}`, "")
+	if code != 200 || !strings.Contains(body, `"role":"customer"`) || strings.Contains(body, "staffToken") {
+		t.Fatalf("身份缺省应是顾客、且不发员工令牌: %d %s", code, body)
+	}
+	// ② 还没被授权就想选员工身份 → 403（小程序上点一下变不出权限）
+	code, body = doH(http.MethodPost, "/api/wx/login", `{"code":"STAFF","role":"staff"}`, "")
+	if code != 403 || !strings.Contains(body, "还不是员工") {
+		t.Fatalf("未授权选员工应 403: %d %s", code, body)
+	}
+	if code, body = doH(http.MethodPost, "/api/wx/login", `{"code":"STAFF","role":"boss"}`, ""); code != 400 ||
+		!strings.Contains(body, "身份只能是") {
+		t.Fatalf("非法身份应 400: %d %s", code, body)
+	}
+
+	// ③ 老板在后台把角色改成员工
+	if code, body = doH(http.MethodPost, "/api/wx/role", `{"openid":"o_STAFF","role":"staff"}`, ""); code != 200 ||
+		!strings.Contains(body, `"role":"staff"`) {
+		t.Fatalf("设员工失败: %d %s", code, body)
+	}
+	if code, body = doH(http.MethodPost, "/api/wx/role", `{"openid":"o_STAFF","role":"boss"}`, ""); code != 400 {
+		t.Fatalf("非法角色应 400: %d %s", code, body)
+	}
+	if code, _ = doH(http.MethodPost, "/api/wx/role", `{"openid":"o_none","role":"staff"}`, ""); code != 404 {
+		t.Errorf("未知 openid 应 404: %d", code)
+	}
+	if code, body = doH(http.MethodPost, "/api/wx/role", `{}`, ""); code != 400 ||
+		!strings.Contains(body, "缺少 openid") {
+		t.Errorf("缺 openid 应 400: %d %s", code, body)
+	}
+	if code, _ = doH(http.MethodGet, "/api/wx/role", "", ""); code != 405 {
+		t.Errorf("GET 角色接口应 405: %d", code)
+	}
+
+	// ④ 以员工身份登录：拿到令牌
+	code, body = doH(http.MethodPost, "/api/wx/login", `{"code":"STAFF","role":"staff"}`, "")
+	if code != 200 || !strings.Contains(body, `"role":"staff"`) || !strings.Contains(body, "staffToken") {
+		t.Fatalf("员工身份登录应拿到令牌: %d %s", code, body)
+	}
+	var sess struct {
+		StaffToken string `json:"staffToken"`
+	}
+	if err := json.Unmarshal([]byte(body), &sess); err != nil || len(sess.StaffToken) != 64 {
+		t.Fatalf("员工令牌格式不对: %v %q", err, sess.StaffToken)
+	}
+	token := sess.StaffToken
+
+	// ⑤ 员工接口要令牌
+	if code, body = doH(http.MethodGet, "/api/staff/overview", "", ""); code != 401 ||
+		!strings.Contains(body, "员工身份已失效") {
+		t.Fatalf("无令牌应 401: %d %s", code, body)
+	}
+	if code, _ = doH(http.MethodGet, "/api/staff/overview", "", "deadbeef"); code != 401 {
+		t.Errorf("假令牌应 401: %d", code)
+	}
+	if code, _ = doH(http.MethodPost, "/api/staff/overview", "{}", token); code != 405 {
+		t.Errorf("POST 工作台应 405: %d", code)
+	}
+	if code, body = doH(http.MethodGet, "/api/staff/scan?code=6901234567890", "", token); code != 200 ||
+		!strings.Contains(body, `"found":false`) {
+		t.Fatalf("未建档条码应 found:false: %d %s", code, body)
+	}
+	if code, body = doH(http.MethodGet, "/api/staff/scan", "", token); code != 400 ||
+		!strings.Contains(body, "缺少 code") {
+		t.Errorf("缺 code 应 400: %d %s", code, body)
+	}
+
+	// ⑥ 建档一个 69 码，工作台与扫码台都要认得它
+	if code, body = do(t, ts, http.MethodPost, "/api/products",
+		`{"code":"6901234567890","name":"农夫山泉 550ml","spec":"550ml","salePrice":2,"stock":7,"unit":"瓶","category":"饮料"}`); code != 200 {
+		t.Fatalf("建档失败: %d %s", code, body)
+	}
+	code, body = doH(http.MethodGet, "/api/staff/overview", "", token)
+	if code != 200 || !strings.Contains(body, `"stats"`) || !strings.Contains(body, `"todayOrders"`) ||
+		!strings.Contains(body, `"lowStockCount"`) || !strings.Contains(body, `"recent"`) {
+		t.Fatalf("工作台总览失败: %d %s", code, body)
+	}
+	code, body = doH(http.MethodGet, "/api/staff/scan?code=6901234567890", "", token)
+	if code != 200 || !strings.Contains(body, `"found":true`) || !strings.Contains(body, "农夫山泉") ||
+		!strings.Contains(body, `"stock":7`) {
+		t.Fatalf("扫码应命中商品与库存: %d %s", code, body)
+	}
+	// 扫码只读：连扫 3 次，库存必须还是 7（D8）
+	for i := 0; i < 3; i++ {
+		if code, body = doH(http.MethodGet, "/api/staff/scan?code=6901234567890", "", token); code != 200 {
+			t.Fatalf("第 %d 次扫码失败: %d %s", i+1, code, body)
+		}
+	}
+	if code, body = do(t, ts, http.MethodGet, "/api/products/6901234567890", ""); code != 200 ||
+		!strings.Contains(body, `"stock":7`) {
+		t.Fatalf("扫码不该动库存（D8）: %d %s", code, body)
+	}
+	// 员工用同一套接口真的能改库存（员工=管理端同权限）
+	if code, body = do(t, ts, http.MethodPost, "/api/stock/change",
+		`{"code":"6901234567890","kind":"stock_in","qty":3,"reason":"员工小程序入库","by":"阿明"}`); code != 200 ||
+		!strings.Contains(body, `"stock":10`) {
+		t.Fatalf("员工入库失败: %d %s", code, body)
+	}
+	// 入库流水要出现在扫码台的 recent 里
+	if code, body = doH(http.MethodGet, "/api/staff/scan?code=6901234567890", "", token); code != 200 ||
+		!strings.Contains(body, "员工小程序入库") || !strings.Contains(body, `"stock":10`) {
+		t.Fatalf("扫码台应带出最近流水: %d %s", code, body)
+	}
+
+	// ⑦ 降级回顾客：旧令牌立刻失效、也不能再选员工身份
+	if code, body = doH(http.MethodPost, "/api/wx/role", `{"openid":"o_STAFF","role":"customer"}`, ""); code != 200 {
+		t.Fatalf("降级失败: %d %s", code, body)
+	}
+	if code, _ = doH(http.MethodGet, "/api/staff/overview", "", token); code != 401 {
+		t.Errorf("降级后旧令牌应 401: %d", code)
+	}
+	if code, body = doH(http.MethodPost, "/api/wx/login", `{"code":"STAFF","role":"staff"}`, ""); code != 403 {
+		t.Errorf("降级后选员工应 403: %d %s", code, body)
+	}
+}

@@ -38,7 +38,7 @@ function mkWx(routes) {
       const method = (opts.method || 'GET').toUpperCase()
       const full = String(opts.url).replace(/^https?:\/\/[^/]+/, '')
       const path = full.split('?')[0]
-      calls.push({ method: method, path: full, url: opts.url, data: opts.data })
+      calls.push({ method: method, path: full, url: opts.url, data: opts.data, header: opts.header })
       for (const r of routes) {
         if (r.method === method && (r.path === path || r.path === full || (r.re && r.re.test(path)))) {
           if (r.fail) { opts.fail({ errMsg: r.fail }); return }
@@ -352,6 +352,127 @@ async function main() {
   lerr = ''
   await api.wxLogin({}).catch((e) => { lerr = e.message })
   ok(lerr.indexOf('后端未连接') >= 0, '离线直接拒绝登录：' + lerr)
+
+  /* ---------- ⑩ 员工身份与员工接口（第 26 轮 / D32） ---------- */
+  section('⑩ 员工身份与员工接口（扫码只读 / 入库出库盘点）')
+  const STAFF_TOK = 'f0e1d2c3'.repeat(8)
+  const STAFF_LOGIN = {
+    method: 'POST', path: '/api/wx/login',
+    body: { ok: true, openid: 'o_staff_1', bound: false, phone: '', name: '', nickname: '阿明', avatar: '', tier: 'retail', role: 'staff', staffToken: STAFF_TOK }
+  }
+  const STAFF_ROUTES = [
+    { method: 'GET', path: '/healthz', body: { ok: true, cloudConfigured: false, circuitOpen: false, cloudFails: 0 } },
+    { method: 'GET', path: '/api/staff/overview', body: { ok: true, lowStock: 5, stats: { todayRevenue: 128.5, todayOrders: 6, pending: 2, lowStockCount: 1, products: 12 }, pendingOrders: [], lowStockItems: [], recent: [] } },
+    { method: 'GET', path: '/api/staff/scan', body: { ok: true, code: '6901234567890', found: true, lowStock: 5, product: { code: '6901234567890', name: '农夫山泉 550ml', unit: '瓶', salePrice: 2, stock: 7, onSale: true }, recent: [] } },
+    { method: 'POST', path: '/api/stock/change', body: { ok: true, stock: 9 } },
+    { method: 'POST', path: '/api/products/onsale', body: { ok: true, updated: 1 } },
+    { method: 'POST', path: '/api/products', body: { ok: true } },
+    { method: 'GET', path: '/api/products', body: { items: SERVER_PRODUCTS, total: 2 } }
+  ]
+
+  // 没登录 / 普通顾客：员工接口在本地就被挡住，一个包都不发出去
+  global.wx = mkWx(STAFF_ROUTES.concat([STAFF_LOGIN]))
+  api.clearSession()
+  await api.probe()
+  ok(api.sessionRole() === 'customer' && api.isStaff() === false, '默认身份是顾客')
+  ok(api.staffToken() === '' && JSON.stringify(api.staffHeaders()) === '{}', '没有员工令牌时请求头是空的')
+  ok(api.view() === 'customer', '默认看顾客界面')
+  const beforeCalls = global.wx._calls.length
+  let serr = ''
+  await api.staffOverview().catch((e) => { serr = e.message })
+  ok(serr.indexOf('还不是员工') >= 0, '不是员工：工作台直接拒绝：' + serr)
+  serr = ''
+  await api.staffScan('6901234567890').catch((e) => { serr = e.message })
+  ok(serr.indexOf('还不是员工') >= 0, '不是员工：扫码台直接拒绝')
+  serr = ''
+  await api.changeStock('6901234567890', 'stock_in', 1).catch((e) => { serr = e.message })
+  ok(serr.indexOf('还不是员工') >= 0, '不是员工：改库存直接拒绝')
+  serr = ''
+  await api.saveProduct({ code: '6900000000001', name: '新品' }).catch((e) => { serr = e.message })
+  ok(serr.indexOf('还不是员工') >= 0, '不是员工：建档直接拒绝')
+  serr = ''
+  await api.setOnSale(['6901234567890'], false).catch((e) => { serr = e.message })
+  ok(serr.indexOf('还不是员工') >= 0, '不是员工：上下架直接拒绝')
+  ok(global.wx._calls.length === beforeCalls, '被本地挡住时一个请求都不发（不做无用功）')
+
+  // 员工身份登录：服务端给 role + 令牌
+  const ssess = await api.wxLogin({ nickname: '阿明', role: 'staff' })
+  ok(ssess.role === 'staff' && api.isStaff() === true, '员工登录后本机记住员工身份')
+  ok(api.staffToken() === STAFF_TOK, '员工令牌存进会话：' + api.staffToken().slice(0, 8) + '…')
+  ok(api.view() === 'staff', '以员工身份登录后界面就是员工版')
+  const slogin = global.wx._calls.filter((c) => c.path === '/api/wx/login').pop()
+  ok(slogin.data.role === 'staff', '登录时把「我是员工」一并提交：' + JSON.stringify(slogin.data))
+
+  // 员工接口都要带令牌（服务端只认 X-Staff-Token）
+  const ov = await api.staffOverview()
+  ok(ov.stats.todayRevenue === 128.5, '工作台数据来自服务端')
+  const ovCall = global.wx._calls.filter((c) => c.path === '/api/staff/overview').pop()
+  ok(ovCall.header && ovCall.header['X-Staff-Token'] === STAFF_TOK, '工作台请求带 X-Staff-Token')
+  const scn = await api.staffScan('6901234567890')
+  ok(scn.found === true && scn.product.stock === 7, '扫码台查到货与库存')
+  const scnCall = global.wx._calls.filter((c) => c.path.indexOf('/api/staff/scan') === 0).pop()
+  ok(scnCall.path.indexOf('code=6901234567890') > 0 && scnCall.header['X-Staff-Token'] === STAFF_TOK, '扫码请求带条码与令牌：' + scnCall.path)
+  ok(JSON.stringify(api.staffHeaders()) === JSON.stringify({ 'X-Staff-Token': STAFF_TOK }), '复用同一个令牌头')
+
+  // 改库存：三种口径（入库增量 / 出库负数 / 盘点绝对值），流水带「谁改的」
+  const c1 = await api.changeStock('6901234567890', 'stock_in', 3)
+  const chCall = global.wx._calls.filter((c) => c.path === '/api/stock/change').pop()
+  ok(chCall.data.kind === 'stock_in' && chCall.data.qty === 3, '入库：stock_in +3')
+  ok(chCall.data.reason === '员工小程序操作' && chCall.data.by === '阿明', '不填原因时用兜底文案，操作人写当前微信名：' + JSON.stringify(chCall.data))
+  await api.changeStock('6901234567890', 'adjust', -2, '员工小程序出库')
+  ok(global.wx._calls.filter((c) => c.path === '/api/stock/change').pop().data.reason === '员工小程序出库', '扫码台给的原因原样带上')
+  ok(global.wx._calls.filter((c) => c.path === '/api/stock/change').pop().data.qty === -2, '出库：adjust 传负数')
+  await api.changeStock('6901234567890', 'stock_take', 5, '员工小程序盘点')
+  ok(global.wx._calls.filter((c) => c.path === '/api/stock/change').pop().data.qty === 5, '盘点：stock_take 传实盘数')
+  ok(!!c1, '改库存返回服务端结果')
+
+  // 建档 / 改档案：不传 stock 就绝对不碰库存（D16）
+  await api.saveProduct({ code: '6900000000001', name: '新品矿泉水', salePrice: 2.5, costPrice: 1.5 })
+  const pCall = global.wx._calls.filter((c) => c.method === 'POST' && c.path === '/api/products').pop()
+  ok(pCall.data.code === '6900000000001' && pCall.data.stock === undefined, '建档不传 stock：完全不碰库存')
+  ok(pCall.data.isWholesale === false && pCall.data.img === '', '建档把可选字段补齐（覆盖式 upsert 不会清掉别的）')
+  await api.saveProduct({ code: '6900000000001', name: '新品矿泉水', stock: 6 })
+  ok(global.wx._calls.filter((c) => c.method === 'POST' && c.path === '/api/products').pop().data.stock === 6, '明确传 stock 才覆盖库存')
+  serr = ''
+  await api.saveProduct({ code: '', name: 'x' }).catch((e) => { serr = e.message })
+  ok(serr.indexOf('商品条码不能为空') >= 0, '没条码不给建档：' + serr)
+  serr = ''
+  await api.saveProduct({ code: '1', name: '  ' }).catch((e) => { serr = e.message })
+  ok(serr.indexOf('商品名称不能为空') >= 0, '没名字不给建档')
+
+  // 上下架：只动状态（D23）
+  serr = ''
+  await api.setOnSale([], true).catch((e) => { serr = e.message })
+  ok(serr.indexOf('先选商品') >= 0, '没选商品不给上下架')
+  await api.setOnSale(['6901234567890'], false)
+  const osCall = global.wx._calls.filter((c) => c.path === '/api/products/onsale').pop()
+  ok(osCall.data.codes[0] === '6901234567890' && osCall.data.onSale === false, '下架只发 codes + onSale')
+
+  // 员工库存页看得到已下架的货（顾客端只请求 onSale=1）
+  await api.listAllProducts('农夫')
+  const allCall = global.wx._calls.filter((c) => c.path.indexOf('/api/products') === 0).pop()
+  ok(allCall.path.indexOf('keyword=') > 0 && allCall.path.indexOf('onSale=1') < 0, '员工列表带关键字、且不限定上架：' + allCall.path)
+
+  // 界面开关与身份是两件事：切回顾客版不丢员工身份
+  api.setView('customer')
+  ok(api.view() === 'customer' && api.isStaff() === true && api.staffToken() === STAFF_TOK, '切回顾客版：身份与令牌都还在')
+  api.setView('staff')
+  ok(api.view() === 'staff', '还能再切回员工版')
+
+  // 员工以顾客身份登录：界面留在顾客版，但令牌照样给（方便「我的」里一键进工作台）
+  global.wx = mkWx(STAFF_ROUTES.concat([STAFF_LOGIN]))
+  api.clearSession()
+  await api.probe()
+  await api.wxLogin({ nickname: '阿明', role: 'customer' })
+  ok(api.isStaff() === true && api.view() === 'customer', '员工选顾客身份登录：留在顾客版，身份仍是员工')
+  ok(api.staffToken() === STAFF_TOK, '员工选顾客身份登录也拿到令牌（不是提权，本来就有）')
+
+  // 普通顾客登录：拿不到令牌，也进不去员工页
+  global.wx = mkWx(STAFF_ROUTES.concat([LOGIN_OK]))
+  api.clearSession()
+  await api.probe()
+  await api.wxLogin({})
+  ok(api.isStaff() === false && api.staffToken() === '' && api.view() === 'customer', '普通顾客登录：没有角色也没有令牌')
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

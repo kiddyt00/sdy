@@ -68,6 +68,20 @@
 }
 /* 绿色框里的登录行：昵称输入（微信会给真实昵称建议）+ 登录按钮（同时也是微信头像选择按钮） */
 .mlogin { margin-top: 30rpx; }
+/* 身份选择（第 26 轮 / D32）：顾客 / 员工，选中那个用实心白底 */
+.lroles { display: flex; gap: 16rpx; margin-bottom: 18rpx; }
+.lrole {
+  flex: 1;
+  text-align: center;
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 32rpx;
+  font-size: 26rpx;
+  color: #fff;
+  background: rgba(255, 255, 255, .22);
+  border: 2rpx solid rgba(255, 255, 255, .6);
+}
+.lrole.on { background: #fff; color: #15803d; font-weight: 600; border-color: #fff; }
 .lnick {
   height: 76rpx;
   line-height: 76rpx;

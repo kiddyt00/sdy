@@ -1,0 +1,137 @@
+<!-- 扫码台（第 26 轮 / D32）：员工扫 69 码查货 / 改库存 / 改价 / 建档。
+     扫码本身只读（D8），所有改动都要员工在这个页面上再点一下。 -->
+<view class="spage">
+  <view class="codebar">
+    <input
+      class="input cinput"
+      type="number"
+      value="{{code}}"
+      placeholder="输入或扫 69 条码"
+      placeholder-class="ph"
+      confirm-type="search"
+      bindinput="onCodeInput"
+      bindconfirm="search"
+    />
+    <view class="cbtn" bindtap="search">查询</view>
+  </view>
+
+  <view class="scanbtn" bindtap="doScan">
+    <view class="sb-i">📷</view>
+    <view class="sb-t">扫一扫</view>
+    <view class="sb-s">对准商品包装上的条码（69 开头）</view>
+  </view>
+
+  <view class="err" wx:if="{{err}}">{{err}}</view>
+
+  <!-- 命中：这是本店的货 -->
+  <block wx:if="{{found && product}}">
+    <view class="pcard">
+      <view class="ptitle">{{product.name}}</view>
+      <view class="pspec">{{product.brand}} {{product.spec}} · {{product.category}}</view>
+      <view class="pcode">条码 {{product.code}}</view>
+      <view class="pnums">
+        <view class="pstock {{product.stock <= lowStock ? 'low' : ''}}">
+          <text class="pbig">{{product.stock}}</text>{{product.unit}} 在库
+        </view>
+        <view class="pprice">零售 <text class="pmain">¥{{product.salePriceText}}</text></view>
+      </view>
+      <view class="tagline">
+        <text class="tag {{product.onSale ? '' : 'off'}}">{{product.onSale ? '在售' : '已下架'}}</text>
+        <text class="tag warn" wx:if="{{product.stock <= lowStock}}">低库存（≤{{lowStock}}）</text>
+        <text class="tag off" wx:if="{{product.wholesalePrice > 0}}">批发 ¥{{product.wholesalePriceText}}</text>
+        <text class="tag off">进价 ¥{{product.costPriceText}}</text>
+      </view>
+    </view>
+
+    <view class="pcard">
+      <view class="sechead">改库存</view>
+      <view class="qtyrow">
+        <text class="qlabel">数量</text>
+        <input class="input qinput" type="digit" value="{{qty}}" bindinput="onQty" />
+      </view>
+      <view class="acts">
+        <view class="act primary {{busy ? 'dis' : ''}}" bindtap="stockIn">入库 +</view>
+        <view class="act danger {{busy ? 'dis' : ''}}" bindtap="stockOut">出库 −</view>
+        <view class="act {{busy ? 'dis' : ''}}" bindtap="stockTake">盘点到这个数</view>
+      </view>
+    </view>
+
+    <view class="pcard">
+      <view class="sechead">价格与上下架</view>
+      <view class="acts">
+        <view class="act" bindtap="toggleEdit">{{editing ? '收起改价' : '改价'}}</view>
+        <view class="act {{busy ? 'dis' : ''}}" bindtap="toggleOnSale">{{product.onSale ? '下架' : '重新上架'}}</view>
+      </view>
+      <block wx:if="{{editing}}">
+        <view class="formrow" style="margin-top: 16rpx">
+          <text class="flabel">零售价</text>
+          <input class="input finput" type="digit" value="{{priceSale}}" bindinput="onPriceSale" />
+        </view>
+        <view class="formrow">
+          <text class="flabel">批发价</text>
+          <input class="input finput" type="digit" value="{{priceWholesale}}" bindinput="onPriceWholesale" />
+        </view>
+        <view class="act primary {{busy ? 'dis' : ''}}" bindtap="savePrice">{{busy ? '保存中…' : '保存价格'}}</view>
+      </block>
+    </view>
+
+    <view class="pcard">
+      <view class="sechead">这个货最近的库存流水</view>
+      <view class="sempty" wx:if="{{!recent.length}}" style="padding: 20rpx 0">还没有记录</view>
+      <view class="flow" wx:for="{{recent}}" wx:key="id">
+        <text class="fl-name">{{item.reason}}</text>
+        <text class="fl-delta">{{item.deltaText}}</text>
+        <text class="fl-after">→ {{item.after}} · {{item.by}} · {{item.at}}</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- 没命中：直接建档（解析链认得就把名字规格先填上） -->
+  <block wx:else>
+    <view class="pcard" wx:if="{{code && !loading}}">
+      <view class="ptitle">本店还没有这个货</view>
+      <view class="pspec" wx:if="{{resolve && resolve.name}}">解析链认出：{{resolve.name}} {{resolve.spec}}（来源 {{resolve.source}}）</view>
+      <view class="pspec" wx:else>条码 {{code}} 在本地字典和云端都没认出来，照着包装袋填吧。</view>
+      <view class="formrow" style="margin-top: 18rpx">
+        <text class="flabel">名称</text>
+        <input class="input finput" data-field="name" value="{{form.name}}" bindinput="onFormInput" placeholder="必填" placeholder-class="ph" />
+      </view>
+      <view class="formrow">
+        <text class="flabel">品牌</text>
+        <input class="input finput" data-field="brand" value="{{form.brand}}" bindinput="onFormInput" />
+      </view>
+      <view class="formrow">
+        <text class="flabel">规格</text>
+        <input class="input finput" data-field="spec" value="{{form.spec}}" bindinput="onFormInput" />
+      </view>
+      <view class="formrow">
+        <text class="flabel">分类</text>
+        <input class="input finput" data-field="category" value="{{form.category}}" bindinput="onFormInput" />
+      </view>
+      <view class="formrow">
+        <text class="flabel">单位</text>
+        <input class="input finput" data-field="unit" value="{{form.unit}}" bindinput="onFormInput" />
+      </view>
+      <view class="formrow">
+        <text class="flabel">零售价</text>
+        <input class="input finput" type="digit" data-field="salePrice" value="{{form.salePrice}}" bindinput="onFormInput" />
+      </view>
+      <view class="formrow">
+        <text class="flabel">进价</text>
+        <input class="input finput" type="digit" data-field="costPrice" value="{{form.costPrice}}" bindinput="onFormInput" />
+      </view>
+      <view class="formrow">
+        <text class="flabel">批发价</text>
+        <input class="input finput" type="digit" data-field="wholesalePrice" value="{{form.wholesalePrice}}" bindinput="onFormInput" />
+      </view>
+      <view class="formrow">
+        <text class="flabel">首批库存</text>
+        <input class="input finput" type="digit" data-field="stock" value="{{form.stock}}" bindinput="onFormInput" />
+      </view>
+      <view class="act primary {{busy ? 'dis' : ''}}" bindtap="saveNew">{{busy ? '建档中…' : '建档'}}</view>
+    </view>
+  </block>
+
+  <view class="sbottom"></view>
+</view>
+<staff-nav active="scan" />

@@ -1,0 +1,38 @@
+<!-- 员工订单页（第 26 轮 / D32）：手机上直接把单子往下推 -->
+<view class="spage">
+  <scroll-view class="tabs" scroll-x>
+    <view class="tab {{tab === item.key ? 'on' : ''}}" wx:for="{{tabs}}" wx:key="key" data-key="{{item.key}}" bindtap="pick">{{item.label}}</view>
+  </scroll-view>
+
+  <view class="err" wx:if="{{err}}">{{err}}</view>
+  <view class="sempty" wx:if="{{!list.length && !loading}}">这个状态下没有订单</view>
+
+  <view class="ocard" wx:for="{{list}}" wx:key="id">
+    <view class="orow" data-id="{{item.id}}" bindtap="open">
+      <text class="onum">#{{item.id}}</text>
+      <text class="ostat s-{{item.status}}">{{item.statusText}}</text>
+    </view>
+    <view class="osub" data-id="{{item.id}}" bindtap="open">{{item.at}} · {{item.deliveryText}} · {{item.who}}</view>
+    <view class="ogoods" data-id="{{item.id}}" bindtap="open">{{item.summary}}</view>
+    <view class="oaddr" wx:if="{{item.address}}">📍 {{item.address}}</view>
+    <view class="orow2">
+      <text class="oamount">¥{{item.totalText}}</text>
+      <text class="ophone" wx:if="{{item.phone}}" data-phone="{{item.phone}}" catchtap="callPhone">📞 {{item.phone}}</text>
+    </view>
+    <view class="acts" wx:if="{{item.acts.length}}">
+      <view
+        wx:for="{{item.acts}}"
+        wx:for-item="a"
+        wx:key="to"
+        class="act {{a.kind}}"
+        data-id="{{item.id}}"
+        data-to="{{a.to}}"
+        data-label="{{a.label}}"
+        catchtap="advance"
+      >{{a.label}}</view>
+    </view>
+  </view>
+
+  <view class="sbottom"></view>
+</view>
+<staff-nav active="orders" />

@@ -26,7 +26,7 @@ global.wx = {
   request(opts) {
     const method = (opts.method || 'GET').toUpperCase()
     const url = opts.url
-    const init = { method: method, headers: { 'content-type': 'application/json' } }
+    const init = { method: method, headers: Object.assign({ 'content-type': 'application/json' }, opts.header || {}) }
     if (opts.data !== undefined && method !== 'GET') init.body = JSON.stringify(opts.data)
     fetch(url, init)
       .then((res) => res.text().then((txt) => {
@@ -187,6 +187,102 @@ async function main() {
     ok(loginErr.indexOf('微信') >= 0, '报错要说清是微信登录的问题，不能静默失败')
     ok(api.boundPhone() === '', '登录失败不留任何身份')
   }
+
+  section('⑪ 员工身份 + 扫码台（第 26 轮 / D32）')
+  // 老板在后台改角色这一步小程序端不做，联调里直接用后台接口把角色提上去
+  async function raw(path, method, body) {
+    const res = await fetch(BASE + path, {
+      method: method || 'GET',
+      headers: { 'content-type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    })
+    const txt = await res.text()
+    let d = {}
+    try { d = txt ? JSON.parse(txt) : {} } catch (e) { d = { raw: txt } }
+    return { status: res.status, data: d }
+  }
+
+  api.clearSession()
+  let staffReady = false
+  try {
+    await api.wxLogin({ nickname: '联调员工' })
+    staffReady = true
+  } catch (e) {
+    console.log('⏭ 服务端没配微信登录，跳过员工端联调：' + e.message)
+  }
+  if (staffReady) {
+    const openid = api.session().openid
+    ok(api.isStaff() === false && api.staffToken() === '', '普通登录默认是顾客，没有员工令牌')
+    const setRes = await raw('/api/wx/role', 'POST', { openid: openid, role: 'staff' })
+    ok(setRes.status === 200 && setRes.data.role === 'staff', '后台把 ' + openid + ' 设成员工')
+    const badRole = await raw('/api/wx/role', 'POST', { openid: openid, role: 'boss' })
+    ok(badRole.status === 400, '非法角色被挡：' + badRole.status)
+
+    await api.wxLogin({ nickname: '联调员工', role: 'staff' })
+    ok(api.isStaff() === true && api.staffToken().length === 64, '员工身份登录拿到 64 位令牌')
+    ok(api.view() === 'staff', '以员工身份登录后进员工界面')
+
+    const ov = await api.staffOverview()
+    ok(ov.stats.products >= 6 && typeof ov.stats.todayRevenue === 'number', '工作台统计来自真库：商品 ' + ov.stats.products + ' 件 / 今日 ' + ov.stats.todayOrders + ' 单')
+    ok(Array.isArray(ov.lowStockItems) && Array.isArray(ov.recent), '工作台带低库存与最近流水')
+    ok(ov.lowStock === 5, '低库存阈值口径 ' + ov.lowStock)
+
+    // 用一条只属于这次联调的货，跑完删掉
+    const CODE = '6900000000099'
+    await raw('/api/products/stock', 'POST', { code: CODE, stock: 0 })
+    const made = await raw('/api/products', 'POST', {
+      code: CODE, name: '联调员工专用货', spec: '1 瓶', unit: '瓶',
+      salePrice: 1.5, costPrice: 1, salePriceNote: '', stock: 8
+    })
+    ok(made.status === 200, '先建一条联调专用货（库存 8）')
+
+    const s1 = await api.staffScan(CODE)
+    ok(s1.found === true && s1.product.stock === 8 && s1.product.name === '联调员工专用货', '员工扫码命中：' + s1.product.name + ' 库存 ' + s1.product.stock)
+    await api.staffScan(CODE)
+    await api.staffScan(CODE)
+    const s2 = await api.staffScan(CODE)
+    ok(s2.product.stock === 8, '连扫四次库存一动不动（D8 扫码只读）')
+
+    const unknown = await api.staffScan('6900000000097')
+    ok(unknown.found === false && !!unknown.resolve, '未建档条码给解析结果，方便当场建档')
+
+    await api.changeStock(CODE, 'stock_in', 2, '联调入库')
+    const s3 = await api.staffScan(CODE)
+    ok(s3.product.stock === 10, '入库 +2 后库存 10')
+    ok(s3.recent.some((r) => r.reason === '联调入库'), '流水里查得到刚才那一笔：' + s3.recent.map((r) => r.reason).join(' / '))
+    await api.changeStock(CODE, 'adjust', -4, '联调出库')
+    ok((await api.staffScan(CODE)).product.stock === 6, '出库 -4 后库存 6')
+    await api.changeStock(CODE, 'stock_take', 3, '联调盘点')
+    ok((await api.staffScan(CODE)).product.stock === 3, '盘点按实盘数盖成 3')
+
+    await api.setOnSale([CODE], false)
+    const staffList = await api.listAllProducts('联调员工专用货')
+    ok(staffList.some((p) => p.code === CODE && p.onSale === false), '员工能看见已下架的货（含 onSale=false）')
+    const custList = await api.listProducts('联调员工专用货')
+    ok(!custList.some((p) => p.code === CODE), '顾客端看不到下架的货')
+    await api.setOnSale([CODE], true)
+    ok((await api.listProducts('联调员工专用货')).some((p) => p.code === CODE), '重新上架后顾客又能看到')
+
+    const NEW = '6900000000098'
+    await api.saveProduct({ code: NEW, name: '联调建档货', salePrice: 1 })
+    const newP = await api.getProduct(NEW)
+    ok(newP.code === NEW && newP.stock === 0, '建档不传 stock 就是 0（没动过库存）：' + newP.stock)
+
+    // 收尾：把两条联调货清干净，别把演示数据弄脏
+    await api.changeStock(CODE, 'stock_take', 0, '联调收尾')
+    const d1 = await raw('/api/products/' + CODE, 'DELETE')
+    const d2 = await raw('/api/products/' + NEW, 'DELETE')
+    ok(d1.status === 200 && d2.status === 200, '联调货已删除（' + d1.status + '/' + d2.status + '）')
+
+    api.setView('customer')
+    ok(api.view() === 'customer' && api.isStaff() === true, '切回顾客版后员工身份还在（令牌不丢）')
+    await raw('/api/wx/role', 'POST', { openid: openid, role: 'customer' })
+    let gone = ''
+    try { await api.staffOverview() } catch (e) { gone = e.message }
+    ok(api.staffToken().length === 64 && gone.indexOf('失效') >= 0, '后台降回顾客：旧令牌立刻失效（' + gone + '）')
+    api.clearSession()
+  }
+  api.clearSession()
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

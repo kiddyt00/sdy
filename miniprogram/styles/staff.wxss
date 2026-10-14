@@ -1,0 +1,147 @@
+/* 员工端共用样式（第 26 轮 / D32）：5 个员工页面各自 @import 这一份。
+   口径与顾客端一致：品牌绿 #16a34a、白卡片、20rpx 圆角、红色金额。 */
+.spage { padding: 20rpx 24rpx 200rpx; }
+
+/* ---------- 顶部数字区 ---------- */
+.hero {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+  border-radius: 24rpx;
+  padding: 28rpx 30rpx 30rpx;
+  color: #fff;
+  margin-bottom: 16rpx;
+}
+.hhi { font-size: 24rpx; opacity: .9; }
+.hbig { font-size: 66rpx; font-weight: 700; line-height: 1.15; margin-top: 6rpx; }
+.hbig .hsym { font-size: 32rpx; font-weight: 600; margin-right: 4rpx; }
+.hsub { font-size: 23rpx; opacity: .88; margin-top: 8rpx; }
+
+.sgrid { display: flex; flex-wrap: wrap; justify-content: space-between; }
+.sg {
+  width: 49%;
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 22rpx 20rpx;
+  margin-bottom: 14rpx;
+}
+.sgn { font-size: 44rpx; font-weight: 700; line-height: 1.1; }
+.sgn.warn { color: #dc2626; }
+.sgl { font-size: 23rpx; color: #6b7280; margin-top: 4rpx; }
+
+/* ---------- 扫码大按钮 ---------- */
+.scanbtn {
+  background: #fff;
+  border: 3rpx dashed #16a34a;
+  border-radius: 24rpx;
+  padding: 30rpx 24rpx;
+  text-align: center;
+  margin: 18rpx 0 12rpx;
+}
+.sb-i { font-size: 64rpx; line-height: 1; }
+.sb-t { font-size: 36rpx; font-weight: 700; color: #15803d; margin-top: 8rpx; }
+.sb-s { font-size: 23rpx; color: #6b7280; margin-top: 8rpx; }
+.ghost {
+  text-align: center;
+  font-size: 25rpx;
+  color: #15803d;
+  padding: 14rpx;
+  margin-bottom: 8rpx;
+}
+
+/* ---------- 列表卡片 ---------- */
+.scard {
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 20rpx 22rpx;
+  margin-bottom: 12rpx;
+}
+.srow { display: flex; align-items: center; justify-content: space-between; gap: 12rpx; }
+.sname { font-size: 28rpx; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.samount { font-size: 28rpx; font-weight: 700; color: #dc2626; flex: none; }
+.samount.warn { color: #dc2626; }
+.ssub { font-size: 22rpx; color: #9ca3af; margin-top: 6rpx; }
+.sempty { background: #fff; border-radius: 20rpx; padding: 40rpx 24rpx; text-align: center; color: #9ca3af; font-size: 25rpx; margin-bottom: 12rpx; }
+.err { background: #fef2f2; color: #b91c1c; border-radius: 16rpx; padding: 18rpx 20rpx; font-size: 24rpx; margin-bottom: 12rpx; }
+.sbottom { height: 40rpx; }
+
+/* ---------- 扫码台 ---------- */
+.codebar { display: flex; align-items: center; gap: 12rpx; margin-bottom: 16rpx; }
+.codebar .cinput { flex: 1; }
+.cbtn {
+  flex: none;
+  background: #16a34a;
+  color: #fff;
+  border-radius: 14rpx;
+  padding: 0 26rpx;
+  height: 80rpx;
+  line-height: 80rpx;
+  font-size: 27rpx;
+}
+.cbtn.ghostbtn { background: #f3f4f6; color: #374151; }
+.pcard { background: #fff; border-radius: 20rpx; padding: 24rpx; margin-bottom: 14rpx; }
+.ptitle { font-size: 34rpx; font-weight: 700; }
+.pspec { font-size: 24rpx; color: #6b7280; margin-top: 6rpx; }
+.pcode { font-size: 23rpx; color: #9ca3af; margin-top: 4rpx; }
+.pnums { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 18rpx; }
+.pstock { font-size: 26rpx; color: #374151; }
+.pstock .pbig { font-size: 52rpx; font-weight: 700; color: #111827; margin-right: 6rpx; }
+.pstock.low .pbig { color: #dc2626; }
+.pprice { text-align: right; font-size: 23rpx; color: #6b7280; }
+.pprice .pmain { font-size: 34rpx; font-weight: 700; color: #dc2626; }
+.tagline { margin-top: 12rpx; font-size: 23rpx; }
+.tag { display: inline-block; border-radius: 999rpx; padding: 3rpx 14rpx; margin-right: 10rpx; background: #dcfce7; color: #15803d; }
+.tag.off { background: #f3f4f6; color: #6b7280; }
+.tag.warn { background: #fef2f2; color: #b91c1c; }
+
+.qtyrow { display: flex; align-items: center; gap: 12rpx; margin: 8rpx 0 14rpx; }
+.qtyrow .qlabel { font-size: 24rpx; color: #6b7280; flex: none; }
+.qtyrow .qinput { flex: 1; }
+.acts { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.act {
+  flex: 1;
+  min-width: 200rpx;
+  text-align: center;
+  border-radius: 14rpx;
+  padding: 20rpx 0;
+  font-size: 28rpx;
+  font-weight: 600;
+  background: #f3f4f6;
+  color: #374151;
+}
+.act.primary { background: #16a34a; color: #fff; }
+.act.danger { background: #fef2f2; color: #b91c1c; }
+.act.dis { background: #f3f4f6; color: #c0c4cc; }
+
+.flow { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; border-bottom: 1rpx solid #f5f6f8; }
+.flow:last-child { border-bottom: none; }
+.fl-name { font-size: 25rpx; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fl-delta { font-size: 25rpx; font-weight: 600; margin: 0 12rpx; }
+.fl-after { font-size: 23rpx; color: #6b7280; }
+.formrow { display: flex; align-items: center; gap: 12rpx; margin-bottom: 12rpx; }
+.formrow .flabel { width: 130rpx; flex: none; font-size: 25rpx; color: #6b7280; }
+.formrow .finput { flex: 1; }
+
+/* ---------- 员工「我的」 ---------- */
+.mecard-top { display: flex; align-items: center; gap: 22rpx; }
+.savatar {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  background: #fff;
+  flex: none;
+}
+.savatar.ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 56rpx;
+  line-height: 1;
+}
+.sinfo { flex: 1; min-width: 0; }
+.sname { font-size: 36rpx; font-weight: 700; }
+.srole { font-size: 24rpx; opacity: .9; margin-top: 8rpx; }
+.mecard { background: #fff; border-radius: 20rpx; padding: 24rpx; margin-bottom: 14rpx; }
+.mrowline { display: flex; align-items: center; justify-content: space-between; padding: 14rpx 0; font-size: 27rpx; }
+.mrowline .mk { color: #6b7280; }
+.mrowline .mv { color: #111827; }
+.mexit { text-align: center; color: #dc2626; font-size: 28rpx; padding: 22rpx 0; }
+.mver { text-align: center; color: #9ca3af; font-size: 22rpx; padding: 20rpx 0 10rpx; }

@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "员工我的",
+  "usingComponents": {
+    "staff-nav": "/components/staff-nav/index"
+  }
+}

@@ -31,6 +31,9 @@ function mkWx(routes) {
     clipboard: [],
     calls2: [],
     back: 0,
+    redirs: [],
+    relaunches: [],
+    scans: [],
     getStorageSync: (k) => (k in kv ? kv[k] : ''),
     setStorageSync: (k, v) => { kv[k] = v },
     removeStorageSync: (k) => { delete kv[k] },
@@ -38,6 +41,14 @@ function mkWx(routes) {
     switchTab: function (o) { this.tabs.push(o && o.url) },
     navigateTo: function (o) { this.navs.push(o && o.url) },
     navigateBack: function () { this.back++ },
+    // 员工端要用的三个：跳转（底栏/扫码台）、重启（进工作台）、扫码（69 码）
+    redirectTo: function (o) { this.redirs.push(o && o.url) },
+    reLaunch: function (o) { this.relaunches.push(o && o.url) },
+    scanCode: function (o) {
+      this.scans.push({ scanType: (o && o.scanType) || [], onlyFromCamera: !!(o && o.onlyFromCamera) })
+      if (this._scanFail) { if (o && o.fail) o.fail({ errMsg: 'scanCode:fail cancel' }); return }
+      if (o && o.success) o.success({ result: this._scanResult || '6901234567890' })
+    },
     setNavigationBarTitle: function (o) { this.titles.push(o && o.title) },
     previewImage: function (o) { this.previews.push(o && o.urls) },
     setTabBarBadge: function (o) { this.badges.push(o) },
@@ -100,7 +111,11 @@ function loadPage(rel) {
 function makeInstance(def) {
   const inst = Object.create(def)
   inst.data = JSON.parse(JSON.stringify(def.data || {}))
-  inst.setData = function (o) { Object.assign(this.data, o) }
+  // 真机 setData 支持第二个回调参数（库存页的「只看低库存」靠它重排）
+  inst.setData = function (o, cb) {
+    Object.assign(this.data, o)
+    if (typeof cb === 'function') cb()
+  }
   return inst
 }
 function exists(rel) { return fs.existsSync(path.join(ROOT, rel)) }
@@ -109,7 +124,7 @@ async function main() {
   /* ---------- ① 工程结构 ---------- */
   section('① 小程序工程结构')
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'app.json'), 'utf8'))
-  ok(appJson.pages.length === 10, 'app.json 声明 10 个页面')
+  ok(appJson.pages.length === 15, 'app.json 声明 15 个页面（10 顾客 + 5 员工）')
   ok(appJson.tabBar.list.length === 5, 'tabBar 5 个入口')
   let allOk = true
   appJson.pages.forEach((p) => {
@@ -570,6 +585,184 @@ async function main() {
   const savedBody = global.wx._calls.filter((c) => c.method === 'POST' && c.path === '/api/addresses').pop()
   ok(savedBody && savedBody.data.contact === '李叔' && savedBody.data.isDefault === true, '提交的 body 带收货人/地址/默认标记')
   ok(savedBody.data.phone === '13800001111', '提交时自动带上登录手机号（手机号即身份）')
+
+  /* ---------- ⑫ 员工端（第 26 轮 / D32：员工身份 + 扫码台） ---------- */
+  section('⑫ 员工端（身份 / 扫码只读 / 入库出库盘点 / 订单推进）')
+
+  // 服务端下发的员工令牌（64 位 hex，本地伪造不出来）
+  const STAFF_TOKEN = 'a1b2c3d4'.repeat(8)
+  let lastStockReq = null
+  let scanBody = {
+    ok: true, code: '6901234567890', lowStock: 5, found: true,
+    product: { code: '6901234567890', name: '农夫山泉 550ml', spec: '550ml 瓶', category: '饮料', unit: '瓶', salePrice: 2, costPrice: 1.2, wholesalePrice: 1.8, stock: 7, onSale: true },
+    recent: [{ id: 9, ts: '2026-10-13T09:20:00Z', delta: 3, before: 4, after: 7, reason: '员工小程序入库', by: '阿明' }]
+  }
+  const nextStock = (cur, kind, qty) => (kind === 'stock_take' ? qty : Number(cur) + qty)
+  const STAFF_ROUTES = [
+    { method: 'GET', path: '/healthz', body: { ok: true, cloudConfigured: true, circuitOpen: false, cloudFails: 0 } },
+    // 员工身份登录：服务端除了 openid 还会下发 role=staff 与一次性令牌
+    { method: 'POST', path: '/api/wx/login', body: { ok: true, openid: 'o_staff_1', bound: false, phone: '', nickname: '阿明', avatar: '', tier: 'retail', role: 'staff', staffToken: STAFF_TOKEN } },
+    { method: 'GET', path: '/api/staff/overview', body: {
+      ok: true, lowStock: 5, staff: { nickname: '阿明', role: 'staff' },
+      stats: { todayRevenue: 128.5, todayOrders: 6, pending: 2, lowStockCount: 1, products: 12 },
+      pendingOrders: [{ id: 'M9', customerName: '张三', total: 23.5, address: '幸福小区 3 栋', createdAt: '2026-10-13T02:30:00Z' }],
+      lowStockItems: [{ code: '6901234567890', name: '农夫山泉 550ml', spec: '550ml 瓶', stock: 3, unit: '瓶' }],
+      recent: [{ id: 9, ts: '2026-10-13T09:20:00Z', delta: 3, after: 7, reason: '员工小程序入库', by: '阿明', name: '农夫山泉 550ml' }]
+    } },
+    { method: 'GET', path: '/api/staff/scan', body: () => scanBody },
+    { method: 'POST', path: '/api/stock/change', body: (o) => {
+      lastStockReq = o.data
+      const before = Number(scanBody.product.stock)
+      const after = nextStock(before, o.data.kind, Number(o.data.qty) || 0)
+      scanBody = Object.assign({}, scanBody, {
+        found: true,
+        product: Object.assign({}, scanBody.product, { stock: after }),
+        recent: [{ id: 10, ts: '2026-10-13T10:00:00Z', delta: Number(o.data.qty), before: before, after: after, reason: o.data.reason, by: o.data.by }]
+      })
+      return { ok: true, code: o.data.code, kind: o.data.kind, before: before, stock: after }
+    } },
+    { method: 'GET', path: '/api/products', body: { items: [
+      { code: '6901234567890', name: '农夫山泉 550ml', spec: '550ml 瓶', brand: '农夫山泉', category: '饮料', unit: '瓶', salePrice: 2, stock: 3, onSale: true },
+      { code: '6907992751797', name: '伊利纯牛奶', spec: '250ml 盒', brand: '伊利', category: '乳品', unit: '盒', salePrice: 3.5, stock: 80, onSale: false }
+    ], total: 2 } },
+    { method: 'POST', path: '/api/products/onsale', body: { ok: true, updated: 1 } },
+    { method: 'POST', path: '/api/products', body: { ok: true, product: { code: '6900000000001', name: '新品矿泉水', stock: 6 } } },
+    { method: 'GET', path: '/api/settings', body: { name: '啥都有快送', phone: '13800000000', address: '幸福路 1 号', hours: '07:30 – 22:30' } },
+    { method: 'GET', path: '/api/orders', body: { items: [{ id: 'M9', customerName: '张三', phone: '13800138000', address: '幸福小区 3 栋', deliveryType: 'delivery', subtotal: 23.5, deliveryFee: 0, total: 23.5, status: 'pending', items: [{ code: '6901234567890', name: '农夫山泉 550ml', price: 2, qty: 2 }], createdAt: '2026-10-13T02:30:00Z' }], total: 1 } },
+    { method: 'POST', re: /^\/api\/orders\/[^/]+\/advance$/, body: { ok: true, id: 'M9', status: 'delivering' } }
+  ]
+
+  // ⑫.1 不是员工：员工页一个数据接口都不该打
+  global.wx = mkWx(STAFF_ROUTES)
+  await api.probe()
+  const guard = loadPage('pages/staff/home.js')
+  guard.onShow()
+  ok(guard.data.ready === false && guard.data.loading === true, '不是员工：工作台不加载任何数据')
+  ok(global.wx._calls.filter((c) => c.path.indexOf('/api/staff/') === 0).length === 0, '不是员工：没有打到 /api/staff/*')
+  ok(global.wx.toasts.join('').indexOf('还不是员工') >= 0, '不是员工：友好提示让人回去找老板')
+
+  // ⑫.2 员工身份登录：拿到 role=staff 与令牌，界面切到员工版
+  const s = await api.wxLogin({ nickname: '阿明', role: 'staff' })
+  ok(!!s && s.role === 'staff', '员工身份登录：服务端确认为 staff')
+  ok(api.isStaff() === true && api.sessionRole() === 'staff', '本机记住员工身份')
+  ok(api.staffToken() === STAFF_TOKEN, '拿到员工令牌（64 位 hex）')
+  ok(api.view() === 'staff', '登录后界面切到员工版')
+
+  // ⑫.3 工作台：今日营业额 / 待处理 / 低库存 / 最近流水
+  const hw = loadPage('pages/staff/home.js')
+  hw.onShow()
+  await hw.load()
+  ok(hw.data.ready === true && hw.data.error === '', '员工工作台连上后端')
+  ok(hw.data.stats.revenueText === '128.50' && hw.data.stats.todayOrders === 6, '工作台显示今日营业额与单数')
+  ok(hw.data.stats.pending === 2 && hw.data.stats.lowStockCount === 1, '工作台显示待处理与低库存数')
+  ok(hw.data.pendingOrders.length === 1 && hw.data.pendingOrders[0].who === '张三', '待处理单带出顾客名')
+  ok(hw.data.lowStockItems[0].stock === 3, '低库存货带出剩余数量')
+  ok(hw.data.recent[0].deltaText === '+3', '最近流水带出增减：' + hw.data.recent[0].deltaText)
+  const overviewCall = global.wx._calls.filter((c) => c.path === '/api/staff/overview').pop()
+  ok(!!overviewCall, '工作台走 /api/staff/overview（一次取回）')
+
+  // ⑫.4 工作台大按钮：调起扫码 → 带条码进扫码台
+  hw.onScan()
+  ok(global.wx.scans.length === 1 && global.wx.scans[0].scanType.indexOf('barCode') >= 0, '调起微信扫码（69 码走 barCode）')
+  ok(global.wx.redirs.indexOf('/pages/staff/scan?code=6901234567890') >= 0, '扫到 69 码直接进扫码台：' + JSON.stringify(global.wx.redirs))
+
+  // ⑫.5 扫码台命中：把货摆出来，但绝不动库存（D8）
+  const sc = loadPage('pages/staff/scan.js')
+  sc.onLoad({ code: '6901234567890' })
+  await sc.onShow()
+  await sc.load('6901234567890')
+  ok(sc.data.found === true && sc.data.product.name === '农夫山泉 550ml', '扫 69 码查到本店商品')
+  ok(sc.data.product.stock === 7 && sc.data.product.salePriceText === '2.00', '扫码台带出库存与售价')
+  ok(sc.data.recent[0].reason === '员工小程序入库', '扫码台带出最近流水')
+  ok(global.wx._calls.filter((c) => c.method === 'POST' && c.path === '/api/stock/change').length === 0, '只扫码不改库存（D8 只读）')
+  sc.onQty({ detail: { value: '3' } })
+  await sc.stockIn()
+  await new Promise((r) => setTimeout(r, 10))
+  ok(!!lastStockReq && lastStockReq.kind === 'stock_in' && lastStockReq.qty === 3, '入库走 stock_in +3：' + JSON.stringify(lastStockReq))
+  ok(lastStockReq.by === '阿明', '流水记下是谁动的：' + lastStockReq.by)
+  ok(sc.data.product.stock === 10, '入库后扫码台刷新为 10')
+  sc.setData({ qty: '2' })
+  await sc.stockOut()
+  await new Promise((r) => setTimeout(r, 10))
+  ok(lastStockReq.kind === 'adjust' && lastStockReq.qty === -2, '出库走 adjust -2（增量）')
+  ok(sc.data.product.stock === 8, '出库后库存变 8')
+  sc.setData({ qty: '5' })
+  await sc.stockTake()
+  await new Promise((r) => setTimeout(r, 10))
+  ok(lastStockReq.kind === 'stock_take' && lastStockReq.qty === 5, '盘点走 stock_take（实盘数）')
+  ok(sc.data.product.stock === 5, '盘点后库存就是实盘数 5')
+
+  // ⑫.6 上下架只动状态、不动库存（D23）
+  await sc.toggleOnSale()
+  await new Promise((r) => setTimeout(r, 10))
+  const onsale = global.wx._calls.filter((c) => c.path === '/api/products/onsale').pop()
+  ok(!!onsale && onsale.data.codes[0] === '6901234567890' && onsale.data.onSale === false, '下架只发 onsale：' + JSON.stringify(onsale && onsale.data))
+
+  // ⑫.7 没建档的码：解析出名字填进建档表单，存完再扫就能看见
+  scanBody = { ok: true, code: '6900000000001', lowStock: 5, found: false, resolve: { name: '新品矿泉水', spec: '500ml 瓶', source: 'openfoodfacts' }, recent: [] }
+  sc.onCodeInput({ detail: { value: '6900000000001' } })
+  await sc.search()
+  ok(sc.data.found === false && !!sc.data.resolve, '没建档的码给出解析结果')
+  ok(sc.data.form.name === '新品矿泉水', '解析出的名字预填进建档表单')
+  sc.onFormInput({ currentTarget: { dataset: { field: 'name' } }, detail: { value: '新品矿泉水' } })
+  sc.onFormInput({ currentTarget: { dataset: { field: 'salePrice' } }, detail: { value: '2.5' } })
+  sc.onFormInput({ currentTarget: { dataset: { field: 'costPrice' } }, detail: { value: '1.5' } })
+  const saved = await sc.saveNew()
+  const posted = global.wx._calls.filter((c) => c.method === 'POST' && c.path === '/api/products').pop()
+  ok(!!posted && posted.data.code === '6900000000001' && posted.data.salePrice === 2.5, '建档真的提交到 /api/products：' + JSON.stringify(posted && posted.data))
+  ok(posted.data.stock === undefined, '建档表单没填库存就不碰库存（D16）')
+
+  // ⑫.8 库存页：能看见下架的货 + 只看低库存
+  const sk = loadPage('pages/staff/stock.js')
+  sk.onShow()
+  await sk.load()
+  ok(sk.data.list.length === 2, '库存页列出全部货（含已下架）')
+  ok(sk.data.list[1].onSale === false, '员工能看见已下架的货（顾客端看不到）')
+  sk.toggleLow()
+  ok(sk.data.list.length === 1 && sk.data.list[0].code === '6901234567890', '只看低库存：只剩 1 件')
+  sk.open({ currentTarget: { dataset: { code: '6901234567890' } } })
+  ok(global.wx.redirs.indexOf('/pages/staff/scan?code=6901234567890') >= 0, '库存行点进扫码台看货')
+
+  // ⑫.9 订单页：按状态机给按钮，推进后重新拉列表
+  const so = loadPage('pages/staff/orders.js')
+  so.onShow()
+  await so.load()
+  ok(so.data.list.length === 1 && so.data.list[0].id === 'M9', '员工订单页列出订单')
+  ok(so.data.list[0].statusText === '待处理', '状态文案与顾客端逐字一致：' + so.data.list[0].statusText)
+  ok(so.data.list[0].acts[0].to === 'delivering' && so.data.list[0].acts[0].label === '开始配送', '配送单给「开始配送」')
+  ok(so.data.list[0].acts[1].to === 'cancelled' && so.data.list[0].acts[1].label === '取消', '待处理单也给「取消」')
+  await so.advance({ currentTarget: { dataset: { id: 'M9', to: 'delivering', label: '开始配送' } } })
+  await new Promise((r) => setTimeout(r, 10))
+  const adv = global.wx._calls.filter((c) => c.path === '/api/orders/M9/advance').pop()
+  ok(!!adv && adv.data.to === 'delivering', '推进订单打到 /api/orders/M9/advance')
+  ok(global.wx.toasts.indexOf('已开始配送') >= 0, '推进有回执：' + JSON.stringify(global.wx.toasts.slice(-2)))
+
+  // ⑫.10 员工「我的」：身份卡 + 切回顾客版 + 退出登录
+  const sm = loadPage('pages/staff/mine.js')
+  sm.onShow()
+  await new Promise((r) => setTimeout(r, 10))
+  ok(sm.data.name === '阿明' && sm.data.roleText.indexOf('员工') >= 0, '员工「我的」显示员工身份')
+  ok(sm.data.shop.name === '啥都有快送', '员工「我的」带出门店信息')
+  sm.switchCustomer()
+  ok(api.view() === 'customer', '能切回顾客版（界面开关，不动服务端角色）')
+  ok(api.isStaff() === true, '切回顾客版仍是员工身份，令牌还在')
+  sm.logout()
+  await new Promise((r) => setTimeout(r, 10))
+  ok(api.isLoggedIn() === false, '员工也能退出登录')
+
+  // ⑫.11 页面接线（本模型看不见真机，靠文件断言兜住）
+  const mineWxmlStaff = fs.readFileSync(path.join(ROOT, 'pages/mine/mine.wxml'), 'utf8')
+  ok(mineWxmlStaff.indexOf('bindtap="pickRole"') >= 0, '「我的」页登录区有身份选择（顾客 / 员工）')
+  ok(mineWxmlStaff.indexOf('bind:click="goStaff"') >= 0, '员工以顾客身份进来时留有工作台入口')
+  let staffWired = true
+  appJson.pages.filter((p) => p.indexOf('pages/staff/') === 0).forEach((p) => {
+    const wxml = fs.readFileSync(path.join(ROOT, p + '.wxml'), 'utf8')
+    const pageJson = JSON.parse(fs.readFileSync(path.join(ROOT, p + '.json'), 'utf8'))
+    if (wxml.indexOf('<staff-nav') < 0) { staffWired = false; console.log('    少了员工底栏：' + p) }
+    if (!(pageJson.usingComponents || {})['staff-nav']) { staffWired = false; console.log('    没声明 staff-nav：' + p) }
+  })
+  ok(staffWired, '5 个员工页都带自绘底栏并声明了 staff-nav')
+  ok(fs.readFileSync(path.join(ROOT, 'pages/mine/mine.js'), 'utf8').indexOf('role: role') >= 0, '登录时把身份一起提交给服务端')
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

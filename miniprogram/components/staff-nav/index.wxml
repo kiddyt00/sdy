@@ -1,0 +1,14 @@
+<!-- 员工端底部导航（第 26 轮 / D32）：顾客端看不到这一套 -->
+<view class="snav">
+  <view
+    class="si {{active === item.key ? 'on' : ''}}"
+    wx:for="{{items}}"
+    wx:key="key"
+    data-key="{{item.key}}"
+    data-url="{{item.url}}"
+    bindtap="go"
+  >
+    <van-icon name="{{item.icon}}" size="40rpx" color="{{active === item.key ? '#16a34a' : '#9ca3af'}}" />
+    <view class="st">{{item.text}}</view>
+  </view>
+</view>

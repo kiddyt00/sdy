@@ -244,6 +244,75 @@ const online = {
     ok(calls.length === 3 && calls[2] && calls[2].del === '6902083881234', '库存 0 且无进行中订单 → DELETE /api/products/{code}');
   }
 
+  /* ---------- 管理端 · 用户角色在线切换（任务池⑫ / D32） ---------- */
+  section('④c admin.html · 用户角色（列表 / 设为员工 / 刷新 / 报错）');
+  {
+    // 浏览器里 sdy-api.js 是 <script> 全局，mall-admin.js 里的 SdyApi 指的就是它；
+    // 假 DOM 沙箱只把 SdyApi 注入页面上下文，Node 侧的 Admin 模块看不到 ——
+    // 这里按浏览器的样子补挂一份到 global，本节结束再还原（不影响别的 section）。
+    const hadSdy = Object.prototype.hasOwnProperty.call(global, 'SdyApi');
+    const savedSdy = global.SdyApi;
+    global.SdyApi = SdyApi;
+    try {
+      const users = [
+        { openid: 'oX9k2LmQwErTyUiOpAsDfGhJkLz1', unionid: 'u1', phone: '13800001111', nickname: '张三', avatar: '', role: 'customer', createdAt: '2026-04-01', updatedAt: '2026-04-01', lastLogin: '2026-05-01 09:30' },
+        { openid: 'oYb8nMpRvWxYzAbCdEfGhIjKlMn2', unionid: 'u2', phone: '', nickname: '李四', avatar: '', role: 'staff', createdAt: '2026-04-02', updatedAt: '2026-04-02', lastLogin: '2026-05-02 18:02' }
+      ];
+      const posts = [];
+      const wxFetch = async (url, opts) => {
+        const p = String(url).replace(/^https?:\/\/[^/]+/, '');
+        const method = (opts && opts.method) || 'GET';
+        if (p.indexOf('/api/wx/users') === 0 && method === 'GET') {
+          return { ok: true, status: 200, text: async () => JSON.stringify({ items: users, total: users.length }) };
+        }
+        if (p === '/api/wx/role' && method === 'POST') {
+          const body = JSON.parse(opts.body);
+          posts.push(body);
+          const hit = users.filter(u => u.openid === body.openid)[0];
+          if (!hit) return { ok: false, status: 404, text: async () => JSON.stringify({ error: '用户不存在' }) };
+          hit.role = body.role;
+          return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, openid: body.openid, role: body.role, nickname: hit.nickname, phone: hit.phone, lastLoginAt: hit.lastLogin }) };
+        }
+        return online.fetch(url, opts);
+      };
+      const env = await bootPage('admin.html', { base: 'http://127.0.0.1:8093', fetch: wxFetch });
+      const ctx = env.ctx;
+      ok(env.els.wxUserList.innerHTML.indexOf('张三') >= 0 && env.els.wxUserList.innerHTML.indexOf('李四') >= 0,
+         '开机拉后端用户列表并渲染两个微信号（#wxUserList）');
+      ok(env.els.wxUserCount.textContent.indexOf('共 2 个') >= 0, '列表计数：' + env.els.wxUserCount.textContent);
+      ok(env.els.wxUserList.innerHTML.indexOf('badge st-done') >= 0 && env.els.wxUserList.innerHTML.indexOf('设为顾客') >= 0,
+         '员工行有绿色标签 + 「设为顾客」按钮');
+      ok(env.els.wxUserList.innerHTML.indexOf('title="' + users[0].openid + '"') >= 0, 'openid 全量放 title（列表里截断）');
+      // 点「设为员工」：confirm（默认放行）→ POST /api/wx/role → 重拉列表 → toast
+      await ctx.wxToggleRole(users[0].openid, 'staff');
+      ok(posts.length === 1 && posts[0].openid === users[0].openid && posts[0].role === 'staff',
+         '点「设为员工」POST /api/wx/role，body 正确：' + JSON.stringify(posts[0] || null));
+      ok(env.els.wxUserList.innerHTML.indexOf("wxToggleRole('" + users[0].openid + "','customer')") >= 0,
+         '切换成功后重新拉列表：张三那一行变成「设为顾客」');
+      ok(env.els.toast.textContent.indexOf('已把「张三」设为员工') >= 0, '成功后中文 toast：' + env.els.toast.textContent);
+      // 接口报错：404 → toast 中文错误，列表仍是原数据
+      await ctx.wxToggleRole('oMissingOpenid000000000000000', 'staff');
+      ok(posts.length === 2 && env.els.toast.textContent.indexOf('设角色失败') >= 0 && env.els.toast.textContent.indexOf('用户不存在') >= 0,
+         '接口报错 → toast 中文提示：' + env.els.toast.textContent);
+
+      // 加载失败：/api/wx/users 500 → 面板给中文空状态，不白屏
+      const bad = await bootPage('admin.html', { base: 'http://127.0.0.1:8093', fetch: (url, opts) => {
+        const p = String(url).replace(/^https?:\/\/[^/]+/, '');
+        if (p.indexOf('/api/wx/users') === 0) return Promise.resolve({ ok: false, status: 500, text: async () => JSON.stringify({ error: '数据库暂时不可用' }) });
+        return online.fetch(url, opts);
+      } });
+      ok(bad.els.wxUserList.innerHTML.indexOf('加载用户列表失败') >= 0 && bad.els.wxUserList.innerHTML.indexOf('数据库暂时不可用') >= 0,
+         '列表加载失败 → 面板显示中文错误提示');
+
+      // 离线：微信用户只在服务端 → 面板给「未连接后端」中文提示
+      const off = await bootPage('admin.html', offline);
+      ok(off.els.wxUserList.innerHTML.indexOf('未连接后端') >= 0,
+         '离线启动 → 面板提示要连服务器：' + off.els.wxUserList.innerHTML.replace(/<[^>]+>/g, ''));
+    } finally {
+      if (hadSdy) global.SdyApi = savedSdy; else delete global.SdyApi;
+    }
+  }
+
   /* ---------- 管理端 · 小票打印（离线、不真打印） ---------- */
   section('⑥ admin.html · 小票 / 配送单打印');
   {

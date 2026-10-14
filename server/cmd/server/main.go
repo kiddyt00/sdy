@@ -575,6 +575,8 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			Phone    string `json:"phone"`
 			Nickname string `json:"nickname"`
 			Avatar   string `json:"avatar"`
+			// 第 26 轮（D32）：登录时选身份——customer（顾客）/ staff（员工），缺省顾客。
+			Role string `json:"role"`
 		}
 		if !decode(w, r, &in) {
 			return
@@ -618,10 +620,37 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				name = c.Name
 			}
 		}
-		writeJSON(w, 200, map[string]any{
+		// 第 26 轮（D32）：登录时选身份。选「员工」的前提是老板已在后台把这个微信号的角色
+		// 改成 staff——**光在小程序上点一下永远变不出员工权限**（与 D24 登录不提权同一个道理）。
+		wantRole := strings.TrimSpace(in.Role)
+		if wantRole == "" {
+			wantRole = store.RoleCustomer
+		}
+		if !store.ValidRole(wantRole) {
+			writeJSON(w, 400, map[string]string{"error": "身份只能是 customer（顾客）或 staff（员工）"})
+			return
+		}
+		if wantRole == store.RoleStaff && u.Role != store.RoleStaff {
+			writeJSON(w, 403, map[string]string{"error": "这个微信号还不是员工，请让老板在管理后台把角色改成员工"})
+			return
+		}
+		resp := map[string]any{
 			"ok": true, "openid": u.OpenID, "bound": u.Phone != "",
 			"phone": u.Phone, "name": name, "nickname": u.Nickname, "avatar": u.Avatar, "tier": tier,
-		})
+			"role": u.Role, "wantRole": wantRole,
+		}
+		// 员工令牌（第 26 轮 / D32）：员工账号每次登录换发一枚新令牌（旧的立刻失效）。
+		// 员工就算这次选的是顾客身份也把令牌带回去——这样「我的」页能直接进工作台，
+		// 不必退出再登一遍（员工本来就有管理端同权限，多给一个入口不涉及提权）。
+		if u.Role == store.RoleStaff {
+			token, err := st.RotateStaffToken(u.OpenID)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			resp["staffToken"] = token
+		}
+		writeJSON(w, 200, resp)
 	})
 
 	// 微信头像昵称（第 25 轮 / D31）：微信从 2022 起不再允许静默获取头像昵称，只能用官方
@@ -672,6 +701,173 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
+	})
+
+	// 角色管理（第 26 轮 / D32）：老板在后台把某个微信号改成「顾客 / 员工」。
+	// 员工 = 管理端同权限（老板明确要求）；改回顾客时服务端顺手清掉员工令牌，
+	// 免得「人已经被撤了，手机上的工作台还能进」。
+	mux.HandleFunc("/api/wx/role", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		var in struct {
+			OpenID string `json:"openid"`
+			Role   string `json:"role"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		if strings.TrimSpace(in.OpenID) == "" {
+			writeJSON(w, 400, map[string]string{"error": "缺少 openid（让对方先用小程序登录一次）"})
+			return
+		}
+		u, err := st.SetWxUserRole(in.OpenID, in.Role)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{
+			"ok": true, "openid": u.OpenID, "role": u.Role,
+			"nickname": u.Nickname, "phone": u.Phone, "lastLoginAt": u.LastLogin,
+		})
+	})
+
+	// ————— 员工界面（第 26 轮 / D32）—————
+	// 员工接口都要求 `X-Staff-Token` 头（也接受 `?staff=` 查询参数，便于浏览器/CDP 直查）。
+	// 这里只管「是不是员工」；改库存/改价/建档等写操作复用小店现有接口——
+	// 老板要的是「员工跟管理后台一样」，而管理端鉴权本身是已推迟的独立事项。
+	const staffLowStock = 5 // 低库存阈值，与 Web 管理端 Admin.LOW_STOCK 同一口径
+	round2 := func(v float64) float64 { return float64(int64(v*100+0.5)) / 100 }
+	staffFrom := func(w http.ResponseWriter, r *http.Request) (store.WxUser, bool) {
+		token := strings.TrimSpace(r.Header.Get("X-Staff-Token"))
+		if token == "" {
+			token = strings.TrimSpace(r.URL.Query().Get("staff"))
+		}
+		u, ok, err := st.GetStaffByToken(token)
+		if err != nil {
+			writeErr(w, err)
+			return store.WxUser{}, false
+		}
+		if !ok {
+			writeJSON(w, 401, map[string]string{"error": "员工身份已失效，请用员工身份重新登录"})
+			return store.WxUser{}, false
+		}
+		return u, true
+	}
+
+	// 工作台：今日营业额/单数、待处理单、低库存、最近流水——老板手机上要一眼看完。
+	mux.HandleFunc("/api/staff/overview", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		u, ok := staffFrom(w, r)
+		if !ok {
+			return
+		}
+		orders, err := st.ListOrders("")
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		products, err := st.ListProducts("", "")
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		logs, err := st.ListStockLog(5)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		day := time.Now().Format("2006-01-02")
+		var revenue float64
+		todayOrders, pending, lowCount := 0, 0, 0
+		pendingList := []store.Order{}
+		for _, o := range orders {
+			if ts, err := time.Parse(time.RFC3339, o.CreatedAt); err == nil && ts.Format("2006-01-02") == day {
+				revenue += o.Total
+				todayOrders++
+			}
+			if o.Status == "pending" {
+				pending++
+				if len(pendingList) < 5 {
+					pendingList = append(pendingList, o)
+				}
+			}
+		}
+		lowItems := []store.Product{}
+		for _, p := range products {
+			if p.Stock <= staffLowStock {
+				lowCount++
+				if len(lowItems) < 5 {
+					lowItems = append(lowItems, p)
+				}
+			}
+		}
+		writeJSON(w, 200, map[string]any{
+			"ok": true, "staff": u, "lowStock": staffLowStock,
+			"stats": map[string]any{
+				"todayRevenue": round2(revenue), "todayOrders": todayOrders,
+				"pending": pending, "lowStockCount": lowCount, "products": len(products),
+			},
+			"pendingOrders": pendingList, "lowStockItems": lowItems, "recent": logs,
+		})
+	})
+
+	// 扫码台（本轮最重要的一件事）：扫 69 码 → 是不是本店商品 / 库存多少 / 卖多少钱 /
+	// 最近怎么动的，一次取回。**扫码本身绝不动库存**（D8）：入库/出库/盘点都要员工再点一下。
+	mux.HandleFunc("/api/staff/scan", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		u, ok := staffFrom(w, r)
+		if !ok {
+			return
+		}
+		code := strings.TrimSpace(r.URL.Query().Get("code"))
+		if code == "" {
+			writeJSON(w, 400, map[string]string{"error": "缺少 code（扫到的条码）"})
+			return
+		}
+		out := map[string]any{"ok": true, "code": code, "staff": u.OpenID, "lowStock": staffLowStock}
+		prod, err := st.GetProduct(code)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			writeErr(w, err)
+			return
+		}
+		found := err == nil
+		out["found"] = found
+		if found {
+			out["product"] = prod
+		} else {
+			// 没建档也把解析链跑一遍：本地字典/云端能给出名字规格，员工照着建档就行。
+			parsed, err := res.Resolve(code)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			out["resolve"] = parsed
+		}
+		// 这个条码最近的库存流水：员工要能看出「刚才谁动过、动成了多少」。
+		logs, err := st.ListStockLog(200)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		recent := []store.StockLog{}
+		for _, e := range logs {
+			if e.Code == code {
+				recent = append(recent, e)
+				if len(recent) >= 5 {
+					break
+				}
+			}
+		}
+		out["recent"] = recent
+		writeJSON(w, 200, out)
 	})
 
 	// 条码解析链（本地优先，扫码只读，不改库存）

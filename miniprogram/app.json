@@ -9,7 +9,12 @@
     "pages/goods/goods",
     "pages/order/order",
     "pages/address/list",
-    "pages/address/edit"
+    "pages/address/edit",
+    "pages/staff/home",
+    "pages/staff/scan",
+    "pages/staff/stock",
+    "pages/staff/orders",
+    "pages/staff/mine"
   ],
   "window": {
     "navigationBarBackgroundColor": "#16a34a",

@@ -1,0 +1,69 @@
+<!-- 员工工作台（第 26 轮 / D32）：顾客端看不到这一页 -->
+<view class="spage">
+  <view class="hero">
+    <view class="hhi">今日营业额（截至现在）</view>
+    <view class="hbig"><text class="hsym">¥</text>{{stats.revenueText}}</view>
+    <view class="hsub">{{name}} · 员工工作台</view>
+  </view>
+
+  <view class="sgrid">
+    <view class="sg" bindtap="goOrders">
+      <view class="sgn">{{stats.todayOrders}}</view>
+      <view class="sgl">今日订单</view>
+    </view>
+    <view class="sg" bindtap="goOrders">
+      <view class="sgn {{stats.pending > 0 ? 'warn' : ''}}">{{stats.pending}}</view>
+      <view class="sgl">待处理</view>
+    </view>
+    <view class="sg" bindtap="goStock">
+      <view class="sgn {{stats.lowStockCount > 0 ? 'warn' : ''}}">{{stats.lowStockCount}}</view>
+      <view class="sgl">低库存 ≤{{lowStock}}</view>
+    </view>
+    <view class="sg" bindtap="goStock">
+      <view class="sgn">{{stats.products}}</view>
+      <view class="sgl">在档商品</view>
+    </view>
+  </view>
+
+  <view class="scanbtn" bindtap="onScan">
+    <view class="sb-i">📷</view>
+    <view class="sb-t">扫码找货</view>
+    <view class="sb-s">对准商品上的 69 条码：查库存 / 改库存 / 改价 / 建档</view>
+  </view>
+  <view class="ghost" bindtap="goScan">手动输入条码 / 换一个再扫</view>
+
+  <view class="err" wx:if="{{error}}">加载失败：{{error}}</view>
+
+  <view class="sechead">待处理订单（{{stats.pending}}）</view>
+  <view class="sempty" wx:if="{{!pendingOrders.length}}">没有待处理的订单</view>
+  <view class="scard" wx:for="{{pendingOrders}}" wx:key="id" data-id="{{item.id}}" bindtap="openOrder">
+    <view class="srow">
+      <text class="sname">#{{item.id}} · {{item.who}}</text>
+      <text class="samount">¥{{item.totalText}}</text>
+    </view>
+    <view class="ssub">{{item.at}} · {{item.address}}</view>
+  </view>
+
+  <view class="sechead">低库存（≤{{lowStock}}）</view>
+  <view class="sempty" wx:if="{{!lowStockItems.length}}">库存都够，暂时没有要补的</view>
+  <view class="scard" wx:for="{{lowStockItems}}" wx:key="code" data-code="{{item.code}}" bindtap="openItem">
+    <view class="srow">
+      <text class="sname">{{item.name}}</text>
+      <text class="samount warn">剩 {{item.stock}} {{item.unit}}</text>
+    </view>
+    <view class="ssub">{{item.spec}} · {{item.code}}</view>
+  </view>
+
+  <view class="sechead">最近库存流水</view>
+  <view class="sempty" wx:if="{{!recent.length}}">还没有库存操作</view>
+  <view class="scard" wx:for="{{recent}}" wx:key="id">
+    <view class="srow">
+      <text class="sname">{{item.name}}</text>
+      <text class="samount">{{item.deltaText}} → {{item.after}}</text>
+    </view>
+    <view class="ssub">{{item.at}} · {{item.reason}} · {{item.by}}</view>
+  </view>
+
+  <view class="sbottom"></view>
+</view>
+<staff-nav active="home" />

@@ -1,0 +1,38 @@
+<!-- 员工库存页（第 26 轮 / D32）：搜货 → 看库存/售价 → 点进去改 -->
+<view class="spage">
+  <view class="codebar">
+    <input
+      class="input cinput"
+      value="{{kw}}"
+      placeholder="搜商品名 / 条码"
+      placeholder-class="ph"
+      confirm-type="search"
+      bindinput="onKw"
+      bindconfirm="search"
+    />
+    <view class="cbtn" bindtap="search">搜索</view>
+  </view>
+
+  <view class="filterrow">
+    <text class="filter {{onlyLow ? 'on' : ''}}" bindtap="toggleLow">只看低库存 ≤{{lowStock}}</text>
+    <text class="filter" bindtap="goScan">📷 扫码找货</text>
+  </view>
+
+  <view class="err" wx:if="{{err}}">{{err}}</view>
+  <view class="sempty" wx:if="{{!list.length && !loading}}">没有找到货品{{kw ? '（换个词试试）' : ''}}</view>
+
+  <view class="scard" wx:for="{{list}}" wx:key="code" data-code="{{item.code}}" bindtap="open">
+    <view class="srow">
+      <text class="sname">{{item.name}}</text>
+      <text class="samount {{item.low ? 'warn' : ''}}">{{item.stockText}}</text>
+    </view>
+    <view class="ssub">{{item.brand}} {{item.spec}} · {{item.priceText}} · 条码 {{item.code}}</view>
+    <view class="tagline">
+      <text class="tag {{item.onSale ? '' : 'off'}}">{{item.onSale ? '在售' : '已下架'}}</text>
+      <text class="tag warn" wx:if="{{item.low}}">低库存</text>
+    </view>
+  </view>
+
+  <view class="sbottom"></view>
+</view>
+<staff-nav active="stock" />

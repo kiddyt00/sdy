@@ -56,6 +56,9 @@
   /* 商品图片与分类管理（任务池⑥） */
   .pcell { display: flex; align-items: center; gap: 9px; }
   .pcell .pmeta { min-width: 0; }
+  /* 用户角色（任务池⑫ / D32）：头像小方块，没头像就用昵称首字 */
+  .wxavatar { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%; object-fit: cover; background: #f1f5f9; display: block; }
+  .wxavatar-ph { display: grid; place-items: center; font-size: 14px; color: var(--muted); font-weight: 600; }
   .thumb-wrap { position: relative; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 9px; background: #f1f5f9; display: block; overflow: hidden; }
   .thumb-wrap .thumb-ph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 19px; line-height: 1; }
   .thumb-wrap .thumb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -328,6 +331,7 @@
 
     <!-- ---------- 顾客 ---------- -->
     <section class="page hide" id="viewCust">
+      <div class="stack">
       <div class="panel">
         <div class="panel-head">
           <h3>顾客档案</h3>
@@ -352,6 +356,26 @@
           <div class="muted" style="font-size:12px;margin-bottom:12px">顾客端没有账号体系：<b>手机号就是身份</b>（D24）。等级为「批发 / 白名单」的顾客，在顾客端会看到该商品的批发价（没填批发价就还是零售价）。</div>
           <div id="custList"></div>
         </div>
+      </div>
+
+      <!-- 用户角色（任务池⑫ / D32）：微信用户 → 员工 / 顾客。真源在后端，本地演示没有微信用户。 -->
+      <div class="panel">
+        <div class="panel-head">
+          <h3>用户角色</h3>
+          <span class="sub">把微信号设成员工：登录小程序即可进工作台（管理端同权限）</span>
+        </div>
+        <div class="panel-body">
+          <div class="muted" style="font-size:12px;margin-bottom:12px">
+            数据来自小程序登录沉淀的微信用户（<b>openid 就是身份</b>）。「员工」能用小程序进工作台看订单、改库存；
+            改回「顾客」时服务端会清掉员工令牌，那台手机立刻进不去。手机上没登录过的微信号不会出现在这里。
+          </div>
+          <div class="row" style="gap:10px;align-items:center;margin-bottom:12px">
+            <button class="btn btn-xs" onclick="loadWxUsers()">↻ 刷新用户列表</button>
+            <span class="muted" id="wxUserCount" style="font-size:12px"></span>
+          </div>
+          <div class="table-wrap" id="wxUserList"></div>
+        </div>
+      </div>
       </div>
     </section>
 
@@ -1415,6 +1439,57 @@ async function addCustomer() {
   toast('已登记「' + Admin.tierLabel(tier) + '价」顾客：' + phone + (name ? '（' + name + '）' : ''));
 }
 
+/* ---------------- 用户角色（任务池⑫ / D32） ----------------
+ * 微信用户存在服务端（不是本地档案）：openid 是唯一身份，员工 = 小程序端能进工作台。
+ * 页面只缓存一次列表用于渲染，改角色后重新拉取（真源在后端，不本地乐观更新）。
+ */
+let wxUsers = null;        // null = 还没加载过；[] = 加载过但为空
+let wxUsersErr = '';       // 加载失败的中文提示（优先于空列表提示）
+function renderWxUsersPanel() {
+  const box = $('wxUserList');
+  if (!box) return;
+  const cnt = $('wxUserCount');
+  if (wxUsersErr) {
+    box.innerHTML = '<div class="empty"><span class="big">👥</span>' + esc(wxUsersErr) + '</div>';
+    if (cnt) cnt.textContent = '';
+    return;
+  }
+  if (wxUsers === null) {
+    box.innerHTML = '<div class="empty"><span class="big">👥</span>正在加载微信用户…</div>';
+    if (cnt) cnt.textContent = '';
+    return;
+  }
+  box.innerHTML = Admin.renderWxUsers(wxUsers);
+  if (cnt) cnt.textContent = wxUsers.length ? ('共 ' + wxUsers.length + ' 个微信号') : '';
+}
+// 拉用户列表（GET /api/wx/users?limit=200）：失败也要给出中文提示，不能白屏
+async function loadWxUsers() {
+  const box = $('wxUserList');
+  if (box) box.innerHTML = '<div class="empty">正在加载微信用户…</div>';
+  try {
+    wxUsers = await Admin.listWxUsers(200);
+    wxUsersErr = '';
+  } catch (e) {
+    wxUsers = [];
+    wxUsersErr = '加载用户列表失败：' + e.message;
+  }
+  renderWxUsersPanel();
+}
+// 一键切角色：顾客 ↔ 员工（员工 = 管理端同权限；改回顾客会清掉员工令牌）
+async function wxToggleRole(openid, role) {
+  const to = role === 'staff' ? 'staff' : 'customer';
+  const hit = (wxUsers || []).filter(u => u.openid === openid)[0];
+  const who = (hit && (hit.nickname || hit.phone)) || Admin.shortOpenid(openid);
+  const tip = to === 'staff'
+    ? '把「' + who + '」设为员工？\n员工用小程序登录后能进工作台（看订单、改库存，管理端同权限）。'
+    : '把「' + who + '」改回顾客？\n服务端会清掉这台的员工令牌，手机上立刻进不了工作台。';
+  if (typeof confirm === 'function' && !confirm(tip)) return;
+  try { await Admin.setWxRole(openid, to); }
+  catch (e) { return toast('设角色失败：' + e.message, 4200); }
+  await loadWxUsers();                                 // 成功后重新拉列表（后端才是真源）
+  toast('已把「' + who + '」设为' + Admin.roleLabel(to));
+}
+
 /* ---------------- 系统 ---------------- */
 function clearLocal() {
   if (!confirm('清空本地缓存数据（商品/订单/顾客/库存流水）？后端数据不受影响。')) return;
@@ -1454,15 +1529,16 @@ function renderAll() {
   else if (tab === 'stock') renderStock();
   else if (tab === 'products') renderProducts();
   else if (tab === 'pricing') renderPricing();
-  else if (tab === 'cust') renderCust();
+  else if (tab === 'cust') { renderCust(); renderWxUsersPanel(); }
   else if (tab === 'sys') renderSys();
 }
 async function refreshAll() {
   if (online()) { try { await SdyApi.sync(); } catch (e) { toast(e.message); } }
+  await loadWxUsers();                                  // 用户角色（D32）：顺手把微信用户列表也刷一遍
   renderAll();
 }
 function renderAllAdmin() {
-  renderFilters(); renderOrders(); renderCouriers(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore();
+  renderFilters(); renderOrders(); renderCouriers(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore(); renderWxUsersPanel();
 }
 async function initApi() {
   const badge = $('modeBadge');
@@ -1490,6 +1566,7 @@ async function initApi() {
       } catch (e) { }
     }
   } catch (e) { }
+  await loadWxUsers();                                    // 用户角色（D32）：在线拉后端列表，离线给中文提示
   renderAllAdmin();
 }
 renderAllAdmin();
