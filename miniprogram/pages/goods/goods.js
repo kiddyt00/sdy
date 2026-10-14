@@ -18,6 +18,7 @@ Page({
     lowStock: api.lowStock(),
     tierText: '',
     tierHint: '',
+    alts: [],         // 第 28 轮 7.4：缺货时的「同类推荐」（最多 5 件，有货不显示）
     shop: {}
   },
 
@@ -63,12 +64,35 @@ Page({
         tierHint: rules.isWholesaleTier(tier) ? '按「' + rules.tierLabel(tier) + '」价' : ''
       })
       wx.setNavigationBarTitle({ title: p.name || '商品详情' })
-      return p
+      // 第 28 轮 7.4：缺货才拉「同类推荐」；有货这一块不出现
+      return this.loadAlts(p)
     }, (e) => {
       // 第 27 轮 P0-2：请求失败用人话文案 + 给「重新加载」，不冒充「已下架」
-      this.setData({ loading: false, p: null, notFound: '', err: ui.errText(e) })
+      this.setData({ loading: false, p: null, notFound: '', err: ui.errText(e), alts: [] })
       return null
     })
+  },
+
+  // 同类推荐：优先同分类热销（后端排序），接口失败就当没有推荐，不影响详情本身
+  loadAlts(p) {
+    if (!p || p.stock > 0) {
+      this.setData({ alts: [] })
+      return Promise.resolve(p || null)
+    }
+    return api.alternatives(p.code, 5).then((d) => {
+      this.setData({ alts: (d && d.items) || [] })
+      return p
+    }, () => {
+      this.setData({ alts: [] })
+      return p
+    })
+  },
+
+  // 点同类推荐进对应商品详情：用 redirectTo，翻推荐不叠一摞页面
+  goAlt(e) {
+    const code = e.currentTarget.dataset.code
+    if (!code || String(code) === String(this.data.code)) return
+    wx.redirectTo({ url: '/pages/goods/goods?code=' + encodeURIComponent(code) })
   },
 
   // 错误卡上的「重新加载」：真正重新发请求

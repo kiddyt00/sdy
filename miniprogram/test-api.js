@@ -533,6 +533,95 @@ async function main() {
   await api.wxLogin({})
   ok(api.isStaff() === false && api.staffToken() === '' && api.view() === 'customer', '普通顾客登录：没有角色也没有令牌')
 
+  /* ---------- ⑪ 第 28 轮：排序 / 分页 / 热销 / 同类推荐 ---------- */
+  section('⑪ 第 28 轮契约：排序分页（7.2）+ 热销（7.3）+ 同类推荐（7.4）')
+
+  // 导出面：R27 踩过「定义了没导出」的坑，这里直接盯 module.exports
+  ok(typeof api.hotProducts === 'function' && typeof api.alternatives === 'function',
+    'hotProducts / alternatives 都在 module.exports 里')
+  ok(Array.isArray(api.SORTS) && api.SORTS.indexOf('price_asc') >= 0 && api.SORTS.indexOf('default') >= 0 && api.PAGE_LIMIT_MAX === 200,
+    '排序取值与分页上限也导出了：' + JSON.stringify(api.SORTS))
+
+  // 离线：老调用向后兼容（只传 2 个参数仍返回商品数组）
+  global.wx = wxOffline
+  await api.probe()
+  const p28old = await api.listProducts('', '')
+  ok(Array.isArray(p28old) && p28old.length === 6, '只传 2 个参数的老调用仍返回数组（向后兼容，6 条演示商品）')
+
+  // 离线分页：传 opts 才返回契约对象
+  const p28off = await api.listProducts('', '', { sort: 'price_asc', limit: 2, offset: 0 })
+  ok(!Array.isArray(p28off) && p28off.items.length === 2 && p28off.total === 6 && p28off.limit === 2 &&
+    p28off.offset === 0 && p28off.hasMore === true,
+    '传 opts 返回 {items,total,limit,offset,hasMore}：' + JSON.stringify({ n: p28off.items.length, total: p28off.total, hasMore: p28off.hasMore }))
+  ok(p28off.tier === '', '离线没有等级信息时 tier 给空串（不是 undefined）')
+  ok(p28off.items[0].name === '农夫山泉' && p28off.items[1].name === '可口可乐',
+    '离线 price_asc 按有效价升序：' + p28off.items.map((p) => p.name).join(' < '))
+  const p28off2 = await api.listProducts('', '', { sort: 'price_asc', limit: 2, offset: 4 })
+  ok(p28off2.items.length === 2 && p28off2.hasMore === false, 'offset=4 翻到最后一页 → hasMore=false')
+  const p28off3 = await api.listProducts('', '', { sort: 'price_desc', limit: 1, offset: 0 })
+  ok(p28off3.items[0].name === '青岛啤酒', '离线 price_desc 从最贵的开始：' + p28off3.items[0].name)
+
+  const p28offHot = await api.hotProducts(6)
+  ok(p28offHot.items.length === 6 && p28offHot.total === 6, '离线热销降级到本地演示商品（6 件）')
+  const p28offAlt = await api.alternatives('6901234567892', 5)
+  ok(p28offAlt.items.length === 5 && p28offAlt.items.every((p) => p.code !== '6901234567892' && p.stock > 0),
+    '离线同类推荐排除自身、只给有货的（最多 5 件）')
+  ok(p28offAlt.items[0].category === '饮料', '离线同类推荐优先同分类：' + p28offAlt.items[0].name)
+
+  // 在线：sort/limit/offset 原样拼进 query，返回按服务端字段
+  const P28_ROUTES = [
+    { method: 'GET', path: '/healthz', body: { ok: true, cloudConfigured: false, circuitOpen: false, cloudFails: 0 } },
+    { method: 'GET', re: /^\/api\/products$/, body: { items: SERVER_PRODUCTS, total: 2, limit: 20, offset: 0, hasMore: false, tier: 'retail' } },
+    { method: 'GET', re: /^\/api\/products\/hot$/, body: { items: SERVER_PRODUCTS, total: 2 } },
+    { method: 'GET', re: /^\/api\/products\/alternatives$/, body: { items: [SERVER_PRODUCTS[0]], total: 1 } }
+  ]
+  global.wx = mkWx(P28_ROUTES)
+  await api.probe()
+  const p28on = await api.listProducts('可乐', '', { sort: 'price_asc', limit: 20, offset: 0 })
+  const p28call = global.wx._calls.filter((c) => c.path.indexOf('/api/products?') === 0).pop()
+  ok(p28call.path.indexOf('sort=price_asc') > 0 && p28call.path.indexOf('limit=20') > 0 && p28call.path.indexOf('offset=0') > 0,
+    'sort/limit/offset 原样拼进 query：' + p28call.path)
+  ok(p28on.items.length === 2 && p28on.total === 2 && p28on.hasMore === false && p28on.tier === 'retail',
+    '在线分页按服务端字段返回，tier 原样带回：' + p28on.tier)
+  ok(p28call.path.indexOf('keyword=' + encodeURIComponent('可乐')) > 0, '关键词照旧带上：' + p28call.path)
+
+  for (const s of ['default', 'hot', 'price_asc', 'price_desc']) {
+    await api.listProducts('', '', { sort: s, limit: 20, offset: 0 })
+    const c = global.wx._calls.filter((x) => x.path.indexOf('/api/products?') === 0).pop()
+    ok(c.path.indexOf('sort=' + s) > 0, '排序值逐字传 ' + s)
+  }
+
+  const p28hot = await api.hotProducts(6)
+  const p28hotCall = global.wx._calls.filter((c) => c.path.indexOf('/api/products/hot?') === 0).pop()
+  ok(p28hotCall.path.indexOf('limit=6') > 0, '热销请求 limit 原样传：' + p28hotCall.path)
+  ok(p28hot.items.length === 2 && p28hot.total === 2, '热销返回 {items,total}')
+  await api.hotProducts()
+  const p28hotCall2 = global.wx._calls.filter((c) => c.path.indexOf('/api/products/hot?') === 0).pop()
+  ok(p28hotCall2.path.indexOf('limit=8') > 0, '热销 limit 缺省 8（契约 7.3）：' + p28hotCall2.path)
+
+  const p28alt = await api.alternatives('6900000000009', 5)
+  const p28altCall = global.wx._calls.filter((c) => c.path.indexOf('/api/products/alternatives?') === 0).pop()
+  ok(p28altCall.path.indexOf('code=6900000000009') > 0 && p28altCall.path.indexOf('limit=5') > 0,
+    '同类推荐带 code + limit=5：' + p28altCall.path)
+  ok(p28alt.items.length === 1 && p28alt.total === 1, '同类推荐返回 {items,total}')
+
+  // 失败要 reject（不吞成空数组），页面才能走「出错可重试」而不是「没有这件商品」
+  global.wx = mkWx([
+    { method: 'GET', path: '/healthz', body: { ok: true, cloudConfigured: false, circuitOpen: false, cloudFails: 0 } },
+    { method: 'GET', re: /^\/api\/products(\?|$)/, fail: 'request:fail timeout' },
+    { method: 'GET', re: /^\/api\/products\/(hot|alternatives)$/, fail: 'request:fail timeout' }
+  ])
+  await api.probe()
+  let p28err = ''
+  await api.listProducts('', '', { sort: 'hot', limit: 20, offset: 0 }).catch((e) => { p28err = String((e && e.message) || e) })
+  ok(p28err.length > 0, '分页清单失败 → reject：' + p28err)
+  p28err = ''
+  await api.hotProducts(6).catch((e) => { p28err = String((e && e.message) || e) })
+  ok(p28err.length > 0, '热销请求失败 → reject（不吞成空数组）')
+  p28err = ''
+  await api.alternatives('6900000000009', 5).catch((e) => { p28err = String((e && e.message) || e) })
+  ok(p28err.length > 0, '同类推荐请求失败 → reject（不吞成空数组）')
+
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')
   process.exit(failed ? 1 : 0)

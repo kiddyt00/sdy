@@ -71,6 +71,22 @@
       <view class="saddr muted" wx:if="{{shop.phone}}">电话 {{shop.phone}}</view>
       <view class="shint muted">下单后可选择送货上门或到店自提，缺货商品会被老板电话确认。</view>
     </view>
+
+    <!-- 第 28 轮 7.4：缺货时给「同类推荐」（最多 5 件，后端优先同分类热销）；有货不显示这一块 -->
+    <view class="altcard" wx:if="{{p.stock <= 0 && alts.length}}">
+      <view class="alt-h">缺货了，看看这些</view>
+      <view class="altitem" wx:for="{{alts}}" wx:key="code" data-code="{{item.code}}" bindtap="goAlt">
+        <view class="altthumb">
+          <image wx:if="{{item.img}}" class="altimg" src="{{item.img}}" mode="aspectFill" lazy-load />
+          <text wx:else>{{item.emoji}}</text>
+        </view>
+        <view class="altinfo">
+          <view class="altname">{{item.name}}</view>
+          <view class="altspec">{{item.spec || item.brand || item.category || '—'}}</view>
+          <view class="altprice"><text class="altsym">¥</text>{{tools.fix2(item.salePrice)}}</view>
+        </view>
+      </view>
+    </view>
   </block>
 
   <!-- 底部动作条 -->

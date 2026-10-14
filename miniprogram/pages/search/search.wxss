@@ -80,3 +80,50 @@
   padding: 0 6rpx;
 }
 
+/* 第 28 轮：排序分段控件（值逐字 default|hot|price_asc|price_desc） */
+.sortbar {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 8rpx;
+  margin-top: 16rpx;
+}
+.stbtn {
+  flex: 1;
+  text-align: center;
+  font-size: 26rpx;
+  color: #4b5563;
+  padding: 12rpx 0;
+  border-radius: 12rpx;
+}
+.stbtn.on {
+  color: #16a34a;
+  font-weight: 600;
+  background: #dcfce7;
+}
+
+/* 第 28 轮：无结果提示语 + 热销 6 件 */
+.sempty { margin-top: 40rpx; }
+.seico {
+  text-align: center;
+  font-size: 64rpx;
+  margin-bottom: 16rpx;
+}
+.setext {
+  text-align: center;
+  font-size: 27rpx;
+  color: #6b7280;
+  line-height: 1.6;
+  padding: 0 40rpx;
+  margin-bottom: 32rpx;
+}
+
+/* 第 28 轮：触底分页状态 */
+.smore {
+  text-align: center;
+  font-size: 24rpx;
+  color: #9ca3af;
+  padding: 28rpx 0 8rpx;
+}
+

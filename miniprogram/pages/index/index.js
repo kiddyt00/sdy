@@ -6,6 +6,12 @@ const config = require('../../utils/config.js')
 const ui = require('../common/ui.js')
 
 const PAGE_SIZE = 20
+// 第 28 轮契约 7.8：首页金刚区最多 8 个分类，按件数降序；纯 emoji + 文字，不引任何图片资源
+const KK_MAX = 8
+const KK_EMOJI = { 饮料: '🥤', 乳品: '🥛', 日用: '🧴', 零食: '🍪', 酒水: '🍺', 蔬果: '🥬', 粮油: '🌾', 生鲜: '🍎' }
+const KK_FALLBACK = ['🛒', '📦', '🍎', '🥬', '🍜', '🧻', '🧼', '🍬']
+// 第 28 轮契约 7.3：首页热销与搜索无结果推荐共用 /api/products/hot
+const HOT_SIZE = 6
 
 Page({
   data: {
@@ -13,6 +19,8 @@ Page({
     shop: { name: config.STORE_NAME, phone: '', address: '' },
     cats: [{ name: '全部', count: 0 }],
     cat: '全部',
+    kingkong: [],     // 金刚区（≤8 个分类，按件数降序）
+    hots: [],         // 热销 6 件
     keyword: '',
     all: [],          // 当前分类 + 关键词下的全量
     products: [],     // 分页后真正渲染的
@@ -62,15 +70,18 @@ Page({
     this.applyFilter()
   },
 
-  // 拉商品 + 分类；分类接口失败就按商品自己归类（离线 / 老后端也能用）
+  // 拉商品 + 分类 + 热销；分类接口失败就按商品自己归类（离线 / 老后端也能用）
   load() {
     this.setData({ loading: true, loadErr: '' })
     return Promise.all([
       api.listProducts('', ''),
-      api.listCategories().catch(() => [])
+      api.listCategories().catch(() => []),
+      // 第 28 轮：热销接口不通不算整页失败（catch 成空数组，不拖垮首页）
+      api.hotProducts(HOT_SIZE).catch(() => null)
     ]).then((res) => {
       const items = res[0] || []
       let cats = res[1] || []
+      const hots = (res[2] && res[2].items) || []
       if (!cats.length) {
         const m = {}
         items.forEach((p) => {
@@ -85,6 +96,9 @@ Page({
       this.setData({
         all: items,
         cats: [{ name: '全部', count: items.length }].concat(cats),
+        // 第 28 轮：金刚区取件数最多的前 8 个分类
+        kingkong: this.buildKingKong(cats),
+        hots: hots,
         cat: cat,
         loading: false,
         loadErr: ''
@@ -98,6 +112,7 @@ Page({
         loading: false,
         all: [],
         products: [],
+        hots: [],
         total: 0,
         hasMore: false,
         empty: false,
@@ -105,6 +120,27 @@ Page({
       })
       return []
     })
+  },
+
+  // 金刚区：按件数降序取前 8 个分类，emoji 用固定字典（认不出来的按位次兜底）
+  buildKingKong(cats) {
+    const list = (cats || []).filter((c) => c && c.name && c.name !== '全部')
+    list.sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0))
+    return list.slice(0, KK_MAX).map((c, i) => ({
+      name: c.name,
+      count: Number(c.count) || 0,
+      emoji: KK_EMOJI[c.name] || KK_FALLBACK[i % KK_FALLBACK.length]
+    }))
+  },
+
+  // 金刚区点击：跳分类 tab 并选中该分类（tabBar 页不能带 query，用 storage 手递一次）
+  onKingKong(e) {
+    const cat = String(e.currentTarget.dataset.cat || '').trim()
+    if (!cat) return
+    try {
+      wx.setStorageSync('sdy_mp_cat_pick', cat)
+    } catch (err) { /* 存储不可用也不拦着跳转 */ }
+    wx.switchTab({ url: '/pages/category/category' })
   },
 
   // 错误卡上的「重新加载」：真的重新探测 + 重新发请求（不是把旧数据再渲染一遍）

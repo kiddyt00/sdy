@@ -1002,6 +1002,182 @@ async function main() {
   ok(p27mine.data.loadErr === '' && p27mine.data.loading === false, '「我的」页重新加载后错误卡消失')
   ok(/bindtap="reload"/.test(fs.readFileSync(path.join(ROOT, 'pages/mine/mine.wxml'), 'utf8')), '「我的」页错误卡也有「重新加载」')
 
+  /* ---------- ⑭ 第 28 轮：防抖 / 排序 / 分页 / 金刚区 / 下拉刷新 / 同类推荐 ---------- */
+  section('⑭ 第 28 轮：防抖 300ms + 排序分页 + 金刚区 + 下拉刷新 + 同类推荐')
+  const p28sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const p28health = { method: 'GET', path: '/healthz', body: { ok: true, cloudConfigured: true, circuitOpen: false, cloudFails: 0 } }
+  const p28count = (prefix) => global.wx._calls.filter((c) => c.method === 'GET' && c.path.indexOf(prefix) === 0).length
+  const p28last = (prefix) => global.wx._calls.filter((c) => c.method === 'GET' && c.path.indexOf(prefix) === 0).pop()
+  const HOT6 = SERVER_PRODUCTS.concat([
+    { code: '6902083881234', name: '农夫山泉', brand: '农夫山泉', spec: '550ml', category: '饮料', unit: '瓶', salePrice: 1.8, stock: 200 },
+    { code: '6921168509256', name: '心相印抽纸', brand: '心相印', spec: '3 层', category: '日用', unit: '提', salePrice: 4.5, stock: 60 },
+    { code: '6925303725941', name: '旺旺雪饼', brand: '旺旺', spec: '84g', category: '零食', unit: '袋', salePrice: 4.5, stock: 40 },
+    { code: '6901001100113', name: '青岛啤酒', brand: '青岛', spec: '330ml', category: '酒水', unit: '罐', salePrice: 6, stock: 90 }
+  ])
+
+  // ⑭.1 输入防抖 300ms：连打 5 个字符只发 1 次请求
+  const p28debRoute = [
+    p28health,
+    { method: 'GET', path: '/api/products', body: { items: SERVER_PRODUCTS, total: 2, limit: 20, offset: 0, hasMore: false } },
+    { method: 'GET', path: '/api/products/hot', body: { items: HOT6, total: 6 } }
+  ]
+  global.wx = mkWx(p28debRoute)
+  store.clearCart()
+  const p28sea = loadPage('pages/search/search.js')
+  p28sea.onLoad()
+  const p28base = p28count('/api/products?')
+  const p28typed = '可乐真好喝'
+  for (let i = 1; i <= p28typed.length; i++) p28sea.onInput({ detail: { value: p28typed.slice(0, i) } })
+  ok(p28count('/api/products?') === p28base, '防抖期间一个请求都不发（连打 5 个字符，请求数还是 ' + p28base + '）')
+  await p28sleep(500)
+  ok(p28count('/api/products?') === p28base + 1, '300ms 后只发 1 次请求（5 个字符合成 1 次）')
+  ok(p28sea.data.keyword === p28typed, '输入框内容没被防抖吃掉：' + p28sea.data.keyword)
+  ok(p28sea.data.searched === true && p28sea.data.results.length === 2, '防抖结束后按完整关键词渲染结果')
+  ok(p28last('/api/products?').path.indexOf('keyword=' + encodeURIComponent(p28typed)) > 0,
+    '请求里带的是完整关键词：' + p28last('/api/products?').path)
+
+  // ⑭.2 排序参数逐字传（default|hot|price_asc|price_desc）
+  await p28sea.onSort({ currentTarget: { dataset: { sort: 'hot' } } })
+  ok(p28last('/api/products?').path.indexOf('sort=hot') > 0, '排序切「销量」→ sort=hot 逐字传给后端')
+  ok(p28sea.data.sort === 'hot', '页面记住当前排序值')
+  await p28sea.onSort({ currentTarget: { dataset: { sort: 'price_asc' } } })
+  ok(p28last('/api/products?').path.indexOf('sort=price_asc') > 0, '排序切「价格↑」→ sort=price_asc 逐字传')
+  const p28sortCnt = p28count('/api/products?')
+  await p28sea.onSort({ currentTarget: { dataset: { sort: 'price_asc' } } })
+  ok(p28count('/api/products?') === p28sortCnt, '点已经选中的排序不重复发请求')
+  ok(p28sea.data.sorts.length === 4 && p28sea.data.sorts[0].v === 'default' && p28sea.data.sorts[3].v === 'price_desc',
+    '四个排序值逐字：default / hot / price_asc / price_desc')
+
+  // ⑭.3 触底分页：limit=20、offset 递增、hasMore=false 后不再发请求
+  const p28pgRoute = [
+    p28health,
+    { method: 'GET', path: '/api/products', body: { items: [SERVER_PRODUCTS[0]], total: 2, limit: 20, offset: 0, hasMore: true } }
+  ]
+  global.wx = mkWx(p28pgRoute)
+  const p28pg = loadPage('pages/search/search.js')
+  p28pg.onLoad()
+  p28pg.setData({ keyword: '饮料' })
+  await p28pg.doSearch(false)
+  ok(p28pg.data.hasMore === true && p28pg.data.results.length === 1, '服务端说还有下一页')
+  ok(p28last('/api/products?').path.indexOf('limit=20') > 0 && p28last('/api/products?').path.indexOf('offset=0') > 0,
+    '第一页 limit=20&offset=0：' + p28last('/api/products?').path)
+  p28pgRoute[1].body = { items: [SERVER_PRODUCTS[1]], total: 2, limit: 20, offset: 1, hasMore: false }
+  await p28pg.onReachBottom()
+  ok(p28last('/api/products?').path.indexOf('offset=1') > 0, '触底按已有条数传 offset=1（递增）：' + p28last('/api/products?').path)
+  ok(p28pg.data.results.length === 2 && p28pg.data.hasMore === false, '第二页拼在后面，且 hasMore 变 false')
+  const p28pgCnt = p28count('/api/products?')
+  await p28pg.onReachBottom()
+  await p28pg.onReachBottom()
+  ok(p28count('/api/products?') === p28pgCnt, 'hasMore=false 之后再触底也不发请求（不会翻到空页）')
+  ok(p28pg.data.loadingMore === false, '没有卡在「加载中…」')
+  const p28sw = fs.readFileSync(path.join(ROOT, 'pages/search/search.wxml'), 'utf8')
+  ok(p28sw.indexOf('加载中…') > 0 && p28sw.indexOf('没有更多了') > 0, '搜索页底部文案：加载中… / 没有更多了')
+  ok(p28sw.indexOf('onSort') > 0 && p28sw.indexOf('data-sort') > 0, '排序分段控件接上了切换方法')
+
+  // ⑭.4 无结果 → 「没找到…」+ 热销 6 件（点击进详情）
+  const p28noneRoute = [
+    p28health,
+    { method: 'GET', path: '/api/products', body: { items: [], total: 0, limit: 20, offset: 0, hasMore: false } },
+    { method: 'GET', path: '/api/products/hot', body: { items: HOT6, total: 6 } }
+  ]
+  global.wx = mkWx(p28noneRoute)
+  const p28none = loadPage('pages/search/search.js')
+  p28none.onLoad()
+  p28none.setData({ keyword: '螺蛳粉' })
+  await p28none.doSearch(false)
+  await p28sleep(20)
+  ok(p28none.data.empty === true && p28none.data.emptyText === '没找到「螺蛳粉」，换个词试试',
+    '无结果文案逐字：' + p28none.data.emptyText)
+  ok(p28none.data.recs.length === 6, '无结果时渲染热销 6 件（' + p28none.data.recs.length + ' 件）')
+  ok(p28last('/api/products/hot?').path.indexOf('limit=6') > 0, '推荐走 hotProducts(6)：' + p28last('/api/products/hot?').path)
+  ok(p28sw.indexOf('emptyText') > 0 && p28sw.indexOf('recs') > 0 && /bindtap="goDetail"/.test(p28sw),
+    '无结果块渲染文案 + 热销网格，点击进商品详情')
+  p28none.goDetail({ currentTarget: { dataset: { code: '6902083881234' } } })
+  ok(global.wx.navs[global.wx.navs.length - 1] === '/pages/goods/goods?code=6902083881234', '点热销进对应商品详情')
+  ok(p28none.data.results.length === 0 && p28none.data.loadErr === '', '空结果 ≠ 出错（第 27 轮四态没回退）')
+
+  // ⑭.5 首页金刚区：≤8 个、按件数降序、纯 emoji + 文字，点击跳分类页并带上分类
+  const p28idxRoute = [
+    p28health,
+    { method: 'GET', path: '/api/products', body: { items: SERVER_PRODUCTS, total: 2, limit: 20, offset: 0, hasMore: false } },
+    {
+      method: 'GET',
+      path: '/api/products/categories',
+      body: {
+        items: [
+          { name: '饮料', count: 12 }, { name: '乳品', count: 5 }, { name: '日用', count: 4 },
+          { name: '零食', count: 3 }, { name: '酒水', count: 2 }, { name: '蔬果', count: 1 },
+          { name: '粮油', count: 1 }, { name: '生鲜', count: 1 }, { name: '文具', count: 1 }
+        ]
+      }
+    },
+    { method: 'GET', path: '/api/products/hot', body: { items: HOT6, total: 6 } }
+  ]
+  global.wx = mkWx(p28idxRoute)
+  const p28idx = loadPage('pages/index/index.js')
+  p28idx.onLoad()
+  await p28idx.onShow()
+  ok(p28idx.data.kingkong.length === 8, '金刚区最多 8 个（接口给了 9 个分类）：' + p28idx.data.kingkong.length)
+  ok(p28idx.data.kingkong[0].name === '饮料' && p28idx.data.kingkong[0].count === 12, '按件数降序，件数最多的排第一')
+  ok(p28idx.data.kingkong.every((k) => !!k.emoji), '每个金刚位都有 emoji（纯 emoji + 文字）')
+  ok(p28idx.data.hots.length === 6, '首页热销 6 件（与搜索无结果推荐共用）')
+  const p28iw = fs.readFileSync(path.join(ROOT, 'pages/index/index.wxml'), 'utf8')
+  const p28kk = (p28iw.match(/class="kk"[\s\S]*?class="hotsec"/) || [''])[0]
+  ok(p28kk.indexOf('onKingKong') > 0 && p28kk.indexOf('{{item.emoji}}') > 0, '金刚区用 emoji 渲染，点击接 onKingKong')
+  ok(p28kk.length > 0 && p28kk.indexOf('<image') < 0, '金刚区不引任何图片资源（纯 emoji + 文字）')
+  p28idx.onKingKong({ currentTarget: { dataset: { cat: '乳品' } } })
+  ok(global.wx._kv['sdy_mp_cat_pick'] === '乳品', '金刚区点击把选中分类交给分类页（tabBar 页不能带 query）')
+  ok(global.wx.tabs.indexOf('/pages/category/category') >= 0, '金刚区点击切到分类页')
+
+  // ⑭.6 分类页消费金刚区选中的分类 + 下拉刷新真的重新拉数据
+  const p28catRoute = [
+    p28health,
+    { method: 'GET', path: '/api/products/categories', body: { items: [{ name: '饮料', count: 12 }, { name: '乳品', count: 5 }] } },
+    { method: 'GET', path: '/api/products', body: { items: [SERVER_PRODUCTS[1]], total: 1, limit: 20, offset: 0, hasMore: false } }
+  ]
+  global.wx = mkWx(p28catRoute)
+  global.wx._kv['sdy_mp_cat_pick'] = '乳品'
+  const p28cat = loadPage('pages/category/category.js')
+  p28cat.onLoad()
+  await p28cat.onShow()
+  ok(p28cat.data.cat === '乳品', '分类页 onShow 消费金刚区选中的分类：' + p28cat.data.cat)
+  ok(!global.wx._kv['sdy_mp_cat_pick'], '消费后清掉 storage（下次进来不会又被拽回那个分类）')
+  ok(p28last('/api/products?').path.indexOf('limit=20') > 0 && p28last('/api/products?').path.indexOf('offset=0') > 0,
+    '右侧商品走服务端分页 limit=20&offset=0：' + p28last('/api/products?').path)
+  const p28prCnt = p28count('/api/products?')
+  await p28cat.onPullDownRefresh()
+  ok(p28count('/api/products?') > p28prCnt, '分类页下拉刷新真的重新拉数据（不再是死代码）')
+  ok(JSON.parse(fs.readFileSync(path.join(ROOT, 'pages/category/category.json'), 'utf8')).enablePullDownRefresh === true,
+    'category.json 打开了 enablePullDownRefresh')
+  const p28cw = fs.readFileSync(path.join(ROOT, 'pages/category/category.wxml'), 'utf8')
+  ok(p28cw.indexOf('bindscrolltolower="onLower"') > 0 && p28cw.indexOf('onSort') > 0, '分类页右侧接上触底分页与排序切换')
+  ok(p28cw.indexOf('加载中…') > 0 && p28cw.indexOf('没有更多了') > 0, '分类页底部也有「加载中… / 没有更多了」')
+
+  // ⑭.7 商品详情：缺货才显示「同类推荐」（最多 5 件），有货不显示也不请求
+  const p28oos = { code: '6900000000009', name: '冰红茶', brand: '统一', spec: '500ml', category: '饮料', unit: '瓶', salePrice: 3, stock: 0 }
+  global.wx = mkWx([
+    p28health,
+    { method: 'GET', path: '/api/products/6900000000009', body: p28oos },
+    { method: 'GET', path: '/api/products/alternatives', body: { items: [SERVER_PRODUCTS[0]], total: 1 } }
+  ])
+  const p28g = loadPage('pages/goods/goods.js')
+  await p28g.onLoad({ code: '6900000000009' })
+  ok(p28g.data.p && p28g.data.p.stock === 0, '缺货商品详情正常渲染（不是「没找到」）')
+  ok(p28g.data.alts.length === 1 && p28g.data.alts[0].code === '6901234567892', '缺货时下方给出同类推荐')
+  ok(p28last('/api/products/alternatives?').path.indexOf('code=6900000000009') > 0 &&
+    p28last('/api/products/alternatives?').path.indexOf('limit=5') > 0,
+    '同类推荐带缺货码 + limit=5：' + p28last('/api/products/alternatives?').path)
+  p28g.goAlt({ currentTarget: { dataset: { code: '6901234567892' } } })
+  ok(global.wx.redirs[global.wx.redirs.length - 1] === '/pages/goods/goods?code=6901234567892', '点同类推荐进对应商品详情')
+  const p28gw = fs.readFileSync(path.join(ROOT, 'pages/goods/goods.wxml'), 'utf8')
+  ok(/p\.stock\s*<=\s*0\s*&&\s*alts\.length/.test(p28gw) && p28gw.indexOf('goAlt') > 0,
+    'wxml 只在缺货且拿到推荐时渲染这一块')
+  global.wx = mkWx([p28health, { method: 'GET', path: '/api/products/6901234567892', body: SERVER_PRODUCTS[0] }])
+  const p28g2 = loadPage('pages/goods/goods.js')
+  await p28g2.onLoad({ code: '6901234567892' })
+  ok(p28g2.data.p.stock === 120 && p28g2.data.alts.length === 0, '有货时不显示同类推荐')
+  ok(p28count('/api/products/alternatives') === 0, '有货时压根不发同类推荐请求')
+
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')
   process.exit(failed ? 1 : 0)

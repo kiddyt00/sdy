@@ -6,7 +6,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,33 +138,59 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		case http.MethodGet:
 			// onSale=1 只回上架商品（顾客端商城用，D23）；不带参数回全量（管理端用）。
 			// phone 带上时按该顾客等级给有效价 price（D24）；不带 phone 一律零售价。
-			var (
-				list []store.Product
-				err  error
-			)
-			if r.URL.Query().Get("onSale") == "1" {
-				list, err = st.ListOnSaleProducts(r.URL.Query().Get("keyword"), r.URL.Query().Get("category"))
-			} else {
-				list, err = st.ListProducts(r.URL.Query().Get("keyword"), r.URL.Query().Get("category"))
+			// 第 28 轮（§7.2）扩参：sort/limit/offset + 真实 total/hasMore，全部向后兼容。
+			query := r.URL.Query()
+			sort := strings.TrimSpace(query.Get("sort"))
+			if sort == "" {
+				sort = store.ProductSortDefault
 			}
+			if !store.ValidProductSort(sort) {
+				writeJSON(w, 400, map[string]string{"error": "排序方式不支持：" + sort})
+				return
+			}
+			limit, msg := queryCount(r, "limit", 0)
+			if msg != "" {
+				writeJSON(w, 400, map[string]string{"error": msg})
+				return
+			}
+			offset, msg := queryCount(r, "offset", 0)
+			if msg != "" {
+				writeJSON(w, 400, map[string]string{"error": msg})
+				return
+			}
+			if limit > 200 {
+				limit = 200 // 上限 200：一页最多 200 件，再多请翻页
+			}
+			// 价格口径的唯一真源在服务端：页面只读 price，不自己拿批发价换算（D12/D24）。
+			phone := strings.TrimSpace(query.Get("phone"))
+			tier, err := tierForPhone(st, phone)
 			if err != nil {
 				writeErr(w, err)
 				return
 			}
-			// 价格口径的唯一真源在服务端：页面只读 price，不自己拿批发价换算（D12/D24）。
-			phone := strings.TrimSpace(r.URL.Query().Get("phone"))
-			tier := pricing.TierRetail
-			if phone != "" {
-				if tier, err = st.GetCustomerTier(phone); err != nil {
-					writeErr(w, err)
-					return
-				}
-				for i := range list {
-					list[i].Tier = tier
-					list[i].Price = pricing.EffectivePrice(tier, list[i].SalePrice, list[i].WholesalePrice)
-				}
+			list, total, err := st.ListProductsFiltered(store.ProductFilter{
+				Keyword:    query.Get("keyword"),
+				Category:   query.Get("category"),
+				OnSaleOnly: query.Get("onSale") == "1",
+				Sort:       sort,
+				Tier:       tier,
+				Limit:      limit,
+				Offset:     offset,
+			})
+			if err != nil {
+				writeErr(w, err)
+				return
 			}
-			writeJSON(w, 200, map[string]any{"items": list, "total": len(list), "tier": tier})
+			// 只有带 phone 的请求才在条目上改写价格/等级：不带 phone 时行内 price 已是零售价
+			// （scanProduct 的默认），多写一个 tier 字段会改变老响应的形状。
+			if phone != "" {
+				applyTier(list, tier)
+			}
+			hasMore := limit > 0 && offset+len(list) < total
+			writeJSON(w, 200, map[string]any{
+				"items": list, "total": total, "limit": limit, "offset": offset,
+				"hasMore": hasMore, "tier": tier,
+			})
 		case http.MethodPost:
 			// 建档 / 编辑商品档案（任务池①）。
 			// 管理端接口（第 27 轮）：ADMIN_PASSWORD 没配时放行，配了就要管理员 Cookie。
@@ -396,6 +424,60 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
 	})
 
+	// 热销榜（第 28 轮 §7.3）：首页「热销」与「无结果推荐」共用，口径与 sort=hot 完全一致。
+	// limit 默认 8、最大 20；只回上架商品。
+	mux.HandleFunc("/api/products/hot", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		limit, msg := queryCount(r, "limit", 8)
+		if msg != "" {
+			writeJSON(w, 400, map[string]string{"error": msg})
+			return
+		}
+		if limit > 20 {
+			limit = 20
+		}
+		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+		tier, err := tierForPhone(st, phone)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		list, total, err := st.ListProductsFiltered(store.ProductFilter{
+			OnSaleOnly: true, Sort: store.ProductSortHot, Tier: tier, Limit: limit,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if phone != "" {
+			applyTier(list, tier)
+		}
+		writeJSON(w, 200, map[string]any{"items": list, "total": total})
+	})
+
+	// 缺货替代推荐（第 28 轮 §7.4）：规则全在 store（同分类优先 + 全店热销补足、不重复）。
+	// code 缺失或商品不存在 → 200 空列表（页面要能安静降级，不是 400）。
+	mux.HandleFunc("/api/products/alternatives", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		limit, msg := queryCount(r, "limit", 5)
+		if msg != "" {
+			writeJSON(w, 400, map[string]string{"error": msg})
+			return
+		}
+		items, total, err := st.ListProductAlternatives(r.URL.Query().Get("code"), limit)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items, "total": total})
+	})
+
 	// 单个商品：只读详情（顾客端商品详情页）+ 删除（管理端）。
 	// 约束由 store 层把关：删除必须先盘点为 0、不能有进行中的订单。
 	mux.HandleFunc("/api/products/", func(w http.ResponseWriter, r *http.Request) {
@@ -452,10 +534,23 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				writeJSON(w, 400, map[string]string{"error": "缺少身份：顾客请带 openid/phone，员工请带 X-Staff-Token"})
 				return
 			}
+			// 第 28 轮（§7.5）新增筛选：q/status/date/from/to/type。
+			// 这些参数**只做筛选、绝不参与身份判定**；身份永远走上面那一行的第 27 轮规则。
+			// 顾客身份下先归属过滤（f.Phone）再筛选，所以顾客传 q=别人的手机号也拿不到别人的单。
+			query := r.URL.Query()
 			f := store.OrderFilter{
-				Status: strings.TrimSpace(r.URL.Query().Get("status")),
+				Status: strings.TrimSpace(query.Get("status")),
+				Q:      strings.TrimSpace(query.Get("q")),
+				Date:   strings.TrimSpace(query.Get("date")),
+				From:   strings.TrimSpace(query.Get("from")),
+				To:     strings.TrimSpace(query.Get("to")),
+				Type:   strings.TrimSpace(query.Get("type")),
 				Limit:  queryInt(r, "limit", 50),
 				Offset: queryInt(r, "offset", 0),
+			}
+			if msg := badDateMsg(f); msg != "" {
+				writeJSON(w, 400, map[string]string{"error": msg})
+				return
 			}
 			if f.Limit > 200 {
 				f.Limit = 200 // 上限 200：一页最多 200 单，再多请翻页
@@ -503,6 +598,72 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		default:
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 		}
+	})
+
+	// 订单导出（第 28 轮 §7.6）：同一套筛选参数 + limit（默认 2000、最大 5000）。
+	// 身份走 adminGate（与后台其他接口一致；未配 ADMIN_PASSWORD 时灰度放行——已如实披露）。
+	// 注意：这个字面量路由比下面的 /api/orders/ 前缀更具体，Go 1.22+ ServeMux 会优先命中它。
+	mux.HandleFunc("/api/orders/export.csv", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+			return
+		}
+		if !adminGate(w, r) {
+			return
+		}
+		query := r.URL.Query()
+		limit, msg := queryCount(r, "limit", 2000)
+		if msg != "" {
+			writeJSON(w, 400, map[string]string{"error": msg})
+			return
+		}
+		if limit > 5000 {
+			limit = 5000
+		}
+		f := store.OrderFilter{
+			Status: strings.TrimSpace(query.Get("status")),
+			Q:      strings.TrimSpace(query.Get("q")),
+			Date:   strings.TrimSpace(query.Get("date")),
+			From:   strings.TrimSpace(query.Get("from")),
+			To:     strings.TrimSpace(query.Get("to")),
+			Type:   strings.TrimSpace(query.Get("type")),
+			Limit:  limit,
+		}
+		if msg := badDateMsg(f); msg != "" {
+			writeJSON(w, 400, map[string]string{"error": msg})
+			return
+		}
+		list, _, err := st.ListOrdersFiltered(f)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		var buf bytes.Buffer
+		// 首三字节 BOM：Excel 打开 UTF-8 CSV 靠它才不乱码（§7.6 硬要求）。
+		buf.Write([]byte{0xEF, 0xBB, 0xBF})
+		// RFC4180 转义交给标准库：字段含 , " 换行时自动用 " 包裹、内部 " 写成 ""。
+		cw := csv.NewWriter(&buf)
+		cw.UseCRLF = true
+		_ = cw.Write(csvHeader)
+		for _, o := range list {
+			var detail strings.Builder
+			qty := 0.0
+			for _, it := range o.Items {
+				detail.WriteString(it.Name + "×" + numText(it.Qty) + ";")
+				qty += it.Qty
+			}
+			_ = cw.Write([]string{
+				o.ID, csvTime(o.CreatedAt), pricing.StatusText(o.Status), o.CustomerName, o.Phone,
+				deliveryText(o.DeliveryType), detail.String(), numText(qty),
+				fmt.Sprintf("%.2f", o.Subtotal), fmt.Sprintf("%.2f", o.DeliveryFee),
+				fmt.Sprintf("%.2f", o.Total), "",
+			})
+		}
+		cw.Flush()
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="orders-`+time.Now().Format("20060102-1504")+`.csv"`)
+		w.WriteHeader(200)
+		_, _ = w.Write(buf.Bytes())
 	})
 
 	mux.HandleFunc("/api/orders/", func(w http.ResponseWriter, r *http.Request) {
@@ -1254,6 +1415,89 @@ func withLogging(next http.Handler) http.Handler {
 			log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
 		}
 	})
+}
+
+// csvHeader 导出列的固定顺序（§7.6，共 12 列）。
+var csvHeader = []string{"订单号", "下单时间", "状态", "顾客", "手机号", "配送方式",
+	"商品明细", "件数", "商品金额", "配送费", "合计", "备注"}
+
+// badDateMsg 校验订单筛选里的日期，返回空串表示合法。
+// date 与 from/to 同时给时 date 优先（§7.5），所以 date 非空就只看 date。
+func badDateMsg(f store.OrderFilter) string {
+	dates := []string{f.Date}
+	if strings.TrimSpace(f.Date) == "" {
+		dates = []string{f.From, f.To}
+	}
+	for _, d := range dates {
+		if strings.TrimSpace(d) != "" && !store.ValidDate(d) {
+			return "日期格式应为 YYYY-MM-DD"
+		}
+	}
+	return ""
+}
+
+// queryCount 解析计数类查询参数：空 = 默认值；非整数/负数 → 返回错误文案（调用方回 400）。
+// 与 queryInt 的区别：queryInt 对非法值静默回退默认（第 27 轮行为，订单分页还在用），
+// 而 §7.2 明确要求负数 limit/offset 回 400，所以新参数一律用这个严格版。
+func queryCount(r *http.Request, name string, def int) (int, string) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return def, ""
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, name + " 必须是整数"
+	}
+	if n < 0 {
+		return 0, name + " 不能为负数"
+	}
+	return n, ""
+}
+
+// tierForPhone 取顾客等级；phone 为空一律零售价（不带 phone 的请求走同一口径）。
+func tierForPhone(st *store.Store, phone string) (string, error) {
+	if strings.TrimSpace(phone) == "" {
+		return pricing.TierRetail, nil
+	}
+	return st.GetCustomerTier(phone)
+}
+
+// applyTier 按顾客等级改写条目上的等级与有效价（价格口径的唯一真源，D12/D24）。
+func applyTier(list []store.Product, tier string) {
+	for i := range list {
+		list[i].Tier = tier
+		list[i].Price = pricing.EffectivePrice(tier, list[i].SalePrice, list[i].WholesalePrice)
+	}
+}
+
+// numText 数量转文本：10 → "10"、2.5 → "2.5"（去掉浮点尾巴，CSV 里好读）。
+func numText(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+
+// csvTime 把库里的时间统一成 YYYY-MM-DD HH:MM:SS：
+// 新单是 RFC3339（2026-10-01T08:00:00+08:00），老单是空格格式（2026-10-01 08:00:00）。
+func csvTime(s string) string {
+	s = strings.TrimSpace(s)
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.Format("2006-01-02 15:04:05")
+	}
+	if len(s) >= 19 && s[10] == 'T' {
+		return strings.Replace(s[:19], "T", " ", 1)
+	}
+	if len(s) >= 19 {
+		return s[:19]
+	}
+	return s
+}
+
+// deliveryText 配送方式中文（与后台管理页文案一致）。
+func deliveryText(t string) string {
+	switch t {
+	case "pickup":
+		return "到店自提"
+	case "delivery":
+		return "配送到家"
+	}
+	return t
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

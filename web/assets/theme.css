@@ -287,6 +287,17 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
 
 .cat-bar { position: sticky; top: 116px; z-index: 30; background: rgba(244,246,248,.92); backdrop-filter: blur(10px); padding: 8px 0 10px; }
 
+/* 第 28 轮（7.8）：排序条（综合 / 销量 / 价格↑ / 价格↓） */
+.sort-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 2px 0 4px; }
+.sort-bar .sort-lbl { font-size: 13px; }
+.sort-bar .chips { gap: 6px; }
+button.chip { font-size: 13px; }   /* chip 现在也是真按钮：沿用 .chip 里的 font-family: inherit */
+
+/* 第 28 轮（7.8）：分页底部状态——「加载中…」/「加载更多」/「没有更多了」 */
+.more-bar { display: flex; justify-content: center; align-items: center; padding: 18px 0 6px; font-size: 13px; }
+/* 第 28 轮（7.8）：无结果页的热销推荐小标题 */
+.hot-title { font-size: 13px; font-weight: 500; color: var(--ink-2); margin: 10px 0 -6px; }
+
 .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 14px; margin-top: 6px; }
 .pcard {
   background: #fff; border: 1px solid var(--line); border-radius: var(--r);

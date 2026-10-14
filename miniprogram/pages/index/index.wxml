@@ -32,16 +32,50 @@
     bind:click="goCart"
   />
 
-  <!-- 分类 chips -->
-  <scroll-view class="chips" scroll-x show-scrollbar="{{false}}">
+  <!-- 第 28 轮 7.8：金刚区（最多 8 个分类，按件数降序；纯 emoji + 文字，不引任何图片资源） -->
+  <view class="kk" wx:if="{{kingkong.length}}">
     <view
-      wx:for="{{cats}}"
+      class="kkitem"
+      wx:for="{{kingkong}}"
       wx:key="name"
-      class="chip {{cat === item.name ? 'on' : ''}}"
       data-cat="{{item.name}}"
-      bindtap="onCategory"
-    >{{item.name}}</view>
-  </scroll-view>
+      bindtap="onKingKong"
+    >
+      <view class="kkico">{{item.emoji}}</view>
+      <view class="kkname">{{item.name}}</view>
+    </view>
+  </view>
+
+  <!-- 第 28 轮 7.3：热销 6 件（与搜索无结果推荐共用同一个接口） -->
+  <view class="hotsec" wx:if="{{!loading && !loadErr && hots.length}}">
+    <view class="hot-h">
+      <text>热销好物</text>
+      <text class="hot-more" bindtap="goCategory">全部分类 ›</text>
+    </view>
+    <view class="grid">
+      <view
+        class="gitem"
+        wx:for="{{hots}}"
+        wx:key="code"
+        data-code="{{item.code}}"
+        bindtap="goDetail"
+      >
+        <view class="gthumb">
+          <image wx:if="{{item.img}}" class="gimg" src="{{item.img}}" mode="aspectFill" lazy-load />
+          <text wx:else>{{item.emoji}}</text>
+          <view class="gtag hot" wx:if="{{item.stock > 0}}">热销</view>
+          <view class="gtag out" wx:else>缺货</view>
+        </view>
+        <view class="gbody">
+          <view class="gname">{{item.name}}</view>
+          <view class="gspec">{{item.spec || item.brand || item.category}}</view>
+          <view class="gfoot">
+            <view class="gprice"><text class="gsym">¥</text>{{tools.fix2(item.salePrice)}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
 
   <van-skeleton wx:if="{{loading}}" title row="6" />
 

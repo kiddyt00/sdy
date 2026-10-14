@@ -1,4 +1,4 @@
-# 微信小程序端（M5 · 进行中 · 当前第 27 轮 / 开发版 0.6.0）
+# 微信小程序端（M5 · 进行中 · 当前第 28 轮 / 开发版 0.7.0）
 
 > **状态：🚧 开发中（2026-10-12 起）。** 第 21 轮把 `archive/miniprogram` 恢复激活为本目录；第 22 轮（2026-10-13）三项前置全部到位——AppID `wx3f2d2aa52660b80f`、已备案 HTTPS 域名 `https://mall.shadouyou.cloud`（小程序后台「request 合法域名」已配置）、生产接口可用，**开发版 0.1.0 已上传，真机预览二维码可扫**（家人要用则先在后台「选为体验版」并加为体验成员）。
 >
@@ -12,7 +12,9 @@
 >
 > **第 27 轮（2026-10-14）：买得完 / 看得对 · 正确性与身份底座（D33，开发版 0.6.0 代码侧已 bump）。** 这一轮不加功能，专修三端「会算错钱、会越权、把失败当空数据」的地方，小程序侧改动集中在**顾客体验的正确性**上：① **10 个顾客页统一四态**——`loading → error → empty → ok`：以前任何请求失败都渲染成「空数据」（顾客看到「一件商品都没有」而不是「连不上店里」），现在失败要显示**错误卡 + 「重新加载」按钮**，「空」只在**成功且真的为空**时才显示（新文件 `miniprogram/pages/common/ui.js` 用 `errText(e)` 把 `request:fail` / `timeout` / `Failed to fetch` / `ERR_*` 一类技术词翻成人话「店里系统没连上，请稍后重试」）；样式集中在 `miniprogram/styles/state.wxss`。② **没身份就一个请求都不发**——`ui.hasIdentity()` 查 `api.identityParams()` 的 `qs` 是否非空，订单页 / 地址页在本地就拦住未登录也没填手机号的顾客，不再拿 400 当「订单为空」。③ **购物车离线不提交也不跳转**（不允许在断连时假装下单成功）；库存上限兜底；失效（已下架/已删除）商品分组、不参与结算。④ **规则只认服务端**——结算运费与低库存阈值只读 `GET /api/settings` 下发值（`api.lowStock()` 读 `cachedSettings().lowStock`，非法或 ≤0 才回落 5），`state.wxss` 里注释写明「阈值由服务端下发，页面不许自己写死 5」；配送费口径与 Web / Go 三端同判（`utils/rules.js` 已退化为**薄适配层**：`goods=round2(subtotal)`、`(c.minFree>0 && goods>=c.minFree)?0:c.deliveryFee`、未知配送方式按 delivery、先 round2 再比门槛）。⑤ **下单幂等**：`api.createOrder` 带 `clientToken='C'+Date.now()+随机`，服务端同 token 第二次返回原单 + `duplicated:true`，只扣一次库存；**取消订单改走 `POST /api/orders/{id}/cancel`**（`advance` 只用于员工推进 / 归属人「确认收货」；非员工推进非 `done` 在本地就 reject「只有店主可以推进订单状态」）。⑥ **地址簿能力钥匙**：`api.addrKey()` / `api.saveAddrKey(k)` 落 `sdy_mp_addr_key`，读写删地址都带 `key=`，`saveAddress` 拿响应里的 `d.key` 存本地——修掉「仅凭手机号就能读写别人地址」。⑦ **角标全改 `store.subscribe`**。三套测试复跑全绿：**167 / 281 / 88**。**本轮的灰度缺口（如实记）**：管理端鉴权只交付了通道，`ADMIN_PASSWORD` 未设置时服务端会把**无身份请求按管理端放行**，所以小程序订单页「没身份就不发请求」不只是体验优化，也是**当前生产环境下看得到自己订单的前提**；正式启用鉴权留第 30 轮（要同时支持员工令牌 + 后台登录页）。」
 >
-> 下一步：把 **0.6.0 设为体验版**、加家人为体验成员做真机验证（同时在小程序后台补 `<image>` 需要的「**downloadFile 合法域名**」——`chooseAvatar` 之后服务端头像是网络图，这一步不做真机上会不显示）；微信支付（`/api/wx/pay`、`/api/wx/notify`）与订阅消息要等**微信认证（¥300，2026-10-13 已付款审核中）+ 关联商户号**。载体换了，业务逻辑不变：商品 / 购物车 / 订单 / 运费 / 库存全部复用 `server/` 的后端接口。
+> **第 28 轮（2026-10-14）：找得快 · 搜索、排序、分页与推荐（D34，开发版 0.7.0）。** 这一轮把「找到想买的那件」做顺：① **搜索框 300ms 防抖**——`pages/search/search.js` 的 `DEBOUNCE_MS=300`，连打 5 个字符只发 1 次请求且关键词完整；② **四档排序** `default`（综合）/ `hot`（销量）/ `price_asc`（价格↑）/ `price_desc`（价格↓），取值与 Web / Go **逐字相同**（用 `api.SORTS`，不各写一份）；③ **触底分页**：统一 `limit=20&offset=n` + 服务端 `hasMore`，触底加载下一页、到底显示「没有更多了」；④ **分类页下拉刷新真的重拉**（`enablePullDownRefresh`，第 27 轮以前是死代码）+ 排序 + 分页；⑤ **首页金刚区**：最多 8 个分类（按在售件数降序）、纯 emoji/CSS **不引图片资源**，点击跳分类页并选中该分类——**跨页选中经 `wx.setStorageSync('sdy_mp_cat_pick')` 手递，分类页 `onShow` 读完即清**（不用全局变量、不靠页面栈传参）；⑥ **无结果有出路**：显示「没找到「<词>」，换个词试试」+ 热销 6 件（`api.hotProducts()`）；⑦ **详情页缺货才推荐同类**（`api.alternatives(code)`，≤5 件，`redirectTo` 不叠页面栈）；有货时**压根不发**推荐请求。`utils/api.js` 新增导出 `SORTS` / `hotProducts(limit)` / `alternatives(code,limit)`，`listProducts(keyword, category, opts)` 支持 `sort/limit/offset`（`PAGE_LIMIT_MAX=200`）；**离线时热销与同类推荐降级为本地演示数据，在线失败一律 reject**（不把失败吞成空数组）。三套测试复跑全绿：**193 / 327 / 105**。
+>
+> 下一步：把 **0.7.0 设为体验版**、加家人为体验成员做真机验证（同时在小程序后台补 `<image>` 需要的「**downloadFile 合法域名**」——`chooseAvatar` 之后服务端头像是网络图，这一步不做真机上会不显示）；微信支付（`/api/wx/pay`、`/api/wx/notify`）与订阅消息要等**微信认证（¥300，2026-10-13 已付款审核中）+ 关联商户号**。载体换了，业务逻辑不变：商品 / 购物车 / 订单 / 运费 / 库存全部复用 `server/` 的后端接口。
 
 ## 里面有什么
 
@@ -21,7 +23,7 @@ miniprogram/
 ├── app.js / app.json / app.wxss     # 入口；tabBar 5 页（首页/分类/购物车/订单/我的）；主色 #16a34a
 ├── pages/                           # 顾客端 10 页 + 员工工作台 5 页（共 15 页）
 │   ├── index/ cart/ orders/ mine/   # 顾客端主链路 4 页（tabBar）
-│   ├── goods/ category/ search/     # 第 24 轮新增：商品详情 / 分类 / 搜索
+│   ├── goods/ category/ search/     # 第 24 轮新增：商品详情 / 分类 / 搜索（第 28 轮：搜索 300ms 防抖、分类页排序 + 分页 + 真下拉刷新、详情页缺货推荐）
 │   ├── order/ address/              # 第 24 轮新增：订单详情 / 地址簿 list+edit
 │   └── staff/                       # 第 26 轮新增（D32，非 tab）：home 工作台 / scan 扫码台 / stock 库存 / orders 订单 / mine 员工我的（可切回顾客版）
 ├── components/staff-nav/            # 员工端自绘底栏（wx.redirectTo 切页；只在各员工页 page json 里声明，不写进 app.json 全局）
@@ -30,7 +32,7 @@ miniprogram/
 ├── styles/state.wxss                # 第 27 轮（D33）：四态共用样式（错误卡 .errbox + 加载骨架 .statecard + 低库存角标 .gtag.low/.sstock）
 ├── utils/
 │   ├── config.js                    # **唯一域名配置点**：DEV_BASE_URL / PROD_BASE_URL
-│   ├── api.js                       # 后端通道（与 web/sdy-api.js 同构：在线=服务端真源，离线=本地演示）；第 27 轮新增 identityParams / authHeader / addrKey / saveAddrKey / lowStock / NO_IDENTITY，下单带 clientToken，取消走 /cancel
+│   ├── api.js                       # 后端通道（与 web/sdy-api.js 同构：在线=服务端真源，离线=本地演示）；第 27 轮新增 identityParams / authHeader / addrKey / saveAddrKey / lowStock / NO_IDENTITY，下单带 clientToken，取消走 /cancel；第 28 轮新增 SORTS / hotProducts / alternatives，listProducts 支持 sort/limit/offset（PAGE_LIMIT_MAX=200）
 │   ├── staff.js                     # 第 26 轮：员工端会话 / 令牌 / 接口封装（D32）
 │   ├── rules.js                     # 价格防护 / 配送规则 / 等级与有效价（第 27 轮起是 server/internal/pricing 的薄适配层，三端同判）
 │   └── store.js                     # wx.storage 封装（购物车、后端地址、登录会话 sdy_mp_session）
@@ -87,12 +89,12 @@ NODE_PATH=/tmp/mpci/node_modules node deploy/mp-ci.js upload   # 只上传开发
 ## 测试
 
 ```bash
-node miniprogram/test-api.js          # 167 项（第 27 轮实测）· 通道/配置/扫码/等级与有效价/微信登录与头像昵称/员工身份与令牌/身份参数与地址钥匙（假 wx）· 不需要后端
-node miniprogram/test-pages.js        # 281 项 · 十五页逻辑冒烟（假 Page/wx，含四态错误卡与「重新加载」、不绑手机号的微信登录、头像本地落缓存、地址簿、员工工作台 5 页）· 不需要后端
-node miniprogram/test-integration.js  # 88 项 · 真后端联调（需先起 server，或用 SDY_API_BASE 指定；含 29.995 元边界三端同判；员工端整节用 WX_API_BASE 指向假微信服务器）
+node miniprogram/test-api.js          # 193 项（第 28 轮实测）· 通道/配置/扫码/等级与有效价/微信登录与头像昵称/员工身份与令牌/身份参数与地址钥匙/排序取值与热销·替代推荐降级（假 wx）· 不需要后端
+node miniprogram/test-pages.js        # 327 项 · 十五页逻辑冒烟（假 Page/wx，含四态错误卡与「重新加载」、搜索防抖、排序、触底分页、金刚区经 storage 手递、缺货才推荐、员工工作台 5 页）· 不需要后端
+node miniprogram/test-integration.js  # 105 项 · 真后端联调（需先起 server，或用 SDY_API_BASE 指定；含 29.995 元边界三端同判与 sort/limit/offset 叠加；员工端整节用 WX_API_BASE 指向假微信服务器）
 ```
 
-> 第 27 轮起三端全量可以一条命令跑完：`bash deploy/verify-all.sh`（自起临时后端与假微信，Go 单测 + 小程序三套 + Web 五套 + CDP，最后打 17 行汇总表）。
+> 第 27 轮起三端全量可以一条命令跑完：`bash deploy/verify-all.sh`（自起临时后端与假微信，Go 单测 + 小程序三套 + Web 五套 + CDP，最后打 18 行汇总表）。
 
 ## 上线前改造清单
 
@@ -110,6 +112,7 @@ node miniprogram/test-integration.js  # 88 项 · 真后端联调（需先起 se
 | 10 | 上传体验版给家人用 + 真机走一遍下单 | ⬜ 用户侧 2 步 |
 | 11 | 员工身份 + 员工扫码工作台（D32：登录选身份、员工端 5 页、扫码只读 + 二次确认才动库存、Web「用户角色」面板） | ✅ 2026-10-14（第 26 轮，开发版 0.5.0） |
 | 12 | 顾客页四态（加载/错误+重新加载/空/正常）+ 身份前置 + 离线不假装下单 + 运费与低库存阈值走服务端下发（D33） | ✅ 2026-10-14（第 27 轮，开发版 0.6.0 代码侧已 bump） |
+| 13 | 搜索防抖 300ms + 四档排序 + 触底分页 + 分类页真下拉刷新 + 首页金刚区（最多 8 类，经 `sdy_mp_cat_pick` 手递）+ 无结果推荐热销 + 详情页缺货才推荐同类（D34） | ✅ 2026-10-14（第 28 轮，开发版 0.7.0 代码侧已 bump） |
 
 ## 上线三步（用户侧）
 
@@ -129,4 +132,4 @@ node miniprogram/test-integration.js  # 88 项 · 真后端联调（需先起 se
 
 - 上手引导：[`../小程序开发引导.html`](../小程序开发引导.html)
 - 路线与里程碑：[`../开发计划.html`](../开发计划.html)、[`../README.md`](../README.md)
-- 决策台账：[`../细节讨论记录.html`](../细节讨论记录.html)（D7/D8 扫码、D14 先 Web、D25 库存审计、D26 小程序口径、D27 域名与证书、D28 微信登录、D32 员工身份与员工扫码工作台、**D33 身份底座 / 正确性收敛 / 管理端鉴权灰度**）
+- 决策台账：[`../细节讨论记录.html`](../细节讨论记录.html)（D7/D8 扫码、D14 先 Web、D25 库存审计、D26 小程序口径、D27 域名与证书、D28 微信登录、D32 员工身份与员工扫码工作台、D33 身份底座 / 正确性收敛 / 管理端鉴权灰度、**D34 找得快：排序 / 分页 / 搜索防抖 / 热销与缺货推荐 / 订单筛选 / CSV 导出**）

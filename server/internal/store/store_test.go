@@ -667,6 +667,11 @@ func TestOnSaleColumnMigration(t *testing.T) {
 	st := newTestStore(t)
 	seed(t, st)
 
+	// 第 28 轮：新索引 idx_product_onsale_category 建在 on_sale 上，SQLite 不允许 DROP
+	// 被索引引用的列。真实的老库里本来就没有这个索引，所以先拆掉它才是忠实的「模拟老库」。
+	if _, err := st.DB().Exec(`DROP INDEX IF EXISTS idx_product_onsale_category`); err != nil {
+		t.Fatalf("模拟老库拆索引失败: %v", err)
+	}
 	if _, err := st.DB().Exec(`ALTER TABLE product DROP COLUMN on_sale`); err != nil {
 		t.Fatalf("模拟老库删列失败（需要 SQLite ≥ 3.35）: %v", err)
 	}

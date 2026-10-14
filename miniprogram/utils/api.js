@@ -212,27 +212,127 @@ function localProducts(keyword) {
   return list.filter((p) => (p.name + p.brand + p.spec + p.code).indexOf(kw) >= 0)
 }
 
+/* ---------- 第 28 轮：商品排序 / 分页（契约 7.2） ---------- */
+// 排序取值与 Web / 后台逐字相同；未知值交给服务端 400，客户端不自己发明值。
+const SORTS = ['default', 'hot', 'price_asc', 'price_desc', 'stock_desc']
+const PAGE_LIMIT_MAX = 200
+
+// 离线演示也照契约排一遍：价格/库存用本地有效价，销量本地没有就保持原顺序。
+function sortLocal(list, sort) {
+  const arr = (list || []).slice()
+  const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''))
+  if (sort === 'price_asc') arr.sort((a, b) => (num(a.price) - num(b.price)) || byName(a, b))
+  else if (sort === 'price_desc') arr.sort((a, b) => (num(b.price) - num(a.price)) || byName(a, b))
+  else if (sort === 'stock_desc') arr.sort((a, b) => (num(b.stock) - num(a.stock)) || byName(a, b))
+  else if (sort === 'hot') arr.sort((a, b) => (num(b.sold) - num(a.sold)) || byName(a, b))
+  return arr
+}
+function slicePage(list, limit, offset) {
+  const lim = num(limit) > 0 ? Math.min(num(limit), PAGE_LIMIT_MAX) : 0 // 0 = 不限，与服务端默认一致
+  const off = num(offset) > 0 ? num(offset) : 0
+  const items = lim > 0 ? list.slice(off, off + lim) : list.slice(off)
+  return { items: items, limit: lim, offset: off }
+}
+
 // 商品列表；在线时顺便把服务端商品缓存到本地（断网也能看）
 // 顾客端只看上架商品（onSale=1，D23）；已登录就带 phone，让服务端按等级给价（D24）。
 // category 传空 / '全部' 就是不筛分类（第 24 轮分类页用）。
-function listProducts(keyword, category) {
+//
+// 第 28 轮扩参：listProducts(keyword, category, opts)，opts = {sort, limit, offset, onSale}。
+// **向后兼容**：只传 2 个参数（不传 opts）时行为与返回值与第 27 轮完全一致（返回商品数组）；
+// 传了 opts 才走分页契约，返回 {items,total,limit,offset,hasMore,tier}。
+function listProducts(keyword, category, opts) {
+  const o = opts || null
+  const paged = !!o
   const cat = String(category || '').trim()
   const useCat = cat && cat !== '全部'
+  const sort = o && o.sort ? String(o.sort) : 'default'
+  // onSale 缺省仍是 1（老行为）；只有显式传 0/false/'0' 才放开设限
+  const onSale = o && (o.onSale === 0 || o.onSale === false || o.onSale === '0') ? '0' : '1'
   if (!state.online) {
     let list = localProducts(keyword)
     if (useCat) list = list.filter((p) => (p.category || '未分类') === cat)
-    return Promise.resolve(list)
+    list = sortLocal(list, sort)
+    if (!paged) return Promise.resolve(list)
+    const pg = slicePage(list, o.limit, o.offset)
+    return Promise.resolve({
+      items: pg.items,
+      total: list.length,
+      limit: pg.limit,
+      offset: pg.offset,
+      hasMore: pg.offset + pg.items.length < list.length,
+      tier: ''
+    })
   }
-  const qs = ['onSale=1']
+  const qs = ['onSale=' + onSale]
   if (keyword) qs.push('keyword=' + encodeURIComponent(keyword))
   if (useCat) qs.push('category=' + encodeURIComponent(cat))
+  if (paged) {
+    // sort/limit/offset 原样透传（服务端不认识的值会 400，客户端不替它兜底）
+    if (o.sort !== undefined && o.sort !== null && o.sort !== '') qs.push('sort=' + String(o.sort))
+    if (o.limit !== undefined && o.limit !== null && o.limit !== '') qs.push('limit=' + String(o.limit))
+    if (o.offset !== undefined && o.offset !== null && o.offset !== '') qs.push('offset=' + String(o.offset))
+  }
   const ph = boundPhone()
   if (ph) qs.push('phone=' + encodeURIComponent(ph))
   return request('GET', '/api/products?' + qs.join('&')).then((d) => {
     const items = (d.items || []).map(mapProduct)
     if (!keyword && !useCat) sset(LS_PRODUCTS_KEY, items)
-    return items
+    if (!paged) return items
+    const lim = d.limit !== undefined ? num(d.limit) : num(o.limit)
+    const off = d.offset !== undefined ? num(d.offset) : num(o.offset)
+    const total = d.total !== undefined ? num(d.total) : items.length
+    return {
+      items: items,
+      total: total,
+      limit: lim,
+      offset: off,
+      // 服务端给了就用服务端的；老后端没这字段时按本页条数推断，至少不会无限翻
+      hasMore: d.hasMore !== undefined ? !!d.hasMore : (off + items.length < total),
+      tier: d.tier || ''
+    }
   })
+}
+
+// 热销（契约 7.3）：口径同 sort=hot，只回上架；limit 默认 8、最大 20。
+// 离线演示照旧降级到本地商品；在线时请求失败按第 27 轮口径 reject（绝不吞成空数组）。
+function hotProducts(limit) {
+  const lim = num(limit) > 0 ? Math.min(num(limit), 20) : 8
+  if (!state.online) {
+    const all = localProducts('')
+    const items = all.slice(0, lim)
+    return Promise.resolve({ items: items, total: items.length })
+  }
+  const qs = ['limit=' + lim]
+  const ph = boundPhone()
+  if (ph) qs.push('phone=' + encodeURIComponent(ph))
+  return request('GET', '/api/products/hot?' + qs.join('&')).then((d) => ({
+    items: (d.items || []).map(mapProduct),
+    total: d.total !== undefined ? num(d.total) : (d.items || []).length
+  }))
+}
+
+// 同类推荐（契约 7.4）：缺货商品的替代品，on_sale=1 / stock>0 / 排除自身；
+// 服务端优先同分类再全店补足。code 缺失或商品不存在时服务端回空列表（不 400），页面安静降级。
+function alternatives(code, limit) {
+  const c = String(code == null ? '' : code).trim()
+  const lim = num(limit) > 0 ? Math.min(num(limit), 20) : 5
+  if (!state.online) {
+    const all = localProducts('')
+    const self = all.filter((p) => p.code === c)[0]
+    const pool = all.filter((p) => p.code !== c && p.stock > 0)
+    const same = self ? pool.filter((p) => (p.category || '未分类') === (self.category || '未分类')) : []
+    const rest = pool.filter((p) => same.indexOf(p) < 0)
+    const items = same.concat(rest).slice(0, lim)
+    return Promise.resolve({ items: items, total: items.length })
+  }
+  const qs = ['code=' + encodeURIComponent(c), 'limit=' + lim]
+  const ph = boundPhone()
+  if (ph) qs.push('phone=' + encodeURIComponent(ph))
+  return request('GET', '/api/products/alternatives?' + qs.join('&')).then((d) => ({
+    items: (d.items || []).map(mapProduct),
+    total: d.total !== undefined ? num(d.total) : (d.items || []).length
+  }))
 }
 
 // 单个商品详情（第 24 轮）。带 phone 时服务端按等级算有效价，口径与列表完全一致。
@@ -797,6 +897,11 @@ module.exports = {
   probe: probe,
   status: status,
   listProducts: listProducts,
+  // 第 28 轮新增：**必须导出**（R27 踩过「定义了没导出」的坑）
+  hotProducts: hotProducts,
+  alternatives: alternatives,
+  SORTS: SORTS,
+  PAGE_LIMIT_MAX: PAGE_LIMIT_MAX,
   listAllProducts: listAllProducts,
   getProduct: getProduct,
   listCategories: listCategories,

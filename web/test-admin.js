@@ -657,6 +657,164 @@ fresh();
     ok(Admin.newOrdersSince(null, now, '').length === 0, 'orders 为 null → 空数组，不抛错');
   }
 
+  // ============ ⑭ 第 28 轮：订单筛选参数拼装 / 日期区间 / 导出 / 批量区顺序 ============
+  section('⑭ 订单筛选参数拼装与日期区间（第 28 轮 7.5 / 7.8）');
+  {
+    const NOW = new Date(2026, 9, 14, 10, 30, 0).getTime();   // 固定「现在」= 2026-10-14 10:30 本地时间
+    const J = o => JSON.stringify(o);
+    // —— 参数逐字正确 ——
+    ok(J(Admin.orderFilterQuery({ date: 'today', now: NOW })) === J({ date: '2026-10-14' }),
+      '今天 → {date:2026-10-14}（本地日，不走 UTC）');
+    ok(J(Admin.orderFilterQuery({ date: '7d', now: NOW })) === J({ from: '2026-10-08', to: '2026-10-14' }),
+      '近 7 天 → from=2026-10-08 to=2026-10-14（含今天共 7 天）');
+    ok(J(Admin.orderFilterQuery({ date: 'custom', from: '2026-10-01', to: '2026-10-07' })) === J({ from: '2026-10-01', to: '2026-10-07' }),
+      '自定义 → 原样带上 from/to（含端点）');
+    ok(J(Admin.orderFilterQuery({ date: 'custom', from: '2026-10-01', to: '' })) === J({ from: '2026-10-01' }),
+      '自定义只填起始日 → 只带 from，不伪造 to');
+    ok(J(Admin.orderFilterQuery({ date: 'none', from: '2026-10-01', to: '2026-10-07' })) === J({}),
+      '全部时间 → 一个日期参数都不带（from/to 也被剔除）');
+    const full = Admin.orderFilterQuery({ q: '  张三  ', status: 'pending,delivering', type: 'pickup', date: 'custom', from: '2026-10-01', to: '2026-10-07' });
+    ok(J(full) === J({ q: '张三', status: 'pending,delivering', type: 'pickup', from: '2026-10-01', to: '2026-10-07' }),
+      '关键词去空白 / status 多值原样 / type 原样：' + J(full));
+    ok(J(Admin.orderFilterQuery({ status: 'all', type: 'all', date: 'today', now: NOW })) === J({ date: '2026-10-14' }),
+      '「全部」状态与「全部」配送方式不拼进查询串（空 = 不筛）');
+    ok(J(Admin.orderFilterQuery({})) === J({ date: Admin.dayKey(new Date()) }), '不传日期时按今天兜底，绝不出现空 query');
+    ok(Admin.orderFilterQuery({ date: 'custom', from: '2026-13-40', to: 'x' }).from === '2026-13-40',
+      '非法日期原样透传（400 由服务端按 7.5 给中文提示，前端不擅自吞掉）');
+
+    // —— phone 绝不被筛选覆盖：第 27 轮身份通道与筛选通道是两根管子 ——
+    const withPhone = Admin.orderFilterQuery({ q: '李四', status: 'pending', date: 'today', phone: '13800000000', now: NOW });
+    ok(withPhone.phone === undefined && J(withPhone).indexOf('13800000000') < 0,
+      'filter 里没有 phone、也不含被传入的手机号（身份只走 sync 的 phone 参数）');
+    ok(Admin.orderFilterQuery({ q: '13800000000', date: 'today', now: NOW }).q === '13800000000',
+      '手机号要筛只能走 q（模糊搜索），不占身份字段');
+    ok(J(Admin.orderFilterQuery(undefined)) === J({ date: Admin.dayKey(new Date()) }), 'undefined 入参不抛错，仍给默认今天');
+
+    // —— 日期优先级：date 与 from/to 同时给 → date 优先（7.5）——
+    ok(J(Admin.orderFilterQuery({ date: '7d', from: '2026-01-01', to: '2026-01-02', now: NOW })) === J({ from: '2026-10-08', to: '2026-10-14' }),
+      'date 优先于 from/to：同时给时 from/to 被忽略');
+    ok(J(Admin.orderDateRange('custom', '', '', NOW)) === J({}), '自定义两个日期都空 → 空区间（不回落今天）');
+  }
+  {
+    // —— 区间边界（本地日零点~23:59:59.999），自定义区间首尾都算 ——
+    const d = (y, mo, day, h) => new Date(y, mo - 1, day, h == null ? 12 : h, 0, 0).getTime();
+    const mk = (id, at, status, type, name, phone) => ({
+      id: id, status: status || 'pending', deliveryType: type || 'pickup', total: 10,
+      createdAt: at, customer: { name: name || '张三', phone: phone || '13800000000' }
+    });
+    const orders = [
+      mk('B1', d(2026, 10, 1, 0)),      // 区间起点 00:00 → 算
+      mk('B2', d(2026, 10, 7, 23)),     // 区间终点当天 → 算
+      mk('B3', d(2026, 9, 30, 23)),     // 差一天 → 不算
+      mk('B4', d(2026, 10, 8, 0))       // 差一天 → 不算
+    ];
+    const inRange = Admin.filterOrders(orders, { date: 'custom', from: '2026-10-01', to: '2026-10-07' });
+    ok(inRange.length === 2 && inRange[0].id === 'B1' && inRange[1].id === 'B2',
+      '自定义区间含端点：10-01 00:00 与 10-07 23:00 都算，09-30 / 10-08 不算');
+    ok(Admin.filterOrders(orders, { date: 'custom', from: '2026-10-07', to: '2026-10-07' }).length === 1,
+      '起止同一天 = 单日区间，只回当天 1 单');
+
+    // —— 其余三个条件的本地兜底口径（后端未就绪时页面照样筛得对）——
+    const all = [
+      mk('C1', d(2026, 10, 14), 'pending', 'pickup', '张三', '13800000000'),
+      mk('C2', d(2026, 10, 14), 'delivering', 'delivery', '李四', '13900000000'),
+      mk('C3', d(2026, 10, 14), 'done', 'pickup', '王五', '13700000000'),
+      mk('C4', d(2026, 10, 14), 'cancelled', 'delivery', '张三', '13800000000')
+    ];
+    ok(Admin.filterOrders(all, { status: 'pending,delivering' }).map(o => o.id).join() === 'C1,C2',
+      'status 逗号多值 → 只回 pending + delivering');
+    ok(Admin.filterOrders(all, { q: '张三' }).length === 2 && Admin.filterOrders(all, { q: '13900000000' })[0].id === 'C2' &&
+      Admin.filterOrders(all, { q: 'c3' })[0].id === 'C3',
+      'q 同时匹配顾客名 / 手机号 / 订单号（大小写不敏感）');
+    ok(Admin.filterOrders(all, { type: 'delivery' }).map(o => o.id).join() === 'C2,C4', 'type=delivery 只回配送单');
+    ok(Admin.filterOrders(null, { q: 'x' }).length === 0 && Admin.filterOrders(all, {}).length === 4,
+      '空入参不抛错：null → []，无筛选 → 原样全回');
+    ok(Admin.hasOrderFilter({}) === false && Admin.hasOrderFilter({ date: '2026-10-14' }) === true &&
+      Admin.hasOrderFilter({ type: 'pickup' }) === true, 'hasOrderFilter 认全部 5 类条件');
+  }
+  {
+    // —— 与页面接线逐字核对：页面控件必须真的把 filter 送进 sync / 导出，失败必须红 toast ——
+    const fs = require('fs');
+    const html = fs.readFileSync(require.resolve('./admin.html'), 'utf8');
+    const mod = fs.readFileSync(require.resolve('./mall-admin.js'), 'utf8');
+    const T = s => html.indexOf(s) >= 0;
+    const M = s => mod.indexOf(s) >= 0;
+    ok(M('sync(null, { all: true, filter: f })') && M('syncOrders: syncOrders'),
+      '筛选请求统一走 Admin.syncOrders（sync 带上 filter，参数由 Admin.orderFilterQuery 拼装）');
+    ok(T('const rows = await Admin.syncOrders(filter)') && T('renderOrders(rows)') && T('renderOrderKpis(rows)'),
+      '一次刷新同时喂列表与 KPI（同一批行，口径不会打架）');
+    ok(!T('Mall._save(Mall.KEYS.orders, Admin.filterOrders('),
+      '筛选结果绝不写回订单镜像（否则 renderDash 的「当前待处理（不限日期）」会被日期筛选截断）');
+    ok(T('<div class="obar" id="orderFilterBar">') && T('id="orderFooter"'),
+      '订单列表上方有筛选条，列表下方有页脚计数');
+    ok(T('id="ofQ"') && T('placeholder="顾客名 / 手机号 / 订单号"'), '关键词框占位提示逐字一致');
+    ok(T('id="ofCustom" class="obar-custom hide"') && T("orderFilter.date === 'custom' ? '' : ' hide'") &&
+      /\.hide\s*\{[^}]*display:\s*none/.test(fs.readFileSync(require.resolve('./assets/theme.css'), 'utf8')),
+      '自定义日期区间默认收起、只在「自定义」档展开（.hide 真有 display:none 定义）');
+    ok(['pending', 'delivering', 'ready', 'done', 'cancelled'].every(s => T('value="' + s + '"')) &&
+      T('<option value="today">今天</option>') && T('<option value="7d">近 7 天</option>') &&
+      T('<option value="custom">自定义</option>') && T('id="ofFrom"') && T('id="ofTo"') &&
+      T('<option value="pickup">自提</option>') && T('<option value="delivery">配送</option>'),
+      '状态 5 值 / 日期 3 档 + from-to / 配送方式 3 值齐备');
+    ok(T("['ofQ', 'ofStatus', 'ofDate', 'ofFrom', 'ofTo', 'ofType']"),
+      '6 个控件都走同一个刷新出口（不会只刷半个页面）');
+    ok(T('await SdyApi.downloadOrdersCSV(filter)') && T('btn.disabled = true') && T("btn.textContent = '导出中…'"),
+      '导出调用 SdyApi.downloadOrdersCSV(filter)，导出中按钮禁用并显示「导出中…」');
+    ok(T('toastErr(') && T(".className = 'toast show err'") && T('.toast.err {'),
+      '失败路径是红色 toast（不是静默失败，也不是 alert）');
+    ok(T("btn.textContent = label || '⬇ 导出 CSV'"),
+      '成功后恢复按钮原文案（无论成功失败都不会卡在「导出中…」）');
+    const iFilterVar = html.indexOf('const filter = orderFilterQuery();');
+    const iCall = html.indexOf('await SdyApi.downloadOrdersCSV(filter)');
+    ok(iFilterVar > 0 && iCall > iFilterVar,
+      '导出用的 filter 就是当前筛选（同一个 orderFilterQuery，先取筛选再下载）');
+    const iBulk = html.indexOf('<div class="panel" id="bulkPanel"');
+    const iTable = html.indexOf('<div class="table-wrap" id="prodTable"></div>');
+    ok(iBulk > 0 && iTable > iBulk, 'DOM 顺序：#bulkPanel 在商品表格之前（老板先框选再操作）');
+    // 第 27 轮成果不许回退：批量改价 / 批量改分类 / 取消批发三条 payload 仍带 wholesalePrice
+    const nWholesale = (html.match(/wholesalePrice: p\.wholesalePrice \|\| 0/g) || []).length;
+    ok(nWholesale >= 3, '三条批量 payload 都继续带 wholesalePrice（数到 ' + nWholesale + ' 处，绝不回退第 27 轮修复）');
+    ok(html.indexOf('function readOrderFilter()') > 0 && html.indexOf("date: v('ofDate') || 'today'") > 0,
+      '页面筛选状态读取有唯一入口 readOrderFilter()');
+    ok(html.indexOf('renderOrders();') > 0 && html.indexOf('renderOrderKpis();') > 0,
+      '刷新时列表与 KPI 一起重算（同一份筛选结果）');
+  }
+  // ============ ⑭（续）筛选只影响渲染，绝不污染订单镜像 ============
+  section('⑭（续）Admin.syncOrders：筛选结果不写回镜像（第 27 轮口径）');
+  {
+    const d = (y, mo, day) => new Date(y, mo - 1, day, 12, 0, 0).getTime();
+    const mk = (id, at, status) => ({ id: id, status: status || 'pending', deliveryType: 'pickup', total: 10, createdAt: at, customer: { name: '张三', phone: '13800000000' } });
+    Mall._resetForTest();
+    Mall._save(Mall.KEYS.orders, [
+      mk('D1', d(2026, 10, 1), 'pending'),
+      mk('D2', d(2026, 10, 7), 'done'),
+      mk('D3', d(2026, 9, 30), 'pending'),
+      mk('D4', d(2026, 10, 8), 'delivering')
+    ]);
+    const f = { date: 'custom', from: '2026-10-01', to: '2026-10-07' };
+    let syncArg = null;
+    const fakeApi = { sync: function (phone, opts) { syncArg = { phone: phone, opts: opts }; return Promise.resolve({}); } };
+    const rows = await Admin.syncOrders(f, fakeApi);
+    ok(rows.map(o => o.id).join() === 'D1,D2', 'syncOrders 本地兜底：只回筛选区间内的单（' + rows.map(o => o.id).join() + '）');
+    ok(Mall.getOrders().length === 4,
+      '筛选后订单镜像仍是全量 4 单（第 27 轮「当前待处理不限日期」不被日期筛选截断）');
+    ok(syncArg && syncArg.phone === null && syncArg.opts && syncArg.opts.all === true &&
+      JSON.stringify(syncArg.opts.filter) === JSON.stringify(f),
+      '参数逐字进 sync：sync(null,{all:true,filter}) → ' + JSON.stringify(syncArg && syncArg.opts && syncArg.opts.filter));
+    const rowsAll = await Admin.syncOrders({}, { sync: function () { return Promise.resolve({}); } });
+    ok(rowsAll.length === 4, '不带筛选条件时 syncOrders 原样回全量（不误伤）');
+    // 后端真支持 filter 时以 sync 结果为准（条数变了 → 不再叠加本地筛选）
+    const backendApi = {
+      sync: function () {
+        Mall._save(Mall.KEYS.orders, [mk('E1', d(2026, 10, 1), 'pending')]);
+        return Promise.resolve({});
+      }
+    };
+    const rowsBackend = await Admin.syncOrders(f, backendApi);
+    ok(rowsBackend.length === 1 && rowsBackend[0].id === 'E1',
+      '后端已支持 filter 时以 sync 结果为准（不再叠加本地筛选）');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

@@ -53,6 +53,15 @@
   .bulk-preview tr.blocked td { background: #fff7ed; }
   .bulk-preview tr.same td { color: var(--muted); }
   .bulk-cb { width: 15px; height: 15px; cursor: pointer; }
+  /* ---------- 订单筛选条（第 28 轮 7.5 / 7.8） ---------- */
+  .obar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .obar .bl { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  .obar .sel { min-width: 104px; }
+  .obar-custom { display: flex; align-items: center; gap: 6px; }
+  .obar-custom .input-sm { width: 132px; }
+  .obar-tail { display: flex; gap: 6px; margin-left: auto; }
+  .obar-foot { font-size: 12px; margin: 10px 0 0; }
+  .toast.err { background: #dc2626; color: #fff; }
   /* 演示数据标记（第 27 轮 / E-P0-3）：没连过后端时才出现，提醒老板看到的是本地演示值 */
   .demo-banner { margin: 0 0 14px; padding: 9px 13px; border-radius: var(--r-sm); font-size: 12px;
     background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-line); }
@@ -239,12 +248,50 @@
           <div class="acts">
             <span class="muted" style="font-size:12px">配送员名单</span>
             <input class="input input-sm" id="couriers" style="width:170px" placeholder="张三,李四" onchange="saveCouriers()">
+            <button class="btn btn-xs btn-primary" id="ofExport" onclick="exportOrdersCSV()">⬇ 导出 CSV</button>
             <button class="btn btn-xs" onclick="printPending()">🖨 批量打印待备货</button>
           </div>
         </div>
         <div class="panel-body">
-          <div class="chips" style="margin-bottom:14px"><div id="filters" class="chips"></div></div>
+          <!-- 订单筛选条（第 28 轮 7.5）：关键词 / 状态 / 日期 / 配送方式。
+               任一项变化 → refreshOrders() 同时刷新「列表 + 页脚计数 + KPI」；
+               请求走 SdyApi.sync(null, {all:true, filter})，参数由 Admin.orderFilterQuery 统一拼装。 -->
+          <div class="obar" id="orderFilterBar">
+            <div class="search" style="width:250px">
+              <span>🔎</span>
+              <input id="ofQ" placeholder="顾客名 / 手机号 / 订单号" oninput="applyOrderFilter()">
+            </div>
+            <label class="bl">状态<select class="sel" id="ofStatus" onchange="applyOrderFilter()">
+              <option value="all">全部</option>
+              <option value="pending">待备货</option>
+              <option value="delivering">配送中</option>
+              <option value="ready">待取货</option>
+              <option value="done">已完成</option>
+              <option value="cancelled">已取消</option>
+            </select></label>
+            <label class="bl">日期<select class="sel" id="ofDate" onchange="applyOrderFilter()">
+              <option value="today">今天</option>
+              <option value="7d">近 7 天</option>
+              <option value="none">全部时间</option>
+              <option value="custom">自定义</option>
+            </select></label>
+            <span id="ofCustom" class="obar-custom hide">
+              <input class="input input-sm" id="ofFrom" type="date" onchange="applyOrderFilter()">
+              <span class="muted">~</span>
+              <input class="input input-sm" id="ofTo" type="date" onchange="applyOrderFilter()">
+            </span>
+            <label class="bl">配送方式<select class="sel" id="ofType" onchange="applyOrderFilter()">
+              <option value="all">全部</option>
+              <option value="pickup">自提</option>
+              <option value="delivery">配送</option>
+            </select></label>
+            <span class="obar-tail">
+              <button class="btn btn-xs" id="ofRefresh" onclick="refreshOrders()">↻ 刷新</button>
+            </span>
+          </div>
+          <div class="chips" style="margin-bottom:12px"><div id="filters" class="chips"></div></div>
           <div id="orders"></div>
+          <div class="obar-foot muted" id="orderFooter">共 0 单</div>
         </div>
       </div>
     </section>
@@ -281,10 +328,10 @@
         <div class="panel-body">
           <div class="chips" id="prodCats"></div>
           <div class="kpis" id="prodStats" style="margin:14px 0"></div>
-          <div class="table-wrap" id="prodTable"></div>
-
-          <!-- ---------- 批量改价 / 批量操作（任务池第 5 项，D20） ---------- -->
-          <div class="panel" id="bulkPanel" style="margin-top:14px;box-shadow:none;border-style:dashed">
+          <!-- ---------- 批量改价 / 批量操作（任务池第 5 项，D20） ----------
+               第 28 轮 7.8：整块搬到商品表格**上方**——老板「先框选要改的商品、再定规则」，
+               操作区若在表格下方就得先滚到底再滚回来。DOM 顺序见 test-admin.js 的断言。 -->
+          <div class="panel" id="bulkPanel" style="margin:0 0 14px;box-shadow:none;border-style:dashed">
             <div class="panel-head">
               <h3>⚡ 批量改价 / 批量操作<span class="sub" id="bulkSelHint">先在上表勾选商品</span></h3>
               <div class="acts">
@@ -327,6 +374,8 @@
               <div id="bulkResult" class="mt"></div>
             </div>
           </div>
+
+          <div class="table-wrap" id="prodTable"></div>
           <p class="hint mt">
             建档只登记与改价，<b>不动库存</b>；库存请到「库存与流水」入库 / 改数 / 盘点。
             删除要求库存为 0 且没有进行中的订单；扫码台只沉淀条码库，不改档案（D6 / D8）。
@@ -509,11 +558,24 @@ const BY = '老板';
 
 let curFilter = '', tab = 'dash';
 let toastTimer = null;
+// 订单筛选条状态（第 28 轮 7.5）：都在这里读，Admin.orderFilterQuery 只认这些字段
+let orderFilter = { q: '', status: 'all', date: 'today', from: '', to: '', type: 'all' };
+// 「范围已覆盖全部时间」的开关：只有老板自己选「全部时间」时，KPI 才回到跨日期的
+// 「当前待处理（不限日期）＋ 今日营业额」口径（第 27 轮口径，绝不回退）。
+let orderAllTime = false;
 function toast(msg, ms) {
   const t = $('toast');
   t.textContent = msg; t.className = 'toast show';
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.className = 'toast'; }, ms || 2600);
+}
+// 红色失败提示（第 28 轮 7.6）：导出这类「按下就以为成功」的动作绝不许静默失败，
+// 失败一律走这里（红底白字），与普通提示区分开。
+function toastErr(msg, ms) {
+  const t = $('toast');
+  t.textContent = msg; t.className = 'toast show err';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, ms || 4600);
 }
 function closeAll() { $('mask').className = 'mask'; $('sidebar').className = 'sidebar'; closeProductDlg(); }
 function toggleSide() { const s = $('sidebar'); s.className = s.className.indexOf('open') >= 0 ? 'sidebar' : 'sidebar open'; }
@@ -678,19 +740,117 @@ function printReport() {
 }
 
 /* ---------------- 订单 ---------------- */
-const FILTERS = [['全部', ''], ['待备货', 'pending'], ['配送中', 'delivering'], ['待自提', 'ready'], ['已完成', 'done'], ['已取消', 'cancelled']];
+// 状态快捷片（第 28 轮保留）：与上方「状态」下拉是同一件事的两条入口。
+// 需要收窄成多个状态时（如「待备货+配送中」）用下拉，做法见 ofStatus 的 comma 支持。
+const FILTERS = [['全部', ''], ['待备货', 'pending'], ['配送中', 'delivering'], ['待自取', 'ready'], ['已完成', 'done'], ['已取消', 'cancelled']];
 function renderFilters() {
   $('filters').innerHTML = FILTERS.map(f =>
     '<div class="chip' + (curFilter === f[1] ? ' on' : '') + '" onclick="pickF(\'' + f[1] + '\')">' + f[0] + '</div>').join('');
 }
-function pickF(f) { curFilter = f; renderFilters(); renderOrders(); }
+function pickF(f) { curFilter = f; renderFilters(); applyOrderFilter(); }
 function courierSel(id, cur) {
   const list = Admin.getCouriers();
   return '<select class="sel" id="cs_' + esc(id) + '"><option value="">（选择配送员）</option>' +
     list.map(c => '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>';
 }
-function renderOrders() {
-  const list = Mall.getOrders().filter(o => !curFilter || o.status === curFilter);
+/* ---------------- 订单筛选条（第 28 轮 7.5 / 7.8） ----------------
+ * 关键词 / 状态 / 日期（今天·近 7 天·自定义 from–to）/ 配送方式。
+ * 任一项变化：列表、页脚计数、KPI 三者一起刷新；请求走
+ * SdyApi.sync(null, {all:true, filter})，参数拼装统一走 Admin.orderFilterQuery
+ * （导出用的也是同一个函数，保证「列表筛了、导出没筛」不可能发生）。
+ */
+function readOrderFilter() {
+  const v = id => (($(id) && $(id).value) || '');
+  // 快捷片只在下拉是「全部」时参与收窄：两条入口指向同一个字段，避免互相打架
+  const st = v('ofStatus') || 'all';
+  const chip = curFilter || '';
+  return {
+    q: v('ofQ').trim(),
+    status: (st === 'all' && chip) ? chip : st,
+    date: v('ofDate') || 'today',
+    from: v('ofFrom').trim(),
+    to: v('ofTo').trim(),
+    type: v('ofType') || 'all'
+  };
+}
+// 筛选条件 → 请求/导出用的查询串（纯函数在 Admin 里，页面只负责取 DOM 值）
+function orderFilterQuery() {
+  return Admin.orderFilterQuery ? Admin.orderFilterQuery(orderFilter) : {};
+}
+function bindOrderFilters() {
+  ['ofQ', 'ofStatus', 'ofDate', 'ofFrom', 'ofTo', 'ofType'].forEach(id => {
+    const el = $(id);
+    if (!el || el._ofBound) return;
+    el._ofBound = 1;
+    // 事件绑在 JS 里而不是写死 onchange，测试可以逐字断言这 6 个控件都会触发刷新
+    el.addEventListener('change', applyOrderFilter);
+    el.addEventListener('input', applyOrderFilter);
+  });
+  const f = $('ofFrom'), t = $('ofTo');
+  if (f) f.max = Admin.dayKey(new Date());
+  if (t) t.max = Admin.dayKey(new Date());
+}
+
+/* ---------------- 导出 CSV（第 28 轮 7.6） ----------------
+ * 导出的是**当前筛选条件**下的订单：filter 与列表用同一个 Admin.orderFilterQuery(orderFilter)，
+ * 所以不存在「列表筛了、导出没筛」。下载由 SdyApi.downloadOrdersCSV 真正触发浏览器下载
+ * （blob + <a download>），页面这边不拼 CSV 字符串、也不 alert。
+ * 失败一律红 toast（toastErr），绝不静默：按钮在导出中禁用并显示「导出中…」。
+ */
+async function exportOrdersCSV() {
+  const btn = $('ofExport');
+  const filter = orderFilterQuery();
+  if (!SdyApi || typeof SdyApi.downloadOrdersCSV !== 'function') {
+    // 依赖未就绪（web/sdy-api.js 归 Web 商城流）：如实报错，而不是假装导出了
+    toastErr('CSV 导出还没接上：SdyApi.downloadOrdersCSV 未就绪，本次没有生成任何文件', 5200);
+    return false;
+  }
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '导出中…'; }
+  try {
+    await SdyApi.downloadOrdersCSV(filter);
+    toast('已按当前筛选导出 CSV：' + fileHint(filter) + '（浏览器下载栏查看）', 4200);
+    return true;
+  } catch (e) {
+    toastErr('导出 CSV 失败：' + ((e && e.message) || '未知错误') + '（筛选条件未变，可重试）', 5200);
+    return false;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label || '⬇ 导出 CSV'; }
+  }
+}
+function fileHint(filter) {
+  const f = filter || {};
+  const bits = [];
+  if (f.status) bits.push(f.status);
+  if (f.date) bits.push(f.date);
+  if (f.from || f.to) bits.push((f.from || '') + '~' + (f.to || ''));
+  if (f.type) bits.push(f.type);
+  if (f.q) bits.push('关键词');
+  return bits.length ? bits.join(' · ') : '全部订单';
+}
+// 筛选变化后的**同一个**刷新出口：拉数据 → 列表 → 页脚计数 → KPI，三者不拆开
+async function applyOrderFilter() {
+  orderFilter = readOrderFilter();
+  orderAllTime = orderFilter.date === 'none';
+  if ($('ofCustom')) $('ofCustom').className = 'obar-custom' + (orderFilter.date === 'custom' ? '' : ' hide');
+  try { await refreshOrders(); } catch (e) { toastErr('筛选订单失败：' + ((e && e.message) || e), 4600); }
+}
+async function refreshOrders() {
+  orderFilter = readOrderFilter();
+  orderAllTime = orderFilter.date === 'none';
+  const filter = Admin.orderFilterQuery(orderFilter);
+  // 后端筛选（本轮约定）：sync 只负责把满足条件的单拉回来；身份仍旧按第 27 轮规则走
+  // （管理员放行在 sync 内部，筛选参数不参与身份判定）。
+  // 全部逻辑在 Admin.syncOrders：拿到的行**只用于本次渲染**，订单镜像保持全量，
+  // 免得 renderDash() 的「当前待处理（不限日期）」被日期筛选截断（第 27 轮口径）。
+  const rows = await Admin.syncOrders(filter);
+  renderOrders(rows);
+  renderOrderKpis(rows);
+  return { filter: filter, rows: rows.length };
+}
+// 订单列表渲染：rows 缺省时按当前筛选算（页面其它地方直接调 renderOrders() 也安全）
+function renderOrders(rows) {
+  const list = rows || Admin.filterOrders(Mall.getOrders(), orderFilter);
   $('orders').innerHTML = list.length ? list.map(o => {
     const v = Mall.orderView(o);
     const acts = [];
@@ -716,7 +876,39 @@ function renderOrders() {
       '<div class="of"><span class="amt">小计 ' + yuan(o.subtotal) + (o.deliveryFee ? ' ＋ 配送 ' + yuan(o.deliveryFee) : '') + ' ＝ <b>' + yuan(o.total) + '</b></span>' +
         '<span class="acts">' + acts.join('') + '</span>' +
       '</div></div>';
-  }).join('') : '<div class="empty"><span class="big">' + (curFilter ? '🔍' : '🧾') + '</span>' + (curFilter ? '这个状态下没有订单' : '还没有订单') + '</div>';
+  }).join('') : '<div class="empty"><span class="big">' + (Admin.hasOrderFilter(orderFilter) ? '🔍' : '🧾') + '</span>' + (Admin.hasOrderFilter(orderFilter) ? '当前筛选条件下没有订单' : '还没有订单') + '</div>';
+  renderOrderFooter(list);
+}
+function renderOrderFooter(list) {
+  if (!$('orderFooter')) return;
+  const f = orderFilter;
+  const bits = [];
+  if (f.q) bits.push('关键词「' + f.q + '」');
+  if (f.status && f.status !== 'all') bits.push('状态 ' + f.status.split(',').join('/'));
+  if (f.type && f.type !== 'all') bits.push(f.type === 'pickup' ? '自提' : '配送');
+  const dlab = { today: '今天', '7d': '近 7 天', none: '全部时间', custom: '自定义' };
+  bits.push('日期 ' + (f.date === 'custom' ? ((f.from || '…') + ' ~ ' + (f.to || '…')) : (dlab[f.date] || '今天')));
+  $('orderFooter').textContent = '共 ' + list.length + ' 单（' + bits.join(' · ') + '）· 列表与 KPI 同口径';
+}
+// KPI 跟着筛选走（第 28 轮 7.8）：KPI 数字基于**筛选结果**，口径仍沿用 Admin.kpiOf，
+// 一行都不改。注意别把筛选后的结果写回镜像——sync 已经把筛选结果放进镜像了，
+// 这里只是「同一份数据，再多守一道」，避免后端未就绪时 KPI 与列表口径不同步。
+function renderOrderKpis(rows) {
+  if (!document.getElementById) return;
+  const list = rows || Admin.filterOrders(Mall.getOrders(), orderFilter);
+  const todayKey = Admin.dayKey(new Date());
+  const pending = list.filter(o => o.status === 'pending').length;
+  // 今日营业额只认「结果里今天且已完成」的单：筛选把今天排除掉时就是 0
+  const todayDone = list.filter(o => o.status === 'done' && Admin.dayKey(o.createdAt) === todayKey);
+  const amount = Admin.round2(todayDone.reduce((s, o) => s + (Number(o.total) || 0), 0));
+  const past = list.filter(o => Admin.dayKey(o.createdAt) !== todayKey).length;
+  if ($('kpiPending')) $('kpiPending').textContent = String(pending);
+  if ($('kpiPendingSub')) $('kpiPendingSub').textContent = orderAllTime ? '不限日期 · 仅待备货' : '当前筛选 · 仅待备货';
+  if ($('kpiOrders')) $('kpiOrders').textContent = String(list.length);
+  if ($('kpiOrdersSub')) $('kpiOrdersSub').textContent = '当前筛选结果' + (past ? ' · 其中过往 ' + past + ' 单' : '');
+  if ($('kpiRevenue')) $('kpiRevenue').textContent = yuan(amount);
+  if ($('kpiRevenueSub')) $('kpiRevenueSub').textContent = '只算已完成 ' + todayDone.length + ' 单（下单≠收款）' +
+    (list.length && !todayDone.length ? ' · 当前筛选内今天没有已完成的单' : '');
 }
 // 配送员名单（任务池⑧ / D25）：在线时真源在后端 courier 表（增删带约束校验），
 // 保存时按「本地输入 vs 后端名单」求差集逐个调接口，再把后端名单拉回来做镜像；离线只改本地。
@@ -1668,7 +1860,8 @@ function renderDemoBanner() {
 }
 
 function renderAllAdmin() {
-  renderFilters(); renderOrders(); renderCouriers(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore(); renderWxUsersPanel(); renderDemoBanner();
+  bindOrderFilters();
+  renderFilters(); renderOrders(); renderOrderKpis(); renderCouriers(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore(); renderWxUsersPanel(); renderDemoBanner();
 }
 async function initApi() {
   const badge = $('modeBadge');

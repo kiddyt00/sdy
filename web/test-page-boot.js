@@ -64,6 +64,9 @@ function makeEnv(opts) {
     confirm: () => true, alert: () => {}, prompt: (opts && opts.prompt) || (() => null),
     Mall: Mall, Pricing: Pricing, Admin: Admin, SdyApi: SdyApi
   };
+  // 第 28 轮：触底自动加载要测 IntersectionObserver。真 Node 里没有它，所以按需注入假实现
+  // （不注入 = 老浏览器，页面必须走「按钮兜底」那条路）。
+  if (opts && opts.intersectionObserver) sandbox.IntersectionObserver = opts.intersectionObserver;
   sandbox.globalThis = sandbox;
   const ctx = vm.createContext(sandbox);
   return { ctx: ctx, els: els, store: store };
@@ -867,13 +870,17 @@ const online = {
     await off.ctx.cancelMine(oid);
     ok(off.els.grid.innerHTML.indexOf('可口可乐') >= 0, '取消订单回补库存后首页商品列表被刷新（refreshAll）');
 
-    // —— 搜索防抖 250ms（P1-10）——
+    // —— 搜索防抖 300ms（P1-10 / 第 28 轮 7.8）——
     off.els.grid.innerHTML = 'SENTINEL';
     off.els.q.value = '可乐';
     off.ctx.doSearch();
     ok(off.els.grid.innerHTML === 'SENTINEL', '搜索防抖：doSearch() 当场不重渲染');
-    await new Promise(r => setTimeout(r, 320));
-    ok(off.els.grid.innerHTML.indexOf('可口可乐') >= 0 && off.els.grid.innerHTML.indexOf('伊利纯牛奶') < 0, '250ms 后只按关键词渲一次');
+    await new Promise(r => setTimeout(r, 180));
+    ok(off.els.grid.innerHTML === 'SENTINEL', '180ms 时还没渲染（防抖窗口内不发请求）');
+    await new Promise(r => setTimeout(r, 100));
+    ok(off.els.grid.innerHTML === 'SENTINEL', '280ms 时还没渲染（比老的 250ms 长，证明真的改成了 300ms）');
+    await new Promise(r => setTimeout(r, 80));
+    ok(off.els.grid.innerHTML.indexOf('可口可乐') >= 0 && off.els.grid.innerHTML.indexOf('伊利纯牛奶') < 0, '300ms 后只按关键词渲一次');
 
     // —— 在线：提示条收起 + 按钮可用 + 绿色成功 + 跳订单页（P0-1 / P1-3 / P1-13）——
     const onlineOrder = {
@@ -907,6 +914,183 @@ const online = {
     ok(css.indexOf('--faint: #5f6b7d') >= 0, '--faint 调深（白底 5.40:1 / --bg 4.99:1）');
     ok(css.indexOf('.toast.warn') >= 0 && css.indexOf('.toast.ok') >= 0, 'toast 有绿/黄两种配色');
     ok(css.indexOf('width: 44px; height: 44px') >= 0, '热区用 44×44 伪元素撑开（视觉尺寸不变）');
+  }
+
+  section('⑭ index.html · 第 28 轮：排序控件 / 分页提示 / 无结果推荐 / 金刚区（7.8）');
+  {
+    const css = fs.readFileSync(path.join(__dirname, 'assets', 'theme.css'), 'utf8');
+    const off28 = await bootPage('index.html', offline);
+    ['cats', 'sorts', 'grid', 'moreBar', 'q'].forEach(id => { off28.els[id] = off28.ctx.document.getElementById(id); });
+
+    // 排序控件：4 个取值与文案逐字，默认「综合」高亮
+    const sorts = off28.els.sorts.innerHTML;
+    ok(sorts.indexOf("pickSort('default')") >= 0 && sorts.indexOf('综合') >= 0 &&
+      sorts.indexOf("pickSort('hot')") >= 0 && sorts.indexOf('销量') >= 0 &&
+      sorts.indexOf("pickSort('price_asc')") >= 0 && sorts.indexOf('价格↑') >= 0 &&
+      sorts.indexOf("pickSort('price_desc')") >= 0 && sorts.indexOf('价格↓') >= 0,
+      '排序控件 4 个取值/文案与后端、小程序逐字相同');
+    ok(sorts.indexOf('chip on" onclick="pickSort(\'default\')') >= 0, '默认高亮「综合」');
+    ok(off28.els.grid.innerHTML.indexOf('可口可乐') >= 0 &&
+      (off28.els.grid.innerHTML.match(/class="pcard"/g) || []).length === 6,
+      '离线首屏同步渲染 6 件商品（不闪空屏）');
+    ok(off28.els.moreBar.innerHTML.indexOf('没有更多了') >= 0,
+      '6 件 < limit=20：底部明确显示「没有更多了」：' + off28.els.moreBar.textContent);
+
+    // 排序切换：价格升序首位换成最便宜的农夫山泉
+    off28.ctx.pickSort('price_asc');
+    ok(off28.els.sorts.innerHTML.indexOf('chip on" onclick="pickSort(\'price_asc\')') >= 0, '切换排序后高亮跟着走');
+    const g28 = off28.els.grid.innerHTML;
+    ok(g28.indexOf('农夫山泉') >= 0 && g28.indexOf('可口可乐') >= 0 && g28.indexOf('农夫山泉') < g28.indexOf('可口可乐'),
+      'price_asc 后农夫山泉（1.8）排在可口可乐（2.5）前面');
+
+    // 切分类：分页与搜索/排序同构（offset 归零、底部提示照旧）
+    off28.ctx.pickCat('饮料');
+    ok((off28.els.grid.innerHTML.match(/class="pcard"/g) || []).length === 2 &&
+      off28.els.grid.innerHTML.indexOf('伊利纯牛奶') < 0,
+      '切分类只留下该分类的 2 件（分页从第 1 页重新开始）');
+    ok(off28.els.moreBar.innerHTML.indexOf('没有更多了') >= 0, '分类页分页条同构：也有「没有更多了」');
+
+    // 金刚区：全部 + 最多 8 个分类、带 emoji、不引图片
+    const catChips = (off28.els.cats.innerHTML.match(/class="chip/g) || []).length;
+    ok(catChips <= 9, '金刚区 = 全部 + 最多 8 个分类（当前 ' + catChips + ' 个 chip）');
+    const catLabels = off28.els.cats.innerHTML.split('<div class="chip').slice(1)
+      .map(s => s.slice(s.indexOf('>') + 1).split('<')[0]);
+    ok(catLabels.length > 0 && catLabels.every(t => /^\S+\s/.test(t) && t.codePointAt(0) > 0x2000),
+      '分类 chip 前缀都是真 emoji 字符（不引图片/图标字体）：' + catLabels.join(' | '));
+    ok(off28.els.cats.innerHTML.indexOf('🧻 纸品') >= 0, 'emoji 按分类名映射（纸品 → 🧻）');
+
+    // 无结果：文案逐字 + 热销 6 件
+    off28.els.q.value = '不存在的商品';
+    off28.ctx.doSearch();
+    await new Promise(r => setTimeout(r, 360));
+    const empty = off28.els.grid.innerHTML;
+    ok(empty.indexOf('没找到「不存在的商品」，换个词试试') >= 0, '无结果文案逐字：没找到「<词>」，换个词试试');
+    ok(empty.indexOf('大家都在买') >= 0 && (empty.match(/class="pcard"/g) || []).length === 6,
+      '无结果页补 6 件热销推荐');
+    ok(off28.els.moreBar.innerHTML === '', '无结果时底部不出现分页条（不误导「还有下一页」）');
+
+    // 样式：新控件的类必须在 theme.css 里有定义
+    ok(css.indexOf('.sort-bar') >= 0 && css.indexOf('.more-bar') >= 0 && css.indexOf('.hot-title') >= 0,
+      'theme.css 补齐 .sort-bar / .more-bar / .hot-title');
+  }
+
+  section('⑮ index.html · 第 28 轮：触底自动加载 IntersectionObserver（7.8）');
+  {
+    // 假 IntersectionObserver：记录实例/被观察元素，允许测试手动触发「进了视口」
+    function makeIO() {
+      const box = { instances: [] };
+      box.ctor = function (cb, opt) {
+        this.cb = cb; this.opt = opt || {}; this.targets = []; this.disconnected = 0;
+        box.instances.push(this);
+      };
+      box.ctor.prototype.observe = function (el) { this.targets.push(el); };
+      box.ctor.prototype.unobserve = function (el) { this.targets = this.targets.filter(t => t !== el); };
+      box.ctor.prototype.disconnect = function () { this.disconnected++; this.targets = []; };
+      box.fire = function () {
+        box.instances.forEach(io => { if (io.cb) io.cb([{ isIntersecting: true, intersectionRatio: 1 }]); });
+      };
+      return box;
+    }
+    // 25 件「测试商品」：limit=20 → 第一页 20 件且 hasMore=true，正好能验证翻页
+    const many = [];
+    for (let i = 0; i < 25; i++) {
+      many.push({
+        code: 'T' + i, name: '测试商品' + i, brand: '', spec: '', category: '测试', img: '',
+        costPrice: 1, salePrice: 1 + i, wholesalePrice: 0, price: 1 + i, refPrice: 0,
+        unit: '件', stock: 99, onSale: true, syncStatus: '已同步', createdAt: 0, updatedAt: 0
+      });
+    }
+    const grab = (env) => { ['grid', 'moreBar', 'q', 'sorts', 'cats'].forEach(id => { env.els[id] = env.ctx.document.getElementById(id); }); };
+    const cardsOf = (env) => (env.els.grid.innerHTML.match(/class="pcard"/g) || []).length;
+
+    // ① 离线：观察器只建一个、观察 #moreBar、进视口自动补第二页，取完显示「没有更多了」
+    const io1 = makeIO();
+    const bid = await bootPage('index.html', Object.assign({}, offline, { intersectionObserver: io1.ctor }));
+    grab(bid);
+    Mall.saveCatalog(many);
+    bid.ctx.renderGrid();
+    ok(cardsOf(bid) === 20, '第一页 20 件（limit=20）：实际 ' + cardsOf(bid));
+    ok(bid.els.moreBar.innerHTML.indexOf('加载更多') >= 0, 'hasMore 时底部仍保留「加载更多」按钮兜底');
+    ok(io1.instances.length === 1 && io1.instances[0].targets.length === 1 && io1.instances[0].targets[0] === bid.els.moreBar,
+      '只建一个观察器，且观察的正是 #moreBar');
+    ok(io1.instances[0].opt && String(io1.instances[0].opt.rootMargin || '').length > 0, '带 rootMargin 提前触发：' + (io1.instances[0].opt || {}).rootMargin);
+    io1.fire(); io1.fire();                       // 连续两次「进了视口」
+    ok(cardsOf(bid) === 25, '触底自动加载补上第二页（20 → 25）：实际 ' + cardsOf(bid));
+    ok(bid.els.moreBar.innerHTML.indexOf('没有更多了') >= 0, '取完最后一页后显示「没有更多了」');
+    io1.fire();
+    ok(cardsOf(bid) === 25, 'hasMore=false 后再进视口也不发请求（条数不变）');
+
+    // ①b 在线：连续 3 次「进视口」只产生 1 次 offset=20 请求（同一页只触发一次，防重复请求）
+    const pageCalls = [];
+    const pageFetch = async (url) => {
+      const raw = String(url).replace(/^https?:\/\/[^/]+/, '');
+      const path = raw.replace(/\?.*$/, '');
+      const qs = raw.indexOf('?') >= 0 ? raw.slice(raw.indexOf('?') + 1) : '';
+      const off = Number((/(?:^|&)offset=(\d+)/.exec(qs) || [0, 0])[1]);
+      const lim = Number((/(?:^|&)limit=(\d+)/.exec(qs) || [0, 20])[1]) || 20;
+      if (path === '/healthz') return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) };
+      if (path === '/api/settings') return { ok: true, status: 200, text: async () => JSON.stringify({ lowStock: 5, minOrder: 0, deliveryFee: 3, minFree: 30 }) };
+      if (path === '/api/orders') return { ok: true, status: 200, text: async () => JSON.stringify({ total: 0, items: [] }) };
+      if (path === '/api/products') {
+        pageCalls.push(off);
+        const items = many.slice(off, off + lim).map(p => ({
+          code: p.code, name: p.name, brand: p.brand, spec: p.spec, category: p.category,
+          salePrice: p.salePrice, price: p.price, unit: p.unit, stock: p.stock, onSale: true
+        }));
+        return {
+          ok: true, status: 200,
+          text: async () => JSON.stringify({ items: items, total: many.length, limit: lim, offset: off, hasMore: off + items.length < many.length, tier: 'retail' })
+        };
+      }
+      return { ok: false, status: 404, text: async () => JSON.stringify({ error: 'no route ' + raw }) };
+    };
+    const io2 = makeIO();
+    const onl = await bootPage('index.html', { base: 'http://127.0.0.1:8093', fetch: pageFetch, intersectionObserver: io2.ctor });
+    grab(onl);
+    await new Promise(r => setTimeout(r, 40));
+    ok(cardsOf(onl) === 20, '在线第一页 20 件：实际 ' + cardsOf(onl));
+    io2.fire(); io2.fire(); io2.fire();
+    await new Promise(r => setTimeout(r, 60));
+    ok(pageCalls.filter(o => o === 20).length === 1,
+      '连续 3 次进视口只发 1 次 offset=20 请求（防重复）：' + JSON.stringify(pageCalls));
+    ok(cardsOf(onl) === 25, '自动加载后网格 25 件：实际 ' + cardsOf(onl));
+    onl.ctx.switchView('orders');
+    ok(io2.instances.length >= 1 && io2.instances[0].disconnected >= 1 && io2.instances[0].targets.length === 0,
+      '离开首页（切到订单页）断开观察器，不留残留');
+
+    // ② 没有 IntersectionObserver（老浏览器）：不抛错、按钮兜底照旧能点
+    const nob = await bootPage('index.html', offline);       // 沙箱里本就没有 IO
+    grab(nob);
+    Mall.saveCatalog(many);
+    let threw = '';
+    try { nob.ctx.renderGrid(); } catch (e) { threw = (e && e.message) || String(e); }
+    ok(threw === '', '没有 IntersectionObserver 时 renderGrid 不抛错：' + (threw || '没抛'));
+    ok(nob.els.moreBar.innerHTML.indexOf('加载更多') >= 0, '老浏览器：底部按钮兜底仍在');
+    nob.ctx.loadMore();
+    ok(cardsOf(nob) === 25, '点「加载更多」照旧能加载下一页（不经观察器）：实际 ' + cardsOf(nob));
+
+    // ②b 运行中把 IO 摘掉（等价 delete global.IntersectionObserver）：不抛错且观察器被断开
+    const io3 = makeIO();
+    const dr = await bootPage('index.html', Object.assign({}, offline, { intersectionObserver: io3.ctor }));
+    grab(dr);
+    Mall.saveCatalog(many);
+    dr.ctx.renderGrid();
+    ok(io3.instances.length === 1, '摘掉前已建好观察器');
+    delete dr.ctx.IntersectionObserver;
+    let threw2 = '';
+    try { dr.ctx.renderGrid(); } catch (e) { threw2 = (e && e.message) || String(e); }
+    ok(threw2 === '', 'delete global.IntersectionObserver 后再渲染不抛错：' + (threw2 || '没抛'));
+    ok(io3.instances[0].disconnected >= 1 && io3.instances[0].targets.length === 0, '观察器被断开（不留残留）');
+    dr.ctx.loadMore();
+    ok(cardsOf(dr) === 25, '按钮兜底仍可加载：实际 ' + cardsOf(dr));
+
+    // ③ hasMore=false（种子只有 6 件）：进了视口也不发请求
+    const io4 = makeIO();
+    const few = await bootPage('index.html', Object.assign({}, offline, { intersectionObserver: io4.ctor }));
+    grab(few);
+    ok(few.els.moreBar.innerHTML.indexOf('没有更多了') >= 0, '6 件 < 20：底部是「没有更多了」');
+    io4.fire();
+    ok(cardsOf(few) === 6, 'hasMore=false 时进入视口也不加载：实际 ' + cardsOf(few));
   }
 
   console.log('\n========================================');

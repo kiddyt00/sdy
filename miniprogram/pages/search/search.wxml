@@ -51,33 +51,80 @@
     <view class="errbtn" bindtap="reload">重新加载</view>
   </view>
 
-  <van-empty wx:elif="{{empty}}" description="没找到这件商品" />
+  <block wx:else>
+    <!-- 第 28 轮契约 7.8：排序分段控件，值逐字 default|hot|price_asc|price_desc -->
+    <view class="sortbar">
+      <view
+        class="stbtn {{sort === item.v ? 'on' : ''}}"
+        wx:for="{{sorts}}"
+        wx:key="v"
+        data-sort="{{item.v}}"
+        bindtap="onSort"
+      >{{item.t}}</view>
+    </view>
 
-  <view class="slist" wx:else>
-    <view class="scount">共 {{results.length}} 件</view>
-    <view class="grid">
-      <view class="gitem" wx:for="{{results}}" wx:key="code" data-code="{{item.code}}" bindtap="goDetail">
-        <view class="gthumb">
-          <image wx:if="{{item.img}}" class="gimg" src="{{item.img}}" mode="aspectFill" lazy-load />
-          <text wx:else>{{item.emoji}}</text>
-        </view>
-        <view class="gbody">
-          <view class="gname">{{item.name}}</view>
-          <view class="gspec">{{item.spec || item.brand || '—'}}</view>
-          <!-- 第 27 轮 P0-7：结果里直接加购；库存状态用服务端阈值（api.lowStock()）判 -->
-          <view class="sstock {{item.stock <= 0 ? 'out' : (item.stock <= lowStock ? 'low' : '')}}">
-            {{item.stock <= 0 ? '暂时缺货' : (item.stock <= lowStock ? '仅剩 ' + item.stock + ' 件' : '库存 ' + item.stock)}}
+    <!-- 第 28 轮：无结果给提示语 + 热销 6 件（不再是一句干巴巴的「没找到」） -->
+    <view class="sempty" wx:if="{{empty}}">
+      <view class="seico">🔍</view>
+      <view class="setext">{{emptyText}}</view>
+      <block wx:if="{{recs.length}}">
+        <view class="ssec-h"><text>大家都在买</text></view>
+        <view class="grid">
+          <view class="gitem" wx:for="{{recs}}" wx:key="code" data-code="{{item.code}}" bindtap="goDetail">
+            <view class="gthumb">
+              <image wx:if="{{item.img}}" class="gimg" src="{{item.img}}" mode="aspectFill" lazy-load />
+              <text wx:else>{{item.emoji}}</text>
+            </view>
+            <view class="gbody">
+              <view class="gname">{{item.name}}</view>
+              <view class="gspec">{{item.spec || item.brand || '—'}}</view>
+              <view class="sstock {{item.stock <= 0 ? 'out' : (item.stock <= lowStock ? 'low' : '')}}">
+                {{item.stock <= 0 ? '暂时缺货' : (item.stock <= lowStock ? '仅剩 ' + item.stock + ' 件' : '库存 ' + item.stock)}}
+              </view>
+              <view class="gfoot">
+                <view class="gprice"><text class="gsym">¥</text>{{tools.fix2(item.price)}}</view>
+                <view
+                  class="gadd {{item.stock <= 0 ? 'dis' : ''}}"
+                  data-code="{{item.code}}"
+                  catchtap="onAdd"
+                >{{item.stock <= 0 ? '缺货' : '＋'}}</view>
+              </view>
+            </view>
           </view>
-          <view class="gfoot">
-            <view class="gprice"><text class="gsym">¥</text>{{tools.fix2(item.price)}}</view>
-            <view
-              class="gadd {{item.stock <= 0 ? 'dis' : ''}}"
-              data-code="{{item.code}}"
-              catchtap="onAdd"
-            >{{item.stock <= 0 ? '缺货' : '＋'}}</view>
+        </view>
+      </block>
+    </view>
+
+    <view class="slist" wx:else>
+      <view class="scount">共 {{total}} 件</view>
+      <view class="grid">
+        <view class="gitem" wx:for="{{results}}" wx:key="code" data-code="{{item.code}}" bindtap="goDetail">
+          <view class="gthumb">
+            <image wx:if="{{item.img}}" class="gimg" src="{{item.img}}" mode="aspectFill" lazy-load />
+            <text wx:else>{{item.emoji}}</text>
+          </view>
+          <view class="gbody">
+            <view class="gname">{{item.name}}</view>
+            <view class="gspec">{{item.spec || item.brand || '—'}}</view>
+            <!-- 第 27 轮 P0-7：结果里直接加购；库存状态用服务端阈值（api.lowStock()）判 -->
+            <view class="sstock {{item.stock <= 0 ? 'out' : (item.stock <= lowStock ? 'low' : '')}}">
+              {{item.stock <= 0 ? '暂时缺货' : (item.stock <= lowStock ? '仅剩 ' + item.stock + ' 件' : '库存 ' + item.stock)}}
+            </view>
+            <view class="gfoot">
+              <view class="gprice"><text class="gsym">¥</text>{{tools.fix2(item.price)}}</view>
+              <view
+                class="gadd {{item.stock <= 0 ? 'dis' : ''}}"
+                data-code="{{item.code}}"
+                catchtap="onAdd"
+              >{{item.stock <= 0 ? '缺货' : '＋'}}</view>
+            </view>
           </view>
         </view>
       </view>
+      <!-- 第 28 轮契约 7.8：触底分页状态（加载中… / 没有更多了） -->
+      <view class="smore" wx:if="{{moreErr}}">{{moreErr}}</view>
+      <view class="smore" wx:elif="{{loadingMore}}">加载中…</view>
+      <view class="smore" wx:elif="{{!hasMore}}">没有更多了</view>
     </view>
-  </view>
+  </block>
 </view>

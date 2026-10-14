@@ -124,7 +124,14 @@
     </div>
 
     <div class="cat-bar"><div class="chips" id="cats"></div></div>
+    <!-- 第 28 轮（7.8）：排序控件。取值与后端/小程序逐字相同：default|hot|price_asc|price_desc -->
+    <div class="sort-bar">
+      <span class="muted sort-lbl">排序</span>
+      <div class="chips" id="sorts"></div>
+    </div>
     <div class="products" id="grid"></div>
+    <!-- 第 28 轮（7.8）：分页底部状态——加载中… / 加载更多 / 没有更多了 -->
+    <div class="more-bar" id="moreBar"></div>
   </section>
 
   <!-- ============ 我的订单 ============ -->
@@ -285,7 +292,20 @@ const yuan = n => '¥' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
 
 let curCat = '全部', curFilter = '', view = 'home', selCode = null, detailQty = 1, deliveryType = 'pickup';
 let pickedAddrId = 0, editAddrId = 0;   // 地址簿（D18）：当前选中的地址 / 正在编辑的地址
-let searchTimer = null;                 // 第 27 轮（P1-10）：搜索防抖计时器
+// 第 28 轮（7.8）：搜索防抖 300ms；排序/分页状态与后端契约逐字对齐
+let searchTimer = null;
+const PAGE_SIZE = 20;
+const SORT_TABS = [['default', '综合'], ['hot', '销量'], ['price_asc', '价格↑'], ['price_desc', '价格↓']];
+let curSort = 'default';
+let pageOffset = 0;
+let hasMore = false;
+let totalCount = 0;
+let shownCount = 0;
+let loadingMore = false;
+let listSeq = 0;        // 请求序号：慢响应回来时若已换词/翻页就丢弃，避免闪回旧结果
+let moreObserver = null;   // 第 28 轮（7.8）：触底自动加载的观察器（切走视图/清空网格时断开，不留残留）
+let moreAutoKey = '';      // 同一页（分类+排序+关键词+offset）只自动触发一次，防重复请求
+let hotCache = null;    // 线上热销只拉一次（无结果推荐与首页共用同一份）                 // 第 27 轮（P1-10）：搜索防抖计时器
 let modeSettled = false;                // 第 27 轮（P0-1）：探测结果没回来前不下「离线」结论
 
 let toastTimer = null;
@@ -398,26 +418,159 @@ function picHTML(p, cls) {
     : esc(p.emoji || emojiOf(p.name));
 }
 function renderCats() {
-  const cats = ['全部'].concat([...new Set(products().map(p => p.category).filter(Boolean))]);
-  $('cats').innerHTML = cats.map(c =>
-    '<div class="chip' + (c === curCat ? ' on' : '') + '" role="button" tabindex="0" onclick="pickCat(\'' + esc(c) + '\')" onkeydown="keyAct(event,pickCat,\'' + esc(c) + '\')">' + esc(c) + '</div>').join('');
+  // 第 28 轮（7.8）金刚区：最多 8 个分类，按件数降序（并列按名称）；纯 emoji/CSS，不引图片
+  const counts = {};
+  products().forEach(p => { const c = p.category || '未分类'; counts[c] = (counts[c] || 0) + 1; });
+  const cats = Object.keys(counts).sort((a, b) => (counts[b] - counts[a]) || a.localeCompare(b)).slice(0, 8);
+  $('cats').innerHTML = ['全部'].concat(cats).map(c =>
+    '<div class="chip' + (c === curCat ? ' on' : '') + '" role="button" tabindex="0" onclick="pickCat(\'' + esc(c) + '\')" onkeydown="keyAct(event,pickCat,\'' + esc(c) + '\')">' + emojiOf(c) + ' ' + esc(c) + '</div>').join('');
 }
-function pickCat(c) { curCat = c; renderCats(); renderGrid(); }
-// 第 27 轮（P1-10）：每敲一个字就整块重建商品卡 DOM 太费，250ms 内只渲染最后一次输入
+function renderSorts() {
+  const el = $('sorts'); if (!el) return;
+  el.innerHTML = SORT_TABS.map(t =>
+    '<button type="button" class="chip' + (curSort === t[0] ? ' on' : '') + '" onclick="pickSort(\'' + t[0] + '\')">' + t[1] + '</button>').join('');
+}
+// 切分类 / 换排序都要**重置 offset**（7.8：分页同构），否则会从第 2 页接着看
+function pickCat(c) { curCat = c; pageOffset = 0; renderCats(); renderGrid(); }
+function pickSort(s) { curSort = s; pageOffset = 0; renderSorts(); renderGrid(); }
+
+// 第 28 轮（7.8）：防抖 300ms——打字期间不发请求，也不清空已有结果（不闪）。
 function doSearch() {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(renderGrid, 250);
+  searchTimer = setTimeout(() => { searchTimer = null; pageOffset = 0; renderGrid(); }, 300);
 }
+
+function gridQuery() {
+  const kw = (($('q') && $('q').value) || '').trim();
+  return {
+    keyword: kw,
+    category: (curCat && curCat !== '全部') ? curCat : '',
+    onSale: 1,
+    sort: curSort,
+    limit: PAGE_SIZE,
+    offset: pageOffset
+  };
+}
+
+// 无结果：文案带关键词原文（7.8），下面补 6 件热销（/api/products/hot），不让页面空着
+function paintEmpty(q, hotItems) {
+  const kw = String(q.keyword || '').trim();
+  const msg = kw ? ('没找到「' + esc(kw) + '」，换个词试试') : '这个分类暂时没有在售商品';
+  const cards = (hotItems || []).map(cardHTML).join('');
+  $('grid').innerHTML =
+    '<div class="empty" style="grid-column:1/-1"><span class="big">🔍</span>' + msg + '</div>' +
+    (cards ? '<div class="hot-title" style="grid-column:1/-1">大家都在买</div>' + cards : '');
+}
+function renderEmptyState(q, seq) {
+  if (!SdyApi.on()) {                      // 离线：本地热销，同步渲染（离线可用）
+    paintEmpty(q, Mall.listPage({ sort: 'hot', onSale: 1, limit: 6, offset: 0 }).items);
+    return;
+  }
+  paintEmpty(q, null);                     // 先给文案，热销到了再补（绝不留白屏）
+  if (hotCache) { paintEmpty(q, hotCache); return; }
+  SdyApi.hotProducts(6).then(res => {
+    hotCache = (res && res.items) || [];
+    if (seq === listSeq) paintEmpty(q, hotCache);   // 用户还停在同一个空结果上才补画面
+  }).catch(() => { /* 热销拉不到就只留文案，不打扰顾客 */ });
+}
+
+function paintGrid(res, q, append) {
+  const items = (res && res.items) || [];
+  totalCount = (res && res.total) || 0;
+  hasMore = !!(res && res.hasMore);
+  if (append) {
+    shownCount += items.length;
+    $('grid').innerHTML += items.map(cardHTML).join('');
+  } else {
+    shownCount = items.length;
+    if (items.length) $('grid').innerHTML = items.map(cardHTML).join('');
+  }
+  renderMoreBar();
+  if (!append && !items.length) renderEmptyState(q, listSeq);
+}
+
+// 触底自动加载（第 28 轮 7.8）：moreBar 快进视口就自动取下一页，不用顾客去点。
+// 两个兜底：① 不支持 IntersectionObserver 的老浏览器 → 直接不建观察器，底部的
+// 「加载更多」按钮照旧可点；② hasMore 变 false / 已离开视口 → 按钮本身也不会再出现。
+const MORE_ROOT_MARGIN = '160px 0px';   // 提前 160px 触发，滚到底之前就开始取，体感更顺
+function stopMoreAuto() {
+  if (moreObserver) { try { moreObserver.disconnect(); } catch (e) { /* 老实现没有 disconnect 也不该炸 */ } }
+  moreObserver = null;
+}
+function moreAutoLoad() {
+  if (!hasMore || loadingMore) return;          // 没有下一页 / 已在取：什么都不做
+  const kw = (($('q') && $('q').value) || '').trim();
+  const key = curCat + '|' + curSort + '|' + kw + '|' + pageOffset;
+  if (moreAutoKey === key) return;              // 同一页只发一次，重复触发直接吞掉
+  moreAutoKey = key;
+  loadMore();
+}
+function ensureMoreAuto() {
+  const el = $('moreBar');
+  if (!el) return;
+  if (typeof IntersectionObserver === 'undefined') { stopMoreAuto(); return; }   // 老浏览器：按钮兜底
+  if (moreObserver) return;                     // 观察器只建一个，元素身份不变
+  try {
+    moreObserver = new IntersectionObserver(entries => {
+      for (let i = 0; i < (entries || []).length; i++) {
+        const e = entries[i];
+        if (e && (e.isIntersecting || e.intersectionRatio > 0)) { moreAutoLoad(); return; }
+      }
+    }, { rootMargin: MORE_ROOT_MARGIN });
+    moreObserver.observe(el);
+  } catch (e) {
+    moreObserver = null;    // 建不起来就当没有：不影响按钮兜底
+  }
+}
+
+function renderMoreBar() {
+  const el = $('moreBar'); if (!el) return;
+  if (loadingMore) { el.innerHTML = '<span class="muted">加载中…</span>'; ensureMoreAuto(); return; }
+  if (!totalCount) { el.innerHTML = ''; stopMoreAuto(); return; }   // 无结果/清空网格：不留观察器
+  el.innerHTML = hasMore
+    ? '<button type="button" class="btn btn-ghost" onclick="loadMore()">加载更多（已显示 ' + shownCount + ' / ' + totalCount + ' 件）</button>'
+    : '<span class="muted">没有更多了</span>';
+  ensureMoreAuto();
+}
+
+// 首页 / 搜索：从当前 offset 取一页并整块替换（offset 由调用方先归零）
 function renderGrid() {
-  const kw = (($('q') && $('q').value) || '').trim().toLowerCase();
-  const list = products().filter(p => {
-    if (curCat !== '全部' && p.category !== curCat) return false;
-    if (!kw) return true;
-    return (p.name + ' ' + (p.brand || '') + ' ' + p.code).toLowerCase().includes(kw);
+  moreAutoKey = '';                       // 新一页（换词/换分类/换排序/刷新）允许再自动触发一次
+  const q = gridQuery();
+  if (!SdyApi.on()) { paintGrid(Mall.listPage(q), q, false); return; }   // 离线同步渲染
+  const seq = ++listSeq;
+  SdyApi.listProducts(q).then(res => {
+    if (seq !== listSeq) return;            // 过期响应：用户已换词/翻页，别闪回旧结果
+    paintGrid(res, q, false);
+  }).catch(e => {
+    if (seq !== listSeq) return;
+    // 后端抽风：退回本地兜底，并把原因说出来（不静默假装是后端数据）
+    paintGrid(Mall.listPage(q), q, false);
+    toast('⚠️ 后端没响应，先用本地数据给你看：' + ((e && e.message) || e), 3800, 'warn');
   });
-  $('grid').innerHTML = list.length
-    ? list.map(cardHTML).join('')
-    : '<div class="empty" style="grid-column:1/-1"><span class="big">🔍</span>没有找到相关商品，换个关键词试试</div>';
+}
+
+// 触底 / 点「加载更多」：追加下一页（7.8），加载中与没有更多都由 renderMoreBar 明确显示
+function loadMore() {
+  if (loadingMore || !hasMore) return;
+  const next = pageOffset + PAGE_SIZE;
+  const q = gridQuery(); q.offset = next;
+  loadingMore = true;
+  renderMoreBar();
+  const done = (res, err) => {
+    loadingMore = false;
+    if (err) { renderMoreBar(); return toast('⚠️ 加载更多失败：' + err, 3800, 'warn'); }
+    pageOffset = next;
+    paintGrid(res, q, true);
+  };
+  if (!SdyApi.on()) { done(Mall.listPage(q), ''); return; }
+  const seq = ++listSeq;
+  SdyApi.listProducts(q).then(res => {
+    if (seq === listSeq) done(res, '');
+    else { loadingMore = false; renderMoreBar(); }
+  }).catch(e => {
+    if (seq === listSeq) done(null, (e && e.message) || String(e));
+  });
 }
 function cardHTML(p) {
   const out = p.stock <= 0;
@@ -793,6 +946,7 @@ async function advanceMine(id) {
 /* ---------------- 视图 ---------------- */
 function switchView(v) {
   view = v;
+  if (v !== 'home') stopMoreAuto();   // 离开首页就断开观察器（不残留、不误触发加载）
   $('viewHome').className = v === 'home' ? '' : 'hide';
   $('viewOrders').className = v === 'orders' ? '' : 'hide';
   $('tabHome').className = 'tn' + (v === 'home' ? ' on' : '');
@@ -821,7 +975,7 @@ async function scanNow() {
 
 /* ---------------- 刷新 / 启动 ---------------- */
 function refreshAll() {
-  renderCats(); renderGrid(); renderCartBadge(); renderFilters(); renderOrders(); renderMyPrice();
+  renderCats(); renderSorts(); renderGrid(); renderCartBadge(); renderFilters(); renderOrders(); renderMyPrice();
   const cs = $('cartSheet');
   if (cs.className.indexOf('show') >= 0) renderCart();
 }

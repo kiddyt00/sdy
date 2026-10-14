@@ -23,7 +23,7 @@ function mkFetch(routes) {
     let body = null;
     if (opts && opts.body) { try { body = JSON.parse(opts.body); } catch (e) { body = opts.body; } }
     const path = String(url).replace(/^https?:\/\/[^/]+/, '');
-    calls.push({ method: method, path: path, url: String(url), body: body });
+    calls.push({ method: method, path: path, url: String(url), body: body, headers: (opts && opts.headers) || null });
     for (const r of routes) {
       if (r.method === method && (r.path === path || (r.re && r.re.test(path)))) {
         if (r.throw) throw new Error(r.throw);
@@ -599,6 +599,193 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     let msg3 = '';
     try { await SdyApi.sync('13800138000'); } catch (e) { msg3 = e.message || String(e); }
     ok(msg3.indexOf('数据库开小差了') >= 0, '真错误照抛（页面要能显示错误态）：' + msg3);
+  }
+
+  /* ============ ⑩ 第 28 轮：列表 / 热销 / 替代 / 订单筛选 / CSV 导出 ============ */
+  section('■ 第 28 轮：商品列表 / 热销 / 缺货替代 / 订单筛选 / CSV 导出（7.2–7.6、7.8）');
+  {
+    // ① 查询串拼装是纯函数：先逐字钉死，后面所有请求都以它为准
+    ok(SdyApi.SORTS.join(',') === 'default,hot,price_asc,price_desc,stock_desc',
+      '排序取值三端逐字相同：' + SdyApi.SORTS.join(','));
+    ok(SdyApi.productQuery({ keyword: '可乐', category: '饮料', onSale: 1, phone: '13800138000', sort: 'price_asc', limit: 20, offset: 40 }) ===
+      '?keyword=%E5%8F%AF%E4%B9%90&category=%E9%A5%AE%E6%96%99&onSale=1&phone=13800138000&sort=price_asc&limit=20&offset=40',
+      'productQuery 字段顺序逐字：keyword/category/onSale/phone/sort/limit/offset');
+    ok(SdyApi.productQuery({ keyword: '', category: '', onSale: 0, sort: '' }) === '',
+      'productQuery：空值不拼、onSale 只认 1（0/空 = 不过滤）');
+
+    // ② listProducts：在线拼串 + 服务端 total/hasMore/tier 原样透传
+    fresh();
+    const fp = mkFetch(serverRoutes([
+      { method: 'GET', re: /^\/api\/products\?/, body: { items: SERVER_PRODUCTS, total: 45, limit: 20, offset: 0, hasMore: true, tier: 'wholesale' } }
+    ]));
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fp, mall: Mall, timeoutMs: 50 });
+    global.fetch = fp;
+    await SdyApi.probe();
+    Mall.setMyPhone('13800138000');
+    const lp = await SdyApi.listProducts({ keyword: '可乐', onSale: 1, sort: 'price_asc', limit: 20, offset: 0 });
+    const pCall = fp.calls.filter(c => c.path.indexOf('/api/products?') === 0)[0];
+    ok(!!pCall && pCall.path === '/api/products?keyword=%E5%8F%AF%E4%B9%90&onSale=1&phone=13800138000&sort=price_asc&limit=20&offset=0',
+      'listProducts 带上 keyword/onSale/phone/sort/limit/offset：' + (pCall && pCall.path));
+    ok(lp.total === 45 && lp.hasMore === true && lp.limit === 20 && lp.offset === 0 && lp.tier === 'wholesale',
+      'listProducts 透传 total/hasMore/limit/offset/tier（total 是过滤后真实总数，不是本页条数）');
+    ok(lp.items.length === 2 && lp.items[1].code === '6902083881234' && lp.items[1].price === 1.8,
+      'listProducts 的 items 走 fromServerProduct 映射成页面模型');
+
+    // ②b 老服务端没回 hasMore → 按 offset+本页条数 < total 推断
+    const fp0 = mkFetch(serverRoutes([{ method: 'GET', re: /^\/api\/products\?/, body: { items: SERVER_PRODUCTS, total: 45 } }]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fp0, mall: Mall, timeoutMs: 50 });
+    global.fetch = fp0;
+    await SdyApi.probe();
+    Mall.setMyPhone('13800138000');
+    const lp0 = await SdyApi.listProducts({ limit: 20, offset: 44 });
+    ok(lp0.hasMore === false && lp0.total === 45,
+      'hasMore 缺失时兜底推断（offset 44 + 2 条 > total 45 → false）');
+
+    // ②c 离线（没连上后端）形状完全一致：页面零分叉
+    SdyApi._resetForTest();
+    const off = await SdyApi.listProducts({ limit: 20, offset: 0 });
+    ok(!!off && Array.isArray(off.items) && typeof off.total === 'number' && off.limit === 20 && off.offset === 0 &&
+      typeof off.hasMore === 'boolean' && !!off.tier,
+      '离线 listProducts 返回同一形状 {items,total,limit,offset,hasMore,tier}');
+
+    // ③ hotProducts：默认 8、上限 20、有手机号才追加 phone
+    const fh = mkFetch(serverRoutes([
+      { method: 'GET', re: /^\/api\/products\/hot/, body: { items: [SERVER_PRODUCTS[0]], total: 1 } }
+    ]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fh, mall: Mall, timeoutMs: 50 });
+    global.fetch = fh;
+    await SdyApi.probe();
+    Mall.setMyPhone('');
+    await SdyApi.hotProducts();
+    await SdyApi.hotProducts(99);
+    const hotCalls = fh.calls.filter(c => c.path.indexOf('/api/products/hot') === 0);
+    ok(hotCalls[0] && hotCalls[0].path === '/api/products/hot?limit=8',
+      'hotProducts() 默认 limit=8：' + (hotCalls[0] && hotCalls[0].path));
+    ok(hotCalls[1] && hotCalls[1].path === '/api/products/hot?limit=20',
+      'hotProducts(99) 夹到上限 20：' + (hotCalls[1] && hotCalls[1].path));
+    Mall.setMyPhone('13800138000');
+    await SdyApi.hotProducts(6);
+    const hotCalls2 = fh.calls.filter(c => c.path.indexOf('/api/products/hot') === 0);
+    ok(hotCalls2[2] && hotCalls2[2].path === '/api/products/hot?limit=6&phone=13800138000',
+      'hotProducts 只在有手机号时追加 &phone=（有效价口径）：' + (hotCalls2[2] && hotCalls2[2].path));
+    ok(hotCalls2[0].path.indexOf('phone') < 0, 'hotProducts 没有手机号时绝不带 phone 参数');
+
+    // ④ alternatives：code 缺失就地安静降级（不发请求、不报错）
+    const fa = mkFetch(serverRoutes([
+      { method: 'GET', re: /^\/api\/products\/alternatives/, body: { items: [SERVER_PRODUCTS[1]], total: 1 } }
+    ]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fa, mall: Mall, timeoutMs: 50 });
+    global.fetch = fa;
+    await SdyApi.probe();
+    const before = fa.calls.length;
+    const empty = await SdyApi.alternatives('', 5);
+    ok(empty.items.length === 0 && empty.total === 0 && fa.calls.length === before,
+      'alternatives(空 code) 返回 {items:[],total:0} 且一次请求都不发（页面安静降级，不是 400）');
+    const alt = await SdyApi.alternatives('6901234567892');
+    const aCall = fa.calls.filter(c => c.path.indexOf('/api/products/alternatives') === 0)[0];
+    ok(!!aCall && aCall.path === '/api/products/alternatives?code=6901234567892&limit=5',
+      'alternatives 逐字带 code 与 limit（默认 5）：' + (aCall && aCall.path));
+    ok(alt.items.length === 1 && alt.total === 1, 'alternatives 返回 {items,total}');
+
+    // ⑤ sync(opts.filter)：筛选参数只做筛选，身份 phone 绝不被 filter 顶掉
+    const fs = mkFetch(serverRoutes([
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: SERVER_ORDERS, total: 3 } }
+    ]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fs, mall: Mall, timeoutMs: 50 });
+    global.fetch = fs;
+    await SdyApi.probe();
+    await SdyApi.sync('13800138000', { all: false, filter: { q: '张三', status: 'pending,delivering', date: '2026-10-10', type: 'pickup' } });
+    const oCall = fs.calls.filter(c => c.path.indexOf('/api/orders') === 0)[0];
+    ok(!!oCall && oCall.path === '/api/orders?phone=13800138000&q=%E5%BC%A0%E4%B8%89&status=pending%2Cdelivering&date=2026-10-10&type=pickup',
+      'sync 把 filter 的原样拼进 query（q/status/date/from/to/type 都是新名字）：' + (oCall && oCall.path));
+    const rs = await SdyApi.sync('13800138000', { all: false, filter: { q: 'x', phone: '13999999999' } });
+    const oCall2 = fs.calls.filter(c => c.path.indexOf('/api/orders') === 0)[1];
+    ok(!!oCall2 && oCall2.path.indexOf('phone=13800138000') > 0 && oCall2.path.indexOf('13999999999') < 0,
+      'filter 里混进 phone 也顶不掉身份参数（身份只归 phone 通道）：' + (oCall2 && oCall2.path));
+    ok(!!rs && rs.total === 3, 'sync 返回值新增 total（过滤后真实总数）：' + (rs && rs.total));
+
+    // ⑤b 管理端（all:true）：不带手机号也照拉全店单，筛选照旧生效
+    await SdyApi.sync(null, { all: true, filter: { status: 'done' } });
+    const oAll = fs.calls.filter(c => c.path.indexOf('/api/orders') === 0)[2];
+    ok(!!oAll && oAll.path === '/api/orders?status=done',
+      '管理端 sync(null,{all:true,filter}) 不带 phone 身份、只带筛选：' + (oAll && oAll.path));
+    ok(!!oAll.headers && oAll.headers['X-Admin'] === '1', '管理端请求带 X-Admin: 1（adminMarked 通道）');
+
+    // ⑥ 导出地址与文件名（纯函数）
+    ok(SdyApi.ordersCsvURL({ q: 'a b', status: 'done', type: 'pickup' }) === '/api/orders/export.csv?q=a%20b&status=done&type=pickup',
+      'ordersCsvURL 拼串逐字（空格转义成 %20）');
+    ok(SdyApi.ordersCsvURL({ phone: '139', q: 'x' }) === '/api/orders/export.csv?q=x',
+      '导出筛选里绝不出现 phone（身份与筛选两条通道不混）');
+    ok(SdyApi.csvFilename(new Date(2024, 0, 2, 3, 4)) === 'orders-20240102-0304.csv',
+      'csvFilename 是本地时间的 orders-YYYYMMDD-HHMM.csv');
+
+    // ⑦ Node（无 DOM）：必须返回可断言的形状，而不是抛未捕获异常
+    SdyApi._resetForTest();
+    let csvThrew = '', rn = null;
+    try { rn = await SdyApi.downloadOrdersCSV({ status: 'done' }); } catch (e) { csvThrew = (e && e.message) || String(e); }
+    ok(csvThrew === '', 'Node 无 DOM 时 downloadOrdersCSV 不抛未捕获异常（' + (csvThrew || '没抛') + '）');
+    ok(!!rn && rn.ok === false && rn.reason === '无浏览器环境' &&
+      rn.path === '/api/orders/export.csv?status=done' && /^orders-\d{8}-\d{4}\.csv$/.test(rn.filename),
+      'Node 返回 {ok:false, reason:"无浏览器环境", path, filename} 供断言');
+
+    // ⑦b 浏览器分支：真的用 <a download> 触发下载，且带 X-Admin
+    SdyApi._resetForTest();
+    let clicks = 0, seen = null;
+    const seqOrder = [];
+    const fakeA = { href: '', download: '', click() { clicks++; seqOrder.push('click'); }, parentNode: null };
+    const fdl = async (u, o) => {
+      seen = { u: String(u), o: o || {} };
+      return {
+        ok: true, status: 200,
+        blob: async () => 'BLOB',
+        headers: { get: (k) => (String(k).toLowerCase() === 'content-disposition' ? 'attachment; filename="orders-20240102-0304.csv"' : '') }
+      };
+    };
+    SdyApi.configure({
+      base: 'http://api.test', fetchImpl: fdl, mall: Mall,
+      doc: { createElement: () => fakeA, body: null },
+      createObjectURL: () => 'blob:fake', revokeObjectURL: () => { seqOrder.push('revoke'); }
+    });
+    global.fetch = fdl;
+    const rb = await SdyApi.downloadOrdersCSV({ status: 'done' });
+    ok(clicks === 1 && rb.ok === true && rb.filename === 'orders-20240102-0304.csv' && fakeA.download === 'orders-20240102-0304.csv',
+      '浏览器分支真的点了一次 <a download>，文件名优先用服务端 Content-Disposition');
+    // ⑦b-2 释放 blob URL 不能紧跟 click() 同步发生：Firefox/Safari 会因此取消下载
+    ok(seqOrder.join() === 'click',
+      'revokeObjectURL 不在 click() 之后同步执行（避免 Firefox/Safari 取消下载）：' + seqOrder.join()) ;
+    await new Promise(r => setTimeout(r, 5));
+    ok(seqOrder.join() === 'click,revoke', 'revokeObjectURL 在下一轮事件循环里被调用（延迟释放）');
+    ok(!!seen && seen.o.method === 'GET' && seen.u === 'http://api.test/api/orders/export.csv?status=done' &&
+      !!seen.o.headers && seen.o.headers['X-Admin'] === '1',
+      '导出请求是 GET /api/orders/export.csv?<filter> 且带 X-Admin: 1');
+    ok(!!seen && seen.o.credentials === 'same-origin', '导出请求带 credentials=same-origin（管理员 Cookie 才认得出人）');
+
+    // ⑦c 真失败必须 throw（后台的 catch 靠它弹红 toast，绝不静默）
+    const fbad = async () => ({ ok: false, status: 403, text: async () => JSON.stringify({ error: '需要管理员身份' }) });
+    SdyApi._resetForTest();
+    SdyApi.configure({
+      base: 'http://api.test', fetchImpl: fbad, mall: Mall,
+      doc: { createElement: () => ({ click() {} }), body: null },
+      createObjectURL: () => 'blob:x', revokeObjectURL: () => {}
+    });
+    let badMsg = '';
+    try { await SdyApi.downloadOrdersCSV({}); } catch (e) { badMsg = (e && e.message) || String(e); }
+    ok(badMsg.indexOf('需要管理员身份') >= 0, '导出失败抛出服务端原文（后台据此报错）：' + badMsg);
+
+    // ⑦d 浏览器缺 URL.createObjectURL：也要 throw，不能返回 ok:false 让后台假报成功
+    SdyApi._resetForTest();
+    SdyApi.configure({ mall: Mall, doc: { createElement: () => ({}) } });
+    let noUrl = '';
+    const realURL = global.URL;
+    try {
+      global.URL = undefined;   // 真浏览器缺这个 API 的样子（Node 自带它，必须显式摘掉才能模拟）
+      try { await SdyApi.downloadOrdersCSV({}); } catch (e) { noUrl = (e && e.message) || String(e); }
+    } finally { global.URL = realURL; }
+    ok(noUrl.indexOf('blob 下载') >= 0, '浏览器缺 blob 下载能力时 throw（不静默、不假报成功）：' + noUrl);
   }
 
   console.log('\n========================================');

@@ -874,6 +874,119 @@ const Admin = (() => {
     return { key: key, label: label, days: keys, from: keys[0], to: keys[keys.length - 1], count: keys.length };
   }
 
+  /* ---------------- 订单筛选：参数拼装 / 本地兜底（第 28 轮 7.5、7.8） ----------------
+   * 纯函数，供后台筛选条与 CSV 导出共用**同一个** filter 对象：只要两处都走
+   * orderFilterQuery()，就不可能出现「列表筛了、导出没筛」的口径分叉。
+   * 约定（与 /api/orders、/api/orders/export.csv 逐字一致）：
+   *   q 顾客名/手机号/订单号模糊 · status 逗号分隔多值或单个 · date 本地日 YYYY-MM-DD
+   *   from/to 含端点的区间（date 优先于 from/to）· type pickup|delivery
+   * **filter 里绝不出现 phone**：身份照第 27 轮规则（管理员 > 员工 > openid > phone > 400），
+   * 筛选参数一律不参与身份判定；phone 由 sync() 的身份通道单独携带。
+   */
+  const ORDER_STATUSES = ['pending', 'delivering', 'ready', 'done', 'cancelled'];
+  const ORDER_DATE_PRESETS = [['today', '今天'], ['7d', '近 7 天'], ['custom', '自定义']];
+
+  function dayStart(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+  function dayEnd(d) { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; }
+  // 日期入参一律当**本地日**解析（YYYY-MM-DD 直接 new Date() 会被当 UTC，东八区会差一天）
+  function parseDay(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s == null ? '' : s).trim());
+    if (!m) return null;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function addDays(d, n) { const x = dayStart(d); x.setDate(x.getDate() + n); return x; }
+  function dayStr(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+
+  // 日期选择 → {date} 或 {from,to}；自定义填半截就只带半截（服务端按开区间处理）。
+  // 'none'（全部时间）= 不带任何日期参数（默认不出现；只有老板显式选「全部时间」才有）。
+  function orderDateRange(preset, from, to, now) {
+    const base = now ? new Date(now) : new Date();
+    if (preset === 'none') return {};
+    if (preset === 'custom') {
+      const o = {};
+      const a = (from == null ? '' : String(from)).trim();
+      const b = (to == null ? '' : String(to)).trim();
+      if (a) o.from = a;
+      if (b) o.to = b;
+      return o;
+    }
+    if (preset === '7d') return { from: dayStr(addDays(base, -6)), to: dayStr(base) };
+    return { date: dayStr(base) };   // today（默认）
+  }
+
+  // 下拉/输入 → 查询串。phone 在实现里根本没有出现的机会（第 28 条验收：phone 不被筛选覆盖）
+  function orderFilterQuery(input) {
+    const i = input || {};
+    const out = {};
+    const q = (i.q == null ? '' : String(i.q)).trim();
+    if (q) out.q = q;
+    const st = (i.status == null ? '' : String(i.status)).trim();
+    if (st && st !== 'all') out.status = st;
+    if (i.type && i.type !== 'all') out.type = i.type;
+    const dr = orderDateRange(i.date, i.from, i.to, i.now);
+    Object.keys(dr).forEach(k => { const v = dr[k]; if (v != null && v !== '') out[k] = v; });
+    return out;
+  }
+  function hasOrderFilter(f) {
+    const x = f || {};
+    return !!(x.q || x.status || x.date || x.from || x.to || x.type);
+  }
+  // 本地兜底：后端筛选已生效时它是幂等重算；后端未就绪时页面照样能筛，绝不假装筛过
+  function filterOrders(list, input) {
+    const i = input || {};
+    const q = (i.q == null ? '' : String(i.q)).trim().toLowerCase();
+    const status = (i.status == null ? '' : String(i.status)).trim();
+    const want = (status && status !== 'all') ? status.split(',').map(s => s.trim()).filter(Boolean) : null;
+    const dstr = (i.date == null ? '' : String(i.date)).trim();
+    const day0 = parseDay(dstr);
+    const lo = day0 ? dayStart(day0) : (parseDay(i.from) ? dayStart(parseDay(i.from)) : null);
+    const hiD = day0 || parseDay(i.to);
+    const hi = hiD ? dayEnd(hiD) : null;
+    const type = i.type && i.type !== 'all' ? i.type : null;
+    return (Array.isArray(list) ? list : []).filter(o => {
+      if (!o) return false;
+      const c = o.customer || {};
+      if (q) {
+        const hay = ((c.name || '') + ' ' + (c.phone || '') + ' ' + (o.id || '')).toLowerCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
+      if (want && want.indexOf(o.status) < 0) return false;
+      if (type && o.deliveryType !== type) return false;
+      if (lo || hi) {
+        const t = new Date(o.createdAt).getTime();
+        if (isNaN(t)) return false;
+        if (lo && t < lo.getTime()) return false;
+        if (hi && t > hi.getTime()) return false;
+      }
+      return true;
+    });
+  }
+
+  // ============ 第 28 轮 7.5 / 7.8：订单筛选同步 ============
+  // 筛选请求统一走这里（页面不再自己拼 sync），关键约定：
+  //   · 筛选结果**只用于本次渲染**，绝不写回订单镜像 —— 镜像始终是全店全量订单，
+  //     否则 renderDash() 的「当前待处理（不限日期）」「今日营业额」会被日期筛选悄悄截断。
+  //   · 后端 filter 未就绪时 sync 原样回全量，这里本地再筛一遍兜底（幂等，后端支持后无副作用）。
+  //   · 导出必须与列表同口径，所以返回的就是列表此刻看到的那一批。
+  function syncOrders(filter, api) {
+    const f = filter || {};
+    const call = api || (typeof SdyApi !== 'undefined' ? SdyApi : null);
+    const before = MallCore.getOrders();
+    if (!call || typeof call.sync !== 'function') {
+      return Promise.resolve(hasOrderFilter(f) ? filterOrders(before, f) : before);
+    }
+    return Promise.resolve()
+      .then(function () { return call.sync(null, { all: true, filter: f }); })
+      .catch(function () { return null; })   // 拉不到：用现有全量镜像 + 本地筛选兜底
+      .then(function () {
+        const after = MallCore.getOrders();
+        const backendFiltered = after.length !== before.length;
+        if (backendFiltered) return after;               // 后端已经筛过
+        return hasOrderFilter(f) ? filterOrders(after, f) : after;
+      });
+  }
+
   function aggregate(list, range) {
     const inSet = {};
     range.days.forEach(d => { inSet[d] = 1; });
@@ -1022,6 +1135,13 @@ const Admin = (() => {
     REPORT_RANGES: REPORT_RANGES,
     rangeOf: rangeOf,
     dayKey: dayKey,
+    syncOrders: syncOrders,
+    ORDER_STATUSES: ORDER_STATUSES,
+    ORDER_DATE_PRESETS: ORDER_DATE_PRESETS,
+    orderDateRange: orderDateRange,
+    orderFilterQuery: orderFilterQuery,
+    hasOrderFilter: hasOrderFilter,
+    filterOrders: filterOrders,
     buildReport: buildReport,
     reportText: reportText,
     getCustomers: getCustomers,

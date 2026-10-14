@@ -369,6 +369,57 @@ async function main() {
     api.clearSession()
   }
 
+  section('⑬ 第 28 轮：排序 / 分页 / 热销 / 同类推荐（真后端）')
+  {
+    // 向后兼容：只传 2 个参数仍返回数组（第 27 轮的页面就是这么调的）
+    const compat = await api.listProducts('', '')
+    ok(Array.isArray(compat) && compat.length >= 6, '两参调用仍返回数组（' + compat.length + ' 条）')
+
+    // 传 opts 才走分页契约：{items,total,limit,offset,hasMore,tier}
+    const p1 = await api.listProducts('', '', { sort: 'price_asc', limit: 3, offset: 0 })
+    ok(p1 && Array.isArray(p1.items) && p1.items.length === 3, 'limit=3 只回 3 条')
+    ok(p1.total >= 6 && p1.limit === 3 && p1.offset === 0,
+      'total 是全量条数（' + p1.total + '）、limit/offset 原样回传')
+    ok(p1.hasMore === true, '还有下一页：hasMore=true')
+    ok(typeof p1.tier === 'string', '带 tier 字段（' + JSON.stringify(p1.tier) + '）')
+    const asc = p1.items.map((p) => p.price)
+    ok(asc[0] <= asc[asc.length - 1], 'price_asc 页内价格递增：' + asc.join(' ≤ '))
+
+    const p2 = await api.listProducts('', '', { sort: 'price_asc', limit: 3, offset: 3 })
+    ok(p2.offset === 3 && p2.items.length >= 1, 'offset=3 拿到第二页 ' + p2.items.length + ' 条')
+    const dup = p2.items.filter((x) => p1.items.some((y) => y.code === x.code))
+    ok(dup.length === 0, '两页无重复（分页真在切片，不是重复第一页）')
+
+    const desc = await api.listProducts('', '', { sort: 'price_desc', limit: 5, offset: 0 })
+    const dsc = desc.items.map((p) => p.price)
+    ok(dsc[0] >= dsc[dsc.length - 1], 'price_desc 页内价格递减：' + dsc.join(' ≥ '))
+
+    // 销量降序由服务端算（本地没有 sold 字段，离线只是兜底）
+    const hot = await api.listProducts('', '', { sort: 'hot', limit: 6, offset: 0 })
+    ok(hot.items.length >= 3, 'sort=hot 有商品（' + hot.items.length + ' 条）')
+
+    const hp = await api.hotProducts(6)
+    ok(hp.items.length >= 1 && hp.items.length <= 6, 'hotProducts(6) 回 1~6 条（' + hp.items.length + '）')
+    ok(hp.items.every((p) => !!p.code && p.price >= 0), '热销条目映射正常（code/price 都在）')
+
+    // 同类推荐：排除自身；未知条码回空列表而不是 400（页面安静降级）
+    const alt = await api.alternatives('6901234567892', 5)
+    ok(alt.items.every((p) => p.code !== '6901234567892'), '同类推荐不含自己')
+    ok(alt.items.length <= 5, '同类推荐最多 5 条（' + alt.items.length + '）')
+    const altBad = await api.alternatives('0000000000000', 5)
+    ok(Array.isArray(altBad.items) && altBad.items.length === 0, '不存在的条码 → 空列表（不报错）')
+
+    // 分类 + 排序 + 分页三者可叠加
+    const cat = await api.listProducts('', '饮料', { sort: 'price_asc', limit: 2, offset: 0 })
+    ok(cat.items.length <= 2 && cat.items.every((p) => p.category === '饮料'),
+      '分类 + 排序 + 分页可叠加（' + cat.items.length + ' 条）')
+
+    // 客户端不替服务端兜底未知排序值：400 原文必须透出
+    let badSort = ''
+    try { await api.listProducts('', '', { sort: 'priceAsc' }) } catch (e) { badSort = e.message }
+    ok(badSort.indexOf('排序') >= 0, '未知 sort → 服务端 400 原文透出：' + badSort)
+  }
+
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')
   process.exit(failed ? 1 : 0)

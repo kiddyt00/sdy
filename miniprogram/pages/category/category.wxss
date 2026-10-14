@@ -64,6 +64,42 @@
   box-sizing: border-box;
 }
 
+/* 第 28 轮：排序分段控件（值逐字 default|hot|price_asc|price_desc） */
+.sortbar {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 14rpx;
+  padding: 6rpx;
+  margin-bottom: 16rpx;
+}
+.stbtn {
+  flex: 1;
+  text-align: center;
+  font-size: 25rpx;
+  color: #4b5563;
+  padding: 12rpx 0;
+  border-radius: 10rpx;
+}
+.stbtn.on {
+  color: #16a34a;
+  font-weight: 600;
+  background: #dcfce7;
+}
+
+/* 第 28 轮：总数 + 触底分页状态 */
+.csum {
+  font-size: 22rpx;
+  color: #9ca3af;
+  margin-bottom: 12rpx;
+}
+.cmore {
+  text-align: center;
+  font-size: 24rpx;
+  color: #9ca3af;
+  padding: 22rpx 0 10rpx;
+}
+
 .crow {
   display: flex;
   background: #fff;

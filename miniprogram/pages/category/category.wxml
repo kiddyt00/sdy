@@ -21,7 +21,7 @@
       </view>
     </scroll-view>
 
-    <scroll-view class="cmain" scroll-y>
+    <scroll-view class="cmain" scroll-y bindscrolltolower="onLower" lower-threshold="80">
       <van-skeleton wx:if="{{loading}}" title row="4" />
 
       <!-- 第 27 轮 P0-1：失败 ≠ 「这个分类还没上架商品」，给错误卡 + 「重新加载」 -->
@@ -34,6 +34,18 @@
 
       <van-empty wx:elif="{{empty}}" description="这个分类还没上架商品" />
       <block wx:else>
+        <!-- 第 28 轮契约 7.8：右侧排序分段控件，值逐字 default|hot|price_asc|price_desc -->
+        <view class="sortbar">
+          <view
+            class="stbtn {{sort === item.v ? 'on' : ''}}"
+            wx:for="{{sorts}}"
+            wx:key="v"
+            data-sort="{{item.v}}"
+            bindtap="onSort"
+          >{{item.t}}</view>
+        </view>
+        <view class="csum">共 {{total}} 件</view>
+
         <view class="crow" wx:for="{{products}}" wx:key="code" data-code="{{item.code}}" bindtap="goDetail">
           <view class="cthumb">
             <image wx:if="{{item.img}}" class="cimg" src="{{item.img}}" mode="aspectFill" lazy-load />
@@ -56,6 +68,11 @@
             </view>
           </view>
         </view>
+
+        <!-- 第 28 轮契约 7.8：触底分页状态 -->
+        <view class="cmore" wx:if="{{moreErr}}">{{moreErr}}</view>
+        <view class="cmore" wx:elif="{{loadingMore}}">加载中…</view>
+        <view class="cmore" wx:elif="{{!hasMore}}">没有更多了</view>
       </block>
     </scroll-view>
   </view>

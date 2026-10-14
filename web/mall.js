@@ -471,6 +471,97 @@ const Mall = (() => {
     _addrWrite(all);
   }
 
+  // ---------------- 商品列表：关键词 / 筛选 / 排序 / 分页（第 28 轮 7.2、7.4、7.8） ----------------
+  // 排序取值三端逐字相同（7.8）：default|hot|price_asc|price_desc|stock_desc。
+  // 后端是价格/销量口径的真源；这里的纯函数只在离线（本地演示）与「后端抽风」时兜底，
+  // 口径必须与 server 一致，否则离线看到的顺序和连上后端后不一样。
+  const SORTS = ['default', 'hot', 'price_asc', 'price_desc', 'stock_desc'];
+  function normalizeSort(s) { return SORTS.indexOf(String(s == null ? '' : s)) >= 0 ? String(s) : 'default'; }
+  function byName(a, b) { return String(a.name || '').localeCompare(String(b.name || '')); }
+
+  // 近 N 天有效销量（与后端 sort=hot 同口径：pending / delivering / ready / done）
+  function salesOf(code, days) {
+    const since = Date.now() - (days == null ? 30 : days) * 86400000;
+    let n = 0;
+    getOrders().forEach(o => {
+      if (['pending', 'delivering', 'ready', 'done'].indexOf(o.status) < 0) return;
+      if (o.createdAt && o.createdAt < since) return;
+      (o.items || []).forEach(it => { if (it.code === code) n += Number(it.qty) || 0; });
+    });
+    return n;
+  }
+  function matchKeyword(p, kw) {
+    const k = String(kw == null ? '' : kw).trim().toLowerCase();
+    if (!k) return true;
+    return ((p.name || '') + ' ' + (p.brand || '') + ' ' + (p.code || '')).toLowerCase().indexOf(k) >= 0;
+  }
+  // 排序（不改入参数组）。default 保持原顺序（第 27 轮行为不变）。
+  function sortProducts(list, sort) {
+    const s = normalizeSort(sort);
+    const arr = (list || []).slice();
+    if (s === 'default') return arr;
+    if (s === 'price_asc' || s === 'price_desc') {
+      const dir = (s === 'price_asc') ? 1 : -1;
+      return arr.sort((a, b) => ((priceOf(a) - priceOf(b)) * dir) || byName(a, b));
+    }
+    if (s === 'stock_desc') {
+      return arr.sort((a, b) => ((Number(b.stock) || 0) - (Number(a.stock) || 0)) || byName(a, b));
+    }
+    // hot：有销量的按销量降序；**没销量的排在后面而不是被排除**；并列上架优先 + 名称升序
+    return arr.sort((a, b) => {
+      const d = salesOf(b.code) - salesOf(a.code);
+      if (d) return d;
+      const on = ((b.onSale !== false) ? 1 : 0) - ((a.onSale !== false) ? 1 : 0);
+      if (on) return on;
+      return byName(a, b);
+    });
+  }
+  // 分页：limit=0 表示不限（与后端默认一致）；hasMore 由「已取条数 + offset < total」判定
+  function listPage(input) {
+    const q = input || {};
+    const all = q.list ? q.list.slice() : loadCatalog();
+    const onlySale = (q.onSale === 1 || q.onSale === '1' || q.onSale === true);
+    const list = all.filter(p => {
+      if (onlySale && p.onSale === false) return false;
+      if (q.category && (p.category || '未分类') !== q.category) return false;
+      return matchKeyword(p, q.keyword);
+    });
+    const total = list.length;
+    const sorted = sortProducts(list, q.sort);
+    const limit = Number(q.limit) > 0 ? Number(q.limit) : 0;
+    const offset = Number(q.offset) > 0 ? Number(q.offset) : 0;
+    const items = (limit > 0) ? sorted.slice(offset, offset + limit) : sorted.slice(offset);
+    return { items: items, total: total, limit: limit, offset: offset, hasMore: offset + items.length < total, tier: getMyTier() };
+  }
+  // 缺货替代（7.4）：同分类热销优先，不够用全店热销补足（不重复）；只回上架且有货、排除自身
+  function alternatives(code, limit) {
+    const n = Number(limit) > 0 ? Number(limit) : 5;
+    const self = getProduct(code);
+    const pool = loadCatalog().filter(p => p.code !== code && p.onSale !== false && (Number(p.stock) || 0) > 0);
+    const cat = self ? (self.category || '未分类') : '';
+    const same = cat ? sortProducts(pool.filter(p => (p.category || '未分类') === cat), 'hot') : [];
+    const rest = sortProducts(pool.filter(p => same.indexOf(p) < 0), 'hot');
+    const items = same.concat(rest).slice(0, n);
+    return { items: items, total: items.length };
+  }
+  // 防抖：搜索框每敲一个字就整块重建商品卡太费（7.8 要求 300ms）。
+  // flush/cancel/delay 是给测试用的（不改语义），页面只用 wrapped。
+  function debounce(fn, ms) {
+    const delay = (Number(ms) >= 0) ? Number(ms) : 300;
+    let t = null;
+    function wrapped() {
+      const self = this, args = arguments;
+      if (t) clearTimeout(t);
+      t = setTimeout(() => { t = null; fn.apply(self, args); }, delay);
+    }
+    wrapped.delay = delay;
+    wrapped.cancel = function () { if (t) clearTimeout(t); t = null; };
+    wrapped.flush = function () { if (t) { clearTimeout(t); t = null; fn(); } };
+    return wrapped;
+  }
+  // 全量商品档案（含下架）：管理端「内置示例商品」提示条在用（admin.html:1854）
+  function listProducts() { return loadCatalog(); }
+
   // ---------------- 测试辅助 ----------------
   function _resetForTest() {
     buyNow = null;
@@ -503,6 +594,15 @@ const Mall = (() => {
     getMyTier: getMyTier,
     priceOf: priceOf,
     isWholesalePrice: isWholesalePrice,
+    // 第 28 轮（7.2 / 7.4 / 7.8）：列表筛选/排序/分页、缺货替代、搜索防抖
+    SORTS: SORTS,
+    normalizeSort: normalizeSort,
+    matchKeyword: matchKeyword,
+    sortProducts: sortProducts,
+    listPage: listPage,
+    alternatives: alternatives,
+    debounce: debounce,
+    listProducts: listProducts,
     getCart: getCart,
     setBuyNow: setBuyNow,
     peekBuyNow: peekBuyNow,

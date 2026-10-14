@@ -19,7 +19,11 @@ const SdyApi = (() => {
 
   const LS_BASE_KEY = 'sdy_api_base';
   const LS_ADDR_KEY = 'sdy_addr_key';   // 地址簿身份钥匙：首次保存地址时服务端下发 32 位 hex，存本地
-  const DEFAULTS = { timeoutMs: 5000, base: '', fetchImpl: null, mall: null, admin: null };
+  // doc / createObjectURL / revokeObjectURL：只在 Node 测试里注入（浏览器留空即用全局 document/URL）
+  const DEFAULTS = {
+    timeoutMs: 5000, base: '', fetchImpl: null, mall: null, admin: null,
+    doc: null, createObjectURL: null, revokeObjectURL: null
+  };
 
   let cfg = Object.assign({}, DEFAULTS);
   let mode_ = 'local';      // 'server' | 'local'
@@ -243,6 +247,113 @@ const SdyApi = (() => {
     };
   }
 
+  // ---------------- 商品列表 / 热销 / 缺货替代（第 28 轮 7.2–7.4、7.8） ----------------
+  // 排序取值三端逐字相同（7.8）：default|hot|price_asc|price_desc|stock_desc。
+  // 未知值不在这里改写成 default：原样发给服务端，由服务端按契约回 400「排序方式不支持：<值>」，
+  // 免得前端「悄悄改成综合」把问题藏起来。
+  const SORTS = ['default', 'hot', 'price_asc', 'price_desc', 'stock_desc'];
+  const PRODUCT_QUERY_ORDER = ['keyword', 'category', 'onSale', 'phone', 'sort', 'limit', 'offset'];
+  const ORDER_QUERY_ORDER = ['phone', 'q', 'status', 'date', 'from', 'to', 'type'];  // 7.5：新名字，绝不复用 phone 做筛选
+  const HOT_QUERY_ORDER = ['limit', 'phone'];
+  const ALT_QUERY_ORDER = ['code', 'limit'];
+
+  // 查询串拼装（纯函数，Node 可逐字断言）：空值不拼、顺序固定。
+  function queryString(order, params) {
+    const p = params || {};
+    const parts = [];
+    order.forEach(k => {
+      const v = p[k];
+      if (k === 'onSale') {                       // 契约只认 onSale=1；0/'' 等于不过滤
+        if (v === 1 || v === '1' || v === true) parts.push('onSale=1');
+        return;
+      }
+      if (v == null) return;
+      if (typeof v === 'string' && v.trim() === '') return;
+      parts.push(k + '=' + encodeURIComponent(String(v)));
+    });
+    return parts.length ? '?' + parts.join('&') : '';
+  }
+  function productQuery(params) { return queryString(PRODUCT_QUERY_ORDER, params); }
+  // 订单筛选串只含 filter 的 6 个字段；phone 由身份通道单独拼，filter 里的 phone 会被无视
+  function orderFilterQuery(filter) { return queryString(ORDER_QUERY_ORDER.slice(1), filter); }
+
+  function num(v, dflt, max) {
+    const n = Number(v);
+    if (!isFinite(n) || n < 0) return dflt;
+    return (max && n > max) ? max : n;
+  }
+
+  // 离线兜底：与后端同口径的本地筛选/排序/分页（mall.js 提供纯函数，页面零分叉）
+  function localList(params) {
+    const m = M();
+    const lp = (typeof m.listPage === 'function')
+      ? m.listPage(params || {})
+      : { items: [], total: 0, limit: 0, offset: 0, hasMore: false };
+    return {
+      items: (lp.items || []).map(x => Object.assign({}, x)),
+      total: lp.total || 0,
+      limit: lp.limit || 0,
+      offset: lp.offset || 0,
+      hasMore: !!lp.hasMore,
+      tier: (m.getMyTier ? m.getMyTier() : 'retail')
+    };
+  }
+
+  // 商品列表（7.2）。有手机号就带上，才能拿到批发有效价（D24）。
+  async function listProducts(params) {
+    const p = Object.assign({}, params || {});
+    if (p.phone == null) {
+      const mp = M().getMyPhone ? M().getMyPhone() : '';
+      if (mp) p.phone = mp;
+    }
+    if (mode_ !== 'server') return localList(p);
+    const res = await req('GET', '/api/products' + productQuery(p));
+    const items = ((res && res.items) || []).map(fromServerProduct);
+    const total = (res && typeof res.total === 'number') ? res.total : items.length;
+    const limit = (res && typeof res.limit === 'number') ? res.limit : num(p.limit, 0, 200);
+    const offset = (res && typeof res.offset === 'number') ? res.offset : num(p.offset, 0);
+    return {
+      items: items,
+      total: total,
+      limit: limit,
+      offset: offset,
+      // 老服务端没回 hasMore 时按 total 推断（与小程序端同一套兜底）
+      hasMore: (res && typeof res.hasMore === 'boolean') ? res.hasMore : (offset + items.length < total),
+      tier: (res && res.tier) || (M().getMyTier ? M().getMyTier() : 'retail')
+    };
+  }
+
+  // 热销（7.3）：默认 8 件、最多 20 件；首页热销与「无结果推荐」共用。
+  async function hotProducts(limit) {
+    const n = num(limit, 8, 20) || 8;
+    const q = { limit: n };
+    const mp = M().getMyPhone ? M().getMyPhone() : '';
+    if (mp) q.phone = mp;
+    if (mode_ !== 'server') {
+      const lp = localList({ sort: 'hot', onSale: 1, limit: n, offset: 0 });
+      return { items: lp.items, total: lp.total };
+    }
+    const res = await req('GET', '/api/products/hot' + queryString(HOT_QUERY_ORDER, q));
+    const items = ((res && res.items) || []).map(fromServerProduct);
+    return { items: items, total: (res && typeof res.total === 'number') ? res.total : items.length };
+  }
+
+  // 缺货替代（7.4）：code 缺失就地安静降级成空列表，不发请求、不报错。
+  async function alternatives(code, limit) {
+    const c = String(code == null ? '' : code).trim();
+    const n = num(limit, 5, 20) || 5;
+    if (!c) return { items: [], total: 0 };
+    if (mode_ !== 'server') {
+      const m = M();
+      if (typeof m.alternatives !== 'function') return { items: [], total: 0 };
+      const r = m.alternatives(c, n);
+      return { items: r.items || [], total: (r.total == null ? (r.items || []).length : r.total) };
+    }
+    const res = await req('GET', '/api/products/alternatives' + queryString(ALT_QUERY_ORDER, { code: c, limit: n }));
+    const items = ((res && res.items) || []).map(fromServerProduct);
+    return { items: items, total: (res && typeof res.total === 'number') ? res.total : items.length };
+  }
+
   // ---------------- 镜像：后端 → localStorage（页面原有渲染无需改动） ----------------
   // phone 缺省时用本地记住的「我的手机号」——带上它，服务端才会按顾客等级下发有效价（D24）。
   //
@@ -260,6 +371,12 @@ const SdyApi = (() => {
     // 管理端（all）请求订单时**不能**带手机号：带了服务端就按手机号过滤，老板只看得到一个顾客的单。
     // 同源 localStorage 是共享的，老板自己也在顾客页下过单，所以这个「残留手机号」是真会发生的。
     const p = all ? '' : raw;
+    // 第 28 轮（7.5）：筛选参数只做筛选、不参与身份判定。这里**逐字段显式取值**而不是
+    // Object.assign(filter, …)：filter 里就算混进 phone，也绝不可能顶掉身份通道的 phone。
+    const filt = (opts && opts.filter) || {};
+    const oq = queryString(ORDER_QUERY_ORDER, {
+      phone: p, q: filt.q, status: filt.status, date: filt.date, from: filt.from, to: filt.to, type: filt.type
+    });
     // 运营参数（配送费 / 免运费门槛 / 低库存阈值 / 起送价）：服务端是真源。
     // 第 27 轮以前前端只用自己那份默认值，Go 与页面在 29.995 这种边界上会算出不同的钱。
     try {
@@ -276,19 +393,23 @@ const SdyApi = (() => {
     if (!p && !all) {
       // 顾客页 + 不知道自己的手机号 = 没有任何身份，干脆不问（灰度模式下问 = 拿回全店订单）
       m._save(m.KEYS.orders, []);
-      return { products: products, orders: [], tier: (pr && pr.tier) || '', needIdentity: true };
+      return { products: products, orders: [], tier: (pr && pr.tier) || '', needIdentity: true, total: 0 };
     }
     try {
-      const or = await req('GET', '/api/orders' + (p ? '?phone=' + encodeURIComponent(p) : ''));
+      const or = await req('GET', '/api/orders' + oq);
       orders = (or && or.items ? or.items : []).map(o => fromServerOrder(o, products));
       m._save(m.KEYS.orders, orders);
+      return {
+        products: products, orders: orders, tier: (pr && pr.tier) || '', needIdentity: false,
+        // 第 28 轮（7.5）：total 是「过滤后的真实总数」（服务端 COUNT(*)），不是当前页条数
+        total: (or && typeof or.total === 'number') ? or.total : orders.length
+      };
     } catch (e) {
       const msg = (e && e.message) || String(e);
       if (msg.indexOf('缺少身份') < 0) throw e;   // 真异常（断网 / 500）交给页面显示错误态
       m._save(m.KEYS.orders, []);                // 「没身份」= 本来就不该看到任何订单，不是错误
-      return { products: products, orders: [], tier: (pr && pr.tier) || '', needIdentity: true };
+      return { products: products, orders: [], tier: (pr && pr.tier) || '', needIdentity: true, total: 0 };
     }
-    return { products: products, orders: orders, tier: (pr && pr.tier) || '', needIdentity: false };
   }
 
   function mirroredOrder(id) {
@@ -540,6 +661,77 @@ const SdyApi = (() => {
     return req('GET', '/api/pricing/check');
   }
 
+  // ---------------- 订单导出 CSV（第 28 轮 7.6，后台用） ----------------
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function csvFilename(d) {
+    // 文件名用**本地时间**：老板看到的「今天」和自己电脑一致（orders-YYYYMMDD-HHMM.csv）
+    const x = (d == null) ? new Date() : new Date(d);
+    return 'orders-' + x.getFullYear() + pad2(x.getMonth() + 1) + pad2(x.getDate()) +
+      '-' + pad2(x.getHours()) + pad2(x.getMinutes()) + '.csv';
+  }
+  // 导出地址（纯函数，可逐字断言）：筛选参数与列表同一套；phone 永远不参与筛选。
+  function ordersCsvURL(filter) { return '/api/orders/export.csv' + orderFilterQuery(filter); }
+
+  // 浏览器里：fetch 拿 blob → <a download> 触发下载。失败一律 throw（后台 catch 会红 toast 报错）。
+  // Node / 无 DOM：按契约返回可断言的形状，**不抛未捕获异常**（页面侧另有明确提示，不静默）。
+  async function downloadOrdersCSV(filter) {
+    const path = ordersCsvURL(filter);
+    const filename = csvFilename();
+    const doc = cfg.doc || ((typeof document !== 'undefined') ? document : null);
+    const mkURL = cfg.createObjectURL ||
+      ((typeof URL !== 'undefined' && URL && typeof URL.createObjectURL === 'function') ? URL.createObjectURL.bind(URL) : null);
+    if (!doc) {
+      // 纯 Node（测试 / 脚本）环境：按可断言的形状返回，绝不抛未捕获异常
+      return { ok: false, reason: '无浏览器环境', path: path, filename: filename };
+    }
+    if (!mkURL) {
+      // 真浏览器但缺 API：必须 throw，后台的 catch 会红 toast 报错——不能返回 ok:false 让页面假报成功
+      throw new Error('这个浏览器不支持 blob 下载（URL.createObjectURL 缺失），请换新一点的浏览器再导出');
+    }
+    const f = fetchImpl();
+    if (!f) throw new Error('当前环境不支持 fetch');
+    // 导出是管理端动作：显式带 X-Admin: 1（与 reqHeaders 同一条通道），同源 Cookie 自动携带
+    const h = reqHeaders(null) || {};
+    h['X-Admin'] = '1';
+    let res;
+    try {
+      res = await f(url(path), { method: 'GET', credentials: 'same-origin', headers: h });
+    } catch (e) {
+      const why = (e && e.message) ? e.message : String(e);
+      throw new Error('无法连接后端（' + (base() || '同源') + '）：导出失败，请检查网络后重试 [技术原因：' + why + ']');
+    }
+    if (!res.ok) {
+      let text = '';
+      try { text = await res.text(); } catch (e) { text = ''; }
+      let data = null;
+      if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
+      throw new Error((data && (data.error || data.msg)) || ('导出失败：HTTP ' + res.status));
+    }
+    const blob = (typeof res.blob === 'function') ? await res.blob() : null;
+    if (!blob) throw new Error('导出失败：后端没有返回文件内容');
+    const cd = (res.headers && typeof res.headers.get === 'function') ? String(res.headers.get('Content-Disposition') || '') : '';
+    const mfn = /filename="?([^";]+)"?/.exec(cd);
+    const name = (mfn && mfn[1]) || filename;
+    const href = mkURL(blob);
+    const a = doc.createElement('a');
+    a.href = href;
+    a.download = name;
+    if (doc.body && typeof doc.body.appendChild === 'function') doc.body.appendChild(a);
+    a.click();
+    if (a.parentNode && typeof a.parentNode.removeChild === 'function') a.parentNode.removeChild(a);
+    // 释放 blob URL 必须**延迟**：Firefox / Safari 里紧跟 click() 同步 revoke 会把刚发起的下载
+    // 取消掉（Chrome 多数情况没事，但老板对账导出不能靠运气）。没有 setTimeout 时同步兜底。
+    const rv = cfg.revokeObjectURL || ((typeof URL !== 'undefined' && URL && URL.revokeObjectURL) ? URL.revokeObjectURL.bind(URL) : null);
+    if (rv) {
+      if (typeof setTimeout === 'function') {
+        setTimeout(() => { try { rv(href); } catch (e) { /* 释放失败不影响已经触发的下载 */ } }, 0);
+      } else {
+        rv(href);
+      }
+    }
+    return { ok: true, filename: name, path: path };
+  }
+
   function _resetForTest() {
     cfg = Object.assign({}, DEFAULTS);
     mode_ = 'local';
@@ -585,6 +777,16 @@ const SdyApi = (() => {
     deleteAddress: deleteAddress,
     resolveBarcode: resolveBarcode,
     pricingCheck: pricingCheck,
+    // 第 28 轮（7.2–7.6、7.8）：列表/热销/替代/导出。管理后台照这些签名调用。
+    SORTS: SORTS,
+    listProducts: listProducts,
+    hotProducts: hotProducts,
+    alternatives: alternatives,
+    downloadOrdersCSV: downloadOrdersCSV,
+    ordersCsvURL: ordersCsvURL,
+    csvFilename: csvFilename,
+    productQuery: productQuery,
+    orderFilterQuery: orderFilterQuery,
     fromServerProduct: fromServerProduct,
     fromServerOrder: fromServerOrder,
     _resetForTest: _resetForTest

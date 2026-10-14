@@ -45,7 +45,7 @@ run() { # run <显示名> <命令...>
   return 0
 }
 
-echo "############ 0/4 编译与静态检查 ############"
+echo "############ 0/5 编译与静态检查 ############"
 rm -f "$TMPDB" "$TMPDB-wal" "$TMPDB-shm"
 FMT="$(gofmt -l server 2>&1)"
 if [ -n "$FMT" ]; then
@@ -59,12 +59,12 @@ run "go vet" bash -c 'cd server && go vet ./...'
 run "go build" bash -c "cd server && go build -o $BIN ./cmd/server"
 
 echo ""
-echo "############ 1/4 Go 单测 ############"
+echo "############ 1/5 Go 单测 ############"
 run "go test（server）" bash -c 'cd server && go test ./... -count=1'
 
 if [ "${SKIP_INTEGRATION:-0}" != "1" ]; then
   echo ""
-  echo "############ 起临时后端（假微信 $PORT_WX + Go $PORT_API） ############"
+  echo "############ 2/5 起临时后端（假微信 $PORT_WX + Go $PORT_API） ############"
   node deploy/fake-wx.js "$PORT_WX" >/tmp/verify-wx.log 2>&1 &
   WX_PID=$!
   env ADDR="127.0.0.1:$PORT_API" DB_PATH="$TMPDB" STATIC_DIR="$ROOT/web" \
@@ -84,10 +84,13 @@ if [ "${SKIP_INTEGRATION:-0}" != "1" ]; then
   fi
 
   echo ""
-  echo "############ 2/4 小程序三套 + 第 27 轮契约验收 ############"
+  echo "############ 3/5 第 27/28 轮契约 + 小程序三套 ############"
   # 契约验收必须在最前面：它要求「干净的库」（SEED_DEMO 默认关 → 一个商品都没有），
   # 后面的联调用例会往库里写商品和订单。
   run "accept-r27（真后端契约）" node deploy/accept-r27.js "http://127.0.0.1:$PORT_API"
+  # 第 28 轮契约（排序 / 分页 / 热销 / 替代推荐 / 订单筛选 / CSV 导出）。同样要跑在播种之前；
+  # 它自己会建商品与订单，所以必须排在 accept-r27 的「干净库」断言之后。
+  run "accept-r28（排序/筛选/导出契约）" node deploy/accept-r28.js "http://127.0.0.1:$PORT_API"
   # 联调用例依赖演示商品（可口可乐 / 批发价 / 演示地址），走生产的播种脚本而不是服务端内置播种
   run "播种演示库（deploy/seed-demo.py）" python3 deploy/seed-demo.py "http://127.0.0.1:$PORT_API"
   run "miniprogram test-api" node miniprogram/test-api.js
@@ -96,9 +99,11 @@ if [ "${SKIP_INTEGRATION:-0}" != "1" ]; then
 
   if [ "${SKIP_CDP:-0}" != "1" ]; then
     echo ""
-    echo "############ 4/4 CDP 页面异常检查 ############"
+    echo "############ 4/5 真浏览器（CDP）检查 ############"
     run "CDP 商城首页 /" node deploy/cdp-check.js "http://127.0.0.1:$PORT_API/"
-    run "CDP 管理后台 /admin" node deploy/cdp-check.js "http://127.0.0.1:$PORT_API/admin"
+    run "CDP 管理后台 /admin（含导出下载）" node deploy/cdp-check.js "http://127.0.0.1:$PORT_API/admin"
+    # 第 28 轮验收第 5 条：搜索防抖要「运行时」可验证（静态扫描只能证明源码里有 300ms）
+    run "CDP 搜索防抖 + 无结果实测" node deploy/cdp-debounce.js "http://127.0.0.1:$PORT_API/"
   else
     echo ""
     echo "（SKIP_CDP=1，跳过 CDP 检查）"
@@ -109,7 +114,7 @@ else
 fi
 
 echo ""
-echo "############ 3/4 Web 五套 ############"
+echo "############ 5/5 Web 五套 ############"
 run "web test-pricing" node web/test-pricing.js
 run "web test-mall" node web/test-mall.js
 run "web test-sdy-api" node web/test-sdy-api.js

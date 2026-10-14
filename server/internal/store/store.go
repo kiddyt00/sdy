@@ -277,6 +277,8 @@ var schemaStmts = []string{
 		last_login_at TEXT NOT NULL DEFAULT ''
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_wx_user_phone ON wx_user(phone)`,
+	// 第 28 轮（§7.7）：热销聚合用（order_item.code 从 R26 建表起就是主键，老库必有此列）。
+	`CREATE INDEX IF NOT EXISTS idx_order_item_code ON order_item(code)`,
 }
 
 // postMigrateStmts 建在「老库要靠 ALTER TABLE 才有的列」上的索引，必须在 ensureColumn 之后执行。
@@ -288,6 +290,13 @@ var postMigrateStmts = []string{
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_token ON orders(client_token) WHERE client_token<>''`,
 	// 第 26 轮：员工令牌每次鉴权都要按 staff_token 查，没有索引就是全表扫。
 	`CREATE INDEX IF NOT EXISTS idx_wx_user_staff_token ON wx_user(staff_token)`,
+	// 第 28 轮（§7.7）：商品列表「上架 + 分类」候选集。
+	// **必须放在 postMigrateStmts 而不是 schemaStmts**：product.on_sale 是 ensureColumn 补出来的列，
+	// 老库的 CREATE TABLE IF NOT EXISTS 是空操作、列还不存在，在 schemaStmts 里建索引会报
+	// `no such column: on_sale` 让服务起不来（与上面 client_token 同一个坑）；
+	// 而且索引一旦存在，模拟老库的 `ALTER TABLE product DROP COLUMN on_sale` 也会被拒绝
+	// （TestOnSaleColumnMigration 实测：error in index idx_product_onsale_category after drop column）。
+	`CREATE INDEX IF NOT EXISTS idx_product_onsale_category ON product(on_sale, category)`,
 }
 
 // Open 打开（或创建）数据库并建表。
@@ -539,40 +548,191 @@ func (s *Store) ListCategories(onSaleOnly bool) ([]CategoryStat, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) listProducts(keyword, category string, onSaleOnly bool) ([]Product, error) {
-	q := `SELECT code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,
-		unit,stock,is_wholesale,on_sale,is_demo,sync_status,created_at,updated_at FROM product`
+// 热销口径（第 28 轮 §7.2）：近 30 天、状态属于下面这几种的订单明细 SUM(qty)。
+// cancelled 不算（钱退了货没走），其余四种都算——顾客已经下单，就是对销量的真实贡献。
+const hotWindowDays = 30
+
+// 商品排序方式（第 28 轮 §7.2）。
+const (
+	ProductSortDefault   = "default"
+	ProductSortHot       = "hot"
+	ProductSortPriceAsc  = "price_asc"
+	ProductSortPriceDesc = "price_desc"
+	ProductSortStockDesc = "stock_desc"
+)
+
+// ValidProductSort 判断排序方式是否是契约允许的五种之一（未知值由 HTTP 层回 400）。
+func ValidProductSort(s string) bool {
+	switch s {
+	case ProductSortDefault, ProductSortHot, ProductSortPriceAsc, ProductSortPriceDesc, ProductSortStockDesc:
+		return true
+	}
+	return false
+}
+
+// hotSince 返回热销窗口的起始本地日（含当天，按日期前缀比较）。
+// 用 substr(created_at,1,10) 比较而不是 time 解析：老库里的订单是 `2026-10-01 08:00:00`
+// 空格格式，新单是 RFC3339，两种格式的前 10 位都是 YYYY-MM-DD（第 27 轮前的老数据实测）。
+func hotSince() string { return time.Now().AddDate(0, 0, -hotWindowDays).Format("2006-01-02") }
+
+// ProductFilter 商品列表的过滤、排序与分页（第 28 轮 §7.2–§7.4）。
+// Tier 只影响**价格排序口径**（顾客有效价：tier!=retail 且有批发价 → 批发价），
+// 排序必须在 SQL 里用 CASE WHEN 完成，否则先取一页再在 Go 里排会把分页排错。
+// Limit<=0 表示不分页；Offset 只在分页时生效。
+// ExcludeCode / InStockOnly 供 /api/products/alternatives 使用（排除自身、只要现货）。
+type ProductFilter struct {
+	Keyword     string
+	Category    string
+	OnSaleOnly  bool
+	Sort        string
+	Tier        string
+	Limit       int
+	Offset      int
+	ExcludeCode string
+	InStockOnly bool
+}
+
+// ListProductsFiltered 返回一页商品与**过滤后的真实总数**（两个口径：
+// total 是符合条件的全部，items 只是当前页——前端靠它判断还有没有下一页）。
+func (s *Store) ListProductsFiltered(f ProductFilter) ([]Product, int, error) {
+	sort := strings.TrimSpace(f.Sort)
+	if sort == "" {
+		sort = ProductSortDefault
+	}
+	if !ValidProductSort(sort) {
+		return nil, 0, fmt.Errorf("%w: 排序方式不支持：%s", ErrBadInput, sort)
+	}
+
 	var conds []string
 	var args []any
-	if onSaleOnly {
-		conds = append(conds, `on_sale = 1`)
+	if f.OnSaleOnly {
+		conds = append(conds, `p.on_sale = 1`)
 	}
-	if keyword != "" {
-		conds = append(conds, `(name LIKE ? OR code LIKE ?)`)
+	if f.InStockOnly {
+		conds = append(conds, `p.stock > 0`)
+	}
+	if code := strings.TrimSpace(f.ExcludeCode); code != "" {
+		conds = append(conds, `p.code <> ?`)
+		args = append(args, code)
+	}
+	if keyword := strings.TrimSpace(f.Keyword); keyword != "" {
+		conds = append(conds, `(p.name LIKE ? OR p.code LIKE ?)`)
 		args = append(args, "%"+keyword+"%", "%"+keyword+"%")
 	}
-	if category != "" {
-		conds = append(conds, `category = ?`)
-		args = append(args, category)
+	if f.Category != "" {
+		conds = append(conds, `p.category = ?`)
+		args = append(args, f.Category)
 	}
+	where := ""
 	if len(conds) > 0 {
-		q += " WHERE " + joinAnd(conds)
+		where = " WHERE " + joinAnd(conds)
 	}
-	q += " ORDER BY code"
-	rows, err := s.db.Query(q, args...)
+
+	// hot：LEFT JOIN 一张「近 30 天销量」子查询。LEFT 保证**没销量的商品也留在结果里**
+	// （§7.2：排后面，不是被排除），排序用 COALESCE(h.sold,0)。
+	join := ""
+	var joinArgs []any
+	if sort == ProductSortHot {
+		join = ` LEFT JOIN (
+			SELECT oi.code AS code, SUM(oi.qty) AS sold
+			FROM order_item oi JOIN orders o ON o.id = oi.order_id
+			WHERE o.status IN ('pending','delivering','ready','done') AND substr(o.created_at,1,10) >= ?
+			GROUP BY oi.code
+		) h ON h.code = p.code`
+		joinArgs = append(joinArgs, hotSince())
+	}
+
+	// 价格口径的唯一真源：只有批发/vip 且有批发价才按批发价排。
+	priceExpr := `p.sale_price`
+	if pricing.IsWholesaleTier(strings.TrimSpace(f.Tier)) {
+		priceExpr = `CASE WHEN p.wholesale_price > 0 THEN p.wholesale_price ELSE p.sale_price END`
+	}
+	orderBy := `p.code`
+	switch sort {
+	case ProductSortHot:
+		orderBy = `COALESCE(h.sold,0) DESC, p.on_sale DESC, p.name ASC`
+	case ProductSortPriceAsc:
+		orderBy = priceExpr + ` ASC, p.name ASC`
+	case ProductSortPriceDesc:
+		orderBy = priceExpr + ` DESC, p.name ASC`
+	case ProductSortStockDesc:
+		orderBy = `p.stock DESC, p.name ASC`
+	}
+
+	// COUNT 只数 product 侧的行：LEFT JOIN 的是按 code 聚合过的子查询，一行最多匹配一行，
+	// 所以不带 JOIN 统计与带 JOIN 统计口径完全一致（还省一次聚合）。
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM product p`+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("统计商品数失败: %w", err)
+	}
+
+	q := `SELECT p.code,p.name,p.brand,p.spec,p.category,p.img,p.cost_price,p.sale_price,
+		p.wholesale_price,p.ref_price,p.unit,p.stock,p.is_wholesale,p.on_sale,p.is_demo,
+		p.sync_status,p.created_at,p.updated_at FROM product p` + join + where + ` ORDER BY ` + orderBy
+	qargs := append(append([]any{}, joinArgs...), args...)
+	if f.Limit > 0 {
+		q += ` LIMIT ? OFFSET ?`
+		qargs = append(qargs, f.Limit, f.Offset)
+	}
+	rows, err := s.db.Query(q, qargs...)
 	if err != nil {
-		return nil, fmt.Errorf("查询商品失败: %w", err)
+		return nil, 0, fmt.Errorf("查询商品失败: %w", err)
 	}
 	defer rows.Close()
 	out := []Product{}
 	for rows.Next() {
 		p, err := scanProduct(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+func (s *Store) listProducts(keyword, category string, onSaleOnly bool) ([]Product, error) {
+	out, _, err := s.ListProductsFiltered(ProductFilter{
+		Keyword: keyword, Category: category, OnSaleOnly: onSaleOnly,
+	})
+	return out, err
+}
+
+// ListProductAlternatives 缺货替代推荐（第 28 轮 §7.4）。
+// 候选集 = 上架 + 有库存 + 排除自身，按热销降序；再按「同分类优先」切成一条长度 <= limit 的
+// 列表：同分类按热销序在前，不够 limit 时用全店热销序补足——同一次查询里切分，天然不重复。
+// 返回切好的列表与**候选总数**。code 为空或商品不存在 → 空列表 + 0（不是错误：页面要安静降级）。
+func (s *Store) ListProductAlternatives(code string, limit int) ([]Product, int, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return []Product{}, 0, nil
+	}
+	origin, err := s.GetProduct(code)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return []Product{}, 0, nil
+		}
+		return nil, 0, err
+	}
+	cands, total, err := s.ListProductsFiltered(ProductFilter{
+		OnSaleOnly: true, InStockOnly: true, ExcludeCode: code, Sort: ProductSortHot,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	same := make([]Product, 0, len(cands))
+	other := make([]Product, 0, len(cands))
+	for _, p := range cands {
+		if p.Category == origin.Category {
+			same = append(same, p)
+		} else {
+			other = append(other, p)
+		}
+	}
+	picked := append(same, other...)
+	if limit > 0 && len(picked) > limit {
+		picked = picked[:limit]
+	}
+	return picked, total, nil
 }
 
 // 库存变更类型（stock_log.kind，任务池⑧ / D25；第 27 轮补下单/取消两种）。
@@ -1128,14 +1288,41 @@ func (s *Store) GetOrderByClientToken(token string) (Order, error) {
 	return s.GetOrder(id)
 }
 
-// OrderFilter 订单查询过滤（第 27 轮）。
+// OrderFilter 订单查询过滤（第 27 轮 / 第 28 轮 §7.5 扩筛选）。
 // Phone 为空 = 员工/管理员看全量；非空 = 只看该手机号的订单（顾客侧）。
+//   - 顾客身份必须**先归属过滤再筛选**：Phone 与 Q/Status/Date/Type 是 AND 关系，
+//     所以顾客传 q=别人的手机号也只会在自己的单里再筛，永远拿不到别人的单。
+//   - Status 支持逗号分隔多值（`pending,delivering`），单值语义与第 27 轮完全一致。
+//   - Date 与 From/To 同时给时 Date 优先（单日查询）。
+//
 // Limit<=0 表示不分页（工作台统计要全量）；Offset 只在分页时生效。
 type OrderFilter struct {
 	Phone  string
 	Status string
+	Q      string // 顾客名/手机号/订单号模糊
+	Date   string // YYYY-MM-DD（本地日）
+	From   string // YYYY-MM-DD（含端点）
+	To     string // YYYY-MM-DD（含端点）
+	Type   string // pickup / delivery
 	Limit  int
 	Offset int
+}
+
+// ValidDate 校验 YYYY-MM-DD（本地日）。HTTP 层据此回 400 `日期格式应为 YYYY-MM-DD`。
+func ValidDate(s string) bool {
+	_, err := time.Parse("2006-01-02", strings.TrimSpace(s))
+	return err == nil
+}
+
+// splitCSV 按逗号拆多值参数并去掉空白项（status=pending,delivering）。
+func splitCSV(s string) []string {
+	out := []string{}
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // ListOrdersFiltered 按过滤条件返回一页订单与**符合条件的总数**。
@@ -1148,9 +1335,46 @@ func (s *Store) ListOrdersFiltered(f OrderFilter) ([]Order, int, error) {
 		conds = append(conds, `phone = ?`)
 		args = append(args, phone)
 	}
-	if status := strings.TrimSpace(f.Status); status != "" {
-		conds = append(conds, `status = ?`)
-		args = append(args, status)
+	if statuses := splitCSV(f.Status); len(statuses) > 0 {
+		ph := make([]string, len(statuses))
+		for i, st := range statuses {
+			ph[i] = "?"
+			args = append(args, st)
+		}
+		conds = append(conds, `status IN (`+strings.Join(ph, ",")+`)`)
+	}
+	if q := strings.TrimSpace(f.Q); q != "" {
+		conds = append(conds, `(customer_name LIKE ? OR phone LIKE ? OR id LIKE ?)`)
+		like := "%" + q + "%"
+		args = append(args, like, like, like)
+	}
+	// 日期一律按 created_at 的日期前缀比：老单是 `2026-10-01 08:00:00`、新单是 RFC3339，
+	// substr(…,1,10) 对两种格式都是 YYYY-MM-DD，直接字符串比较即含端点闭区间。
+	if date := strings.TrimSpace(f.Date); date != "" {
+		if !ValidDate(date) {
+			return nil, 0, fmt.Errorf("%w: 日期格式应为 YYYY-MM-DD", ErrBadInput)
+		}
+		conds = append(conds, `substr(created_at,1,10) = ?`)
+		args = append(args, date)
+	} else {
+		if from := strings.TrimSpace(f.From); from != "" {
+			if !ValidDate(from) {
+				return nil, 0, fmt.Errorf("%w: 日期格式应为 YYYY-MM-DD", ErrBadInput)
+			}
+			conds = append(conds, `substr(created_at,1,10) >= ?`)
+			args = append(args, from)
+		}
+		if to := strings.TrimSpace(f.To); to != "" {
+			if !ValidDate(to) {
+				return nil, 0, fmt.Errorf("%w: 日期格式应为 YYYY-MM-DD", ErrBadInput)
+			}
+			conds = append(conds, `substr(created_at,1,10) <= ?`)
+			args = append(args, to)
+		}
+	}
+	if t := strings.TrimSpace(f.Type); t != "" {
+		conds = append(conds, `delivery_type = ?`)
+		args = append(args, t)
 	}
 	where := ""
 	if len(conds) > 0 {

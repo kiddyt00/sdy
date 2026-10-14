@@ -309,6 +309,97 @@ hintCases.forEach((c) => {
 });
 ok(Mall.statusHint(null) === '', '空订单一句话也不编');
 
+// ============ ⑫ 第 28 轮：列表筛选 / 排序 / 分页 / 替代 / 防抖 ============
+section('⑫ 商品列表排序与分页、缺货替代、搜索防抖（第 28 轮 7.2 / 7.4 / 7.8）');
+fresh();
+{
+  const all = Mall.listProducts();
+  ok(all.length === 6, 'Mall.listProducts() 返回全量商品档案（含下架；管理端示例商品提示条在用）：' + all.length);
+  ok(Mall.SORTS.join(',') === 'default,hot,price_asc,price_desc,stock_desc',
+    '排序取值三端逐字相同：' + Mall.SORTS.join(','));
+  ok(Mall.normalizeSort('price_asc') === 'price_asc' && Mall.normalizeSort('bogus') === 'default',
+    'normalizeSort：认识的取值原样保留，不认识的落到 default');
+
+  // 关键词：名称 / 品牌 / 条码都能命中
+  ok(Mall.matchKeyword(all[0], '可乐') && Mall.matchKeyword(all[0], '6901234567892'),
+    'matchKeyword 命中名称与条码');
+  ok(Mall.matchKeyword(all.find(p => p.name === '伊利纯牛奶'), '伊利'), 'matchKeyword 命中品牌');
+  ok(Mall.matchKeyword(all[0], '牛奶') === false && Mall.matchKeyword(all[0], '') === true,
+    'matchKeyword：不相关词为 false、空词等于不过滤');
+
+  // 分页：limit+offset / total / hasMore，各页不重不漏
+  const p1 = Mall.listPage({ limit: 2, offset: 0 });
+  const p2 = Mall.listPage({ limit: 2, offset: 2 });
+  const p3 = Mall.listPage({ limit: 2, offset: 4 });
+  const p4 = Mall.listPage({ limit: 2, offset: 6 });
+  ok(p1.total === 6 && p1.limit === 2 && p1.offset === 0 && p1.items.length === 2 && p1.hasMore === true,
+    'listPage 第一页：total=6 / limit=2 / offset=0 / hasMore=true');
+  ok(p3.hasMore === false && p3.items.length === 2, '最后一页 hasMore=false（页面据此显示「没有更多了」）');
+  ok(p4.items.length === 0 && p4.hasMore === false, '越界 offset 返回空页且 hasMore=false');
+  const codes = p1.items.concat(p2.items, p3.items).map(p => p.code);
+  ok(codes.length === 6 && new Set(codes).size === 6, '三页拼起来 6 件、不重不漏');
+  const none = Mall.listPage({ limit: 0, offset: 0 });
+  ok(none.limit === 0 && none.items.length === 6 && none.hasMore === false, 'limit=0 表示不限（与后端默认一致）');
+  ok(typeof Mall.listPage({}).tier === 'string', 'listPage 返回 tier（价格口径随顾客等级走）');
+
+  // 筛选：分类 / 关键词 / 只回上架
+  ok(Mall.listPage({ category: '饮料' }).total === 2, 'category 筛选：饮料 2 件');
+  ok(Mall.listPage({ keyword: '牛奶' }).total === 1, 'keyword 筛选：牛奶 1 件');
+  Mall.updateProduct('6921168509256', { onSale: false });
+  ok(Mall.listPage({ onSale: 1 }).total === 5, 'onSale=1 只回上架（下架那件不算）');
+  ok(Mall.listPage({ category: '纸品', onSale: 1 }).total === 0, '下架商品在分类里也不出现');
+  Mall.updateProduct('6921168509256', { onSale: true });
+
+  // 价格排序按**顾客有效价**（批发客户按批发价，与 Mall.priceOf 同口径）
+  ok(Mall.listPage({ sort: 'price_asc' }).items[0].code === '6902083881234',
+    'price_asc 首位是最便宜的农夫山泉（1.8）');
+  ok(Mall.listPage({ sort: 'price_desc' }).items[0].code === '6901001100113',
+    'price_desc 首位是最贵的青岛啤酒（6.0）');
+  Mall.setMyPhone('13800138000', 'wholesale');
+  Mall.updateProduct('6907992751797', { wholesalePrice: 0.5 });   // 伊利纯牛奶 零售 3.5 → 批发 0.5
+  ok(Mall.priceOf(Mall.getProduct('6907992751797')) === 0.5, '批发身份下 priceOf 取批发价');
+  ok(Mall.listPage({ sort: 'price_asc' }).items[0].code === '6907992751797',
+    'price_asc 对批发顾客按批发有效价排（不是零售价）');
+  const arr = Mall.listPage({ sort: 'default' }).items;
+  const head = arr[0].code;
+  Mall.sortProducts(arr, 'price_desc');
+  ok(arr[0].code === head, 'sortProducts 不改入参数组（页面可直接传 listPage 的结果）');
+  Mall.setMyPhone('', 'retail');
+
+  // 销量排序：没销量的排在后面但不被排除
+  ok(Mall.listPage({ sort: 'hot' }).items.length === 6, 'hot 排序不排除没销量的商品（6 件都在，只是排后面）');
+  Mall._save(Mall.KEYS.orders, [{
+    id: 'X28', createdAt: Date.now(), status: 'done', deliveryType: 'pickup',
+    subtotal: 0, deliveryFee: 0, total: 0,
+    customer: { name: '测试', phone: '13800138000', address: '' },
+    items: [{ code: '6925303725941', name: '旺旺雪饼', price: 4.5, qty: 9 }]
+  }]);
+  ok(Mall.listPage({ sort: 'hot' }).items[0].code === '6925303725941',
+    'hot 排序按近 30 天销量降序（旺旺雪饼 9 件排第一）');
+  Mall._save(Mall.KEYS.orders, []);
+
+  // 缺货替代：排除自身、只要有货上架；同分类优先，不够用全店热销补足
+  const alt = Mall.alternatives('6901234567892', 3);
+  ok(alt.items.length === 3 && alt.items.every(p => p.code !== '6901234567892' && p.stock > 0 && p.onSale !== false),
+    'alternatives 排除自身、只回有货的上架商品');
+  ok(alt.items[0].code === '6902083881234' && alt.items[0].category === '饮料',
+    'alternatives 优先同分类（饮料 → 剩下的农夫山泉）');
+  ok(Mall.alternatives('6901234567892', 99).items.length === 5,
+    'alternatives 同分类不足时用全店热销补足且不重复（自身被排除 → 5 件）');
+
+  // 防抖：连续输入只发一次请求
+  let fired = 0;
+  const d = Mall.debounce(() => { fired++; }, 300);
+  ok(d.delay === 300, 'debounce 默认延迟 300ms（7.8 三端一致）');
+  d(); d(); d();
+  ok(fired === 0, '防抖期间一次都不执行（打字期间不发请求）');
+  d.flush();
+  ok(fired === 1, 'flush 后只执行一次（300ms 内 3 次输入 → 1 次渲染）');
+  d(); d.cancel(); d.flush();
+  ok(fired === 1, 'cancel 之后连 flush 也不再触发');
+  ok(Mall.debounce(() => {}, 0).delay === 0, 'ms=0 是合法值（不是「用默认」）');
+}
+
 console.log('\n========================================');
 console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
 process.exit(failed ? 1 : 0);
