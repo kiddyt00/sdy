@@ -39,7 +39,17 @@ try {
 const mode = process.argv[2] || 'all' // all | preview | upload
 // 版本号真源 = miniprogram/package.json（避免脚本和包版本号各写一份）
 const version = process.env.MP_VERSION || require(path.join(REPO, 'miniprogram/package.json')).version
-const desc = process.env.MP_DESC || '第25轮：微信头像昵称登录（不再绑手机号）+ 顾客端只留小绿点（开发版）'
+// 版本描述真源 = 最近一次提交的标题（第 25 轮踩过坑：写死的 desc 忘了跟着改，
+// 0.5.0 的包却挂着「第25轮」的说明）。取不到 git 时再退回写死的兜底文案。
+function latestCommitSubject() {
+  try {
+    const { execSync } = require('child_process')
+    return execSync('git log -1 --pretty=%s', { cwd: REPO, encoding: 'utf8' }).trim()
+  } catch (e) {
+    return ''
+  }
+}
+const desc = process.env.MP_DESC || latestCommitSubject() || '啥都有快送小程序开发版'
 
 const project = new ci.Project({
   appid: APPID,
