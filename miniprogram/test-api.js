@@ -70,7 +70,8 @@ const ROUTES = [
   { method: 'POST', path: '/api/orders', status: 201, body: SERVER_ORDER },
   { method: 'GET', path: '/api/orders', body: { items: [SERVER_ORDER], total: 1 } },
   { method: 'GET', re: /^\/api\/orders\/[^/]+$/, body: SERVER_ORDER },
-  { method: 'POST', re: /^\/api\/orders\/[^/]+\/advance$/, body: Object.assign({}, SERVER_ORDER, { status: 'cancelled' }) }
+  { method: 'POST', re: /^\/api\/orders\/[^/]+\/advance$/, body: Object.assign({}, SERVER_ORDER, { status: 'done' }) },
+  { method: 'POST', re: /^\/api\/orders\/[^/]+\/cancel$/, body: Object.assign({}, SERVER_ORDER, { status: 'cancelled' }) }
 ]
 
 /* ---------------- 启动：先装 wx 再 require ---------------- */
@@ -117,6 +118,8 @@ async function main() {
 
   /* ---------- ③ 下单：在线 / 离线 ---------- */
   section('③ 下单')
+  // 第 27 轮：订单读写都要带身份（员工令牌 > openid > phone），这里模拟「下单时填过手机号」
+  api.rememberPhone('13800138000')
   store.addToCart({ code: '6901234567892', name: '可口可乐', spec: '330ml 罐装', unit: '罐', emoji: '🥤', salePrice: 2.5 }, 2)
   ok(store.cartCount() === 2 && store.cartAmount() === 5, '购物车 2 件 / 合计 5 元')
   store.addToCart({ code: '6901234567892', salePrice: 2.5, name: '可口可乐' }, 1)
@@ -127,23 +130,44 @@ async function main() {
     deliveryType: 'pickup', items: store.orderItems()
   })
   ok(r.local === false, '在线下单 local=false')
-  ok(r.order.statusText === '待处理', '状态文案：待处理')
+  ok(r.order.statusText === '待备货', '状态文案：待备货（第 27 轮与 Web 归一）')
   ok(r.order.deliveryText === '到店自提', '配送方式文案：到店自提')
   ok(r.order.totalText === '5.00' && r.order.feeText === '0.00', '总额/配送费格式化为两位小数')
   ok(r.order.summary === '可口可乐×2', '订单摘要按服务端回单生成：' + r.order.summary)
   ok(r.order.createdText.indexOf('2026-10-11') === 0, '创建时间本地化：' + r.order.createdText)
-  const post = global.wx._calls.filter((c) => c.method === 'POST' && c.path === '/api/orders')[0]
+  const post = global.wx._calls.filter((c) => c.method === 'POST' && c.path.split('?')[0] === '/api/orders')[0]
   ok(!!post, '确实发出 POST /api/orders')
+  ok(post.path.indexOf('phone=13800138000') > 0, '第 27 轮：下单请求带身份（phone）：' + post.path)
   ok(post.data.deliveryType === 'pickup' && post.data.address === '', 'body：自提不带地址')
   ok(post.data.items.length === 1 && post.data.items[0].code === '6901234567892' && post.data.items[0].qty === 3, 'body：只传 code+qty（价格由服务端算）')
   ok(post.data.customerName === '张三' && post.data.phone === '13800138000', 'body：收货人信息')
+  ok(typeof post.data.clientToken === 'string' && post.data.clientToken.length > 1, 'body：带 clientToken（弱网重试不重复下单）：' + post.data.clientToken)
 
   const olist = await api.listOrders()
   ok(olist.length === 1 && olist[0].id === SERVER_ORDER.id, '订单列表来自后端')
+  const listCall = global.wx._calls.filter((c) => c.method === 'GET' && c.path.split('?')[0] === '/api/orders')[0]
+  ok(!!listCall && listCall.path.indexOf('phone=13800138000') > 0, '订单列表也带身份（服务端据此过滤）：' + (listCall && listCall.path))
   let got = await api.getOrder(SERVER_ORDER.id)
   ok(got.total === 5, '订单详情按 id 查询')
   let cancelled = await api.cancelOrder(SERVER_ORDER.id)
   ok(cancelled.statusText === '已取消', '取消后状态文案：已取消')
+  const cancelCall = global.wx._calls.filter((c) => c.method === 'POST' && c.path.split('?')[0] === '/api/orders/' + SERVER_ORDER.id + '/cancel')[0]
+  ok(!!cancelCall && cancelCall.path.indexOf('phone=') > 0, '顾客取消走 /cancel 且带身份：' + (cancelCall && cancelCall.path))
+  // 顾客「确认收货」只能推进到 done；派单/备货的目标值本地就拦住（第 27 轮 advance 收紧）
+  const adv = await api.advanceOrder(SERVER_ORDER.id, 'done')
+  ok(adv.status === 'done', '归属人可确认收货（advance → done）')
+  let advErr = ''
+  try { await api.advanceOrder(SERVER_ORDER.id, 'delivering') } catch (e) { advErr = e.message }
+  ok(advErr.indexOf('只有店主') >= 0, '非员工不能推进到 delivering：' + advErr)
+  // 无身份时不下单、不发请求
+  const savedSession = api.session()
+  api.clearSession()
+  let noIdErr = ''
+  try {
+    await api.createOrder({ customerName: '王五', phone: '13700137000', address: '', deliveryType: 'pickup', items: store.orderItems() })
+  } catch (e) { noIdErr = e.message }
+  ok(noIdErr.indexOf('缺少身份') >= 0, '无身份下单本地就拦住（不发请求）：' + noIdErr)
+  api.saveSession(savedSession)
 
   // 离线下单：只落本地，不冒充成功
   global.wx = mkWx([{ method: 'GET', path: '/healthz', fail: 'request:fail' }])
@@ -173,6 +197,41 @@ async function main() {
   ok(rules.feeHint('pickup', 10) === '自提免配送费', '自提提示')
   ok(rules.round2(0.1 + 0.2) === 0.3, 'round2 消掉浮点长尾：0.1+0.2 → ' + rules.round2(0.1 + 0.2))
   ok(rules.round2(3 * 1.11) === 3.33, 'round2 用于金额聚合：3×1.11 → ' + rules.round2(3 * 1.11))
+
+  /* ---------- ④b 第 27 轮边界：未知配送方式 / minFree<=0 / 三端逐字一致 ---------- */
+  section('④b 配送费边界（第 27 轮契约：未知按 delivery、minFree<=0 不免运费）')
+  ok(rules.deliveryFee('xxx', 10) === 3, '未知配送方式按 delivery 收费：3 元')
+  ok(rules.deliveryFee(undefined, 10) === 3 && rules.deliveryFee('', 10) === 3, '未填/空配送方式也按 delivery')
+  ok(rules.deliveryFee('delivery', 29.995) === 0, '先 round2 再比门槛：29.995 → 30.00 → 免')
+  ok(rules.deliveryFee('delivery', 29.994) === 3, '29.994 未到门槛 → 3 元')
+  ok(rules.deliveryFee('delivery', 100, { minFree: 0 }) === 3, 'minFree<=0 = 不免运费（照收 3 元）')
+  ok(rules.deliveryFee('delivery', 100, { minFree: 0, deliveryFee: 5 }) === 5, 'minFree<=0 且配送费 5 → 收 5 元')
+  ok(rules.deliveryFee('pickup', 100, { pickupFee: 2 }) === 2, '自提费可配：2 元')
+  ok(rules.deliveryFee('delivery', 60, { minFree: 50 }) === 0, '门槛可配：满 50 免')
+  ok(rules.feeHint('delivery', 10, { minFree: 0 }).indexOf('还差') < 0, 'minFree<=0 时不说「还差 N 元免配送费」：' + rules.feeHint('delivery', 10, { minFree: 0 }))
+  // 第 27 轮真源收敛：同一批用例，小程序规则与 web/pricing.js 必须逐字相同
+  let WebPricing = null
+  try { WebPricing = require('../web/pricing.js') } catch (e) { WebPricing = null }
+  if (WebPricing) {
+    const cases = [['pickup', 0], ['pickup', 99.99], ['delivery', 29.99], ['delivery', 29.994], ['delivery', 29.995], ['delivery', 30], ['delivery', 45.5], ['xxx', 10], [undefined, 10], ['', 10]]
+    const diff = cases.filter((c) => WebPricing.deliveryFee(c[0], c[1]) !== rules.deliveryFee(c[0], c[1]))
+    ok(diff.length === 0, '三端同判：10 组配送费用例 web/pricing.js 与小程序逐字相同' + (diff.length ? '，不一致：' + JSON.stringify(diff) : ''))
+    const tierCases = [['retail', 10, 8], ['wholesale', 10, 8], ['wholesale', 10, 0], ['vip', 10, 8], ['unknown', 10, 8]]
+    const tierDiff = tierCases.filter((c) => WebPricing.effectivePrice(c[0], c[1], c[2]) !== rules.effectivePrice(c[0], c[1], c[2]))
+    ok(tierDiff.length === 0, '三端同判：有效价 5 组用例逐字相同' + (tierDiff.length ? '，不一致：' + JSON.stringify(tierDiff) : ''))
+    const labels = ['pending', 'delivering', 'ready', 'done', 'cancelled']
+    const CANON = { pending: '待备货', delivering: '配送中', ready: '待取货', done: '已完成', cancelled: '已取消' }
+    const mpLabels = labels.map((s) => rules.statusLabel(s))
+    ok(JSON.stringify(labels.map((s) => CANON[s])) === JSON.stringify(mpLabels), '状态文案五档与真源相同：' + mpLabels.join(' / '))
+    let WebMall = null
+    try { WebMall = require('../web/mall.js') } catch (e) { WebMall = null }
+    if (WebMall && WebMall.STATUS_META) {
+      const webLabels = labels.map((s) => (WebMall.STATUS_META[s] || {}).label || '')
+      ok(JSON.stringify(webLabels) === JSON.stringify(mpLabels), '状态文案与 web/mall.js STATUS_META 逐字相同：' + webLabels.join(' / '))
+    }
+  } else {
+    ok(true, '（跳过跨端比对：web/pricing.js 不在当前目录树）')
+  }
 
   /* ---------- ⑤ 购物车边界 ---------- */
   section('⑤ 购物车边界')

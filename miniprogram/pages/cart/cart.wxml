@@ -11,7 +11,18 @@
     text="这是「立即购买」，不会动购物车里的东西"
   />
 
-  <van-empty wx:if="{{empty}}" description="购物车还是空的">
+  <!-- 第 27 轮 P0-2：加载中 / 失败 / 空 / 正常 四态分开。
+       以前请求失败会被渲染成「购物车还是空的」，顾客以为东西丢了。 -->
+  <van-skeleton wx:if="{{loading}}" title row="4" />
+
+  <view class="errbox" wx:elif="{{loadErr}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{loadErr}}</view>
+    <view class="errsub">购物车还在本机，只是这会儿算不出钱来</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
+  <van-empty wx:elif="{{empty}}" description="购物车还是空的">
     <van-button round type="primary" size="small" bind:click="goIndex">去逛逛</van-button>
   </van-empty>
 
@@ -33,12 +44,13 @@
             </view>
             <view class="cinfo">
               <view class="cname">{{item.name}}</view>
-              <view class="cspec">{{item.spec || item.unit}}</view>
+              <view class="cspec">{{item.spec || item.unit}}<text class="climit" wx:if="{{item.stock > 0}}"> · 库存 {{item.stock}}</text></view>
               <view class="cfoot">
                 <view class="cprice">¥{{tools.fix2(item.price)}}<text class="cunit">/{{item.unit}}</text></view>
                 <van-stepper
                   value="{{item.qty}}"
                   min="1"
+                  max="{{item.max}}"
                   integer
                   button-size="26px"
                   data-code="{{item.code}}"
@@ -52,6 +64,22 @@
       </view>
     </view>
 
+    <!-- 失效商品（第 27 轮 P0-6）：已下架 / 已删除 / 库存 0，单独一组，不参与结算、也不会被提交 -->
+    <view class="badsec" wx:if="{{!buyNow && badLines.length}}">
+      <view class="badhead">
+        <text class="badt">失效商品（{{badLines.length}} 件，不参与结算）</text>
+        <text class="badclear" bindtap="clearBad">一键清理</text>
+      </view>
+      <view class="brow" wx:for="{{badLines}}" wx:key="code">
+        <view class="bthumb">{{item.emoji}}</view>
+        <view class="binfo">
+          <view class="bname">{{item.name}}</view>
+          <view class="btag">已下架或没货了</view>
+        </view>
+        <text class="bdel" data-code="{{item.code}}" bindtap="onRemove">删除</text>
+      </view>
+    </view>
+
     <!-- 配送方式 -->
     <view class="section">
       <view class="section-title">配送方式</view>
@@ -60,6 +88,12 @@
         <view class="dway {{deliveryType === 'pickup' ? 'on' : ''}}" data-kind="pickup" bindtap="onDelivery">到店自提</view>
       </view>
       <view class="hint">{{feeHint}}</view>
+      <!-- 第 27 轮 P0-5：自提要告诉顾客去哪儿取、打哪个电话（门店信息来自 settings） -->
+      <view class="pickupinfo" wx:if="{{deliveryType === 'pickup'}}">
+        <view class="pirow">自提门店：{{shop.address || '以店铺公告为准'}}</view>
+        <view class="pirow">门店电话：{{shop.phone || '店里还没留电话'}}</view>
+        <view class="pirow link" bindtap="callShop">打电话问店里</view>
+      </view>
     </view>
 
     <!-- 收货信息 -->
@@ -81,7 +115,7 @@
           <text class="btn btn-line btn-mini" bindtap="saveToBook">存进地址簿</text>
         </view>
       </view>
-      <view class="muted" wx:else>自提地址以店铺信息为准，到店报手机号即可。</view>
+      <view class="muted" wx:else>到店自提：{{shop.address || '地址以店铺公告为准'}}，到店报手机号即可。</view>
     </view>
 
     <view class="sumpad"></view>
@@ -101,6 +135,7 @@
       <view class="cbar-r">
         <view class="cbar-sum">
           <text class="cbar-hint">{{feeHint}}</text>
+          <text class="cbar-fee">商品 ¥{{subtotalText}} · 配送费 ¥{{feeText}}</text>
           <text class="cbar-n">¥{{totalText}}</text>
         </view>
         <view

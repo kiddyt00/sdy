@@ -7,18 +7,24 @@ function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100
 }
 
-// kind: 'pickup' | 'delivery'
-function deliveryFee(kind, subtotal) {
-  if (kind !== 'delivery') return 0
-  return round2(subtotal) >= MIN_FREE ? 0 : DELIVERY_FEE
+// kind: 'pickup' | 'delivery' | 未知 —— 第 27 轮口径：只有 pickup 算自提，其余一律按 delivery
+// cfg 可选 {minFree, deliveryFee, pickupFee}（由 GET /api/settings 下发；缺省用门店默认值）
+// goods 先 round2 再比门槛；minFree <= 0 表示这家店不免运费（不是「随便买都免」）
+function deliveryFee(kind, subtotal, cfg) {
+  const c = Object.assign({ minFree: MIN_FREE, deliveryFee: DELIVERY_FEE, pickupFee: 0 }, cfg || {})
+  if (kind === 'pickup') return c.pickupFee
+  const goods = round2(subtotal)
+  return (c.minFree > 0 && goods >= c.minFree) ? 0 : c.deliveryFee
 }
 
 // 给用户看的一句话说明
-function feeHint(kind, subtotal) {
-  if (kind !== 'delivery') return '自提免配送费'
+function feeHint(kind, subtotal, cfg) {
+  const c = Object.assign({ minFree: MIN_FREE, deliveryFee: DELIVERY_FEE, pickupFee: 0 }, cfg || {})
+  if (kind === 'pickup') return c.pickupFee > 0 ? '自提配送费 ' + round2(c.pickupFee) + ' 元' : '自提免配送费'
+  if (!(c.minFree > 0)) return '本店未开启满额免配送（配送费 ' + round2(c.deliveryFee) + ' 元）'
   const s = round2(subtotal)
-  if (s >= MIN_FREE) return '已满 ' + MIN_FREE + ' 元，免配送费'
-  return '还差 ' + round2(MIN_FREE - s) + ' 元免配送费（否则 ' + DELIVERY_FEE + ' 元）'
+  if (s >= c.minFree) return '已满 ' + c.minFree + ' 元，免配送费'
+  return '还差 ' + round2(c.minFree - s) + ' 元免配送费（否则 ' + round2(c.deliveryFee) + ' 元）'
 }
 
 /* ---------------- 顾客等级与有效价（D24，口径与 server/internal/pricing、web/pricing.js 一致） ---------------- */
@@ -51,18 +57,19 @@ function effectivePrice(tier, salePrice, wholesalePrice) {
 /* ---------------- 订单状态与动作（与 server 的 stateFlow 一致，第 24 轮） ---------------- */
 // 状态机：pending → delivering / ready → done；pending → cancelled。
 // 页面不再在 wxml 里写 status==='pending' 这种散落判断，一律走 orderActions()。
+// 第 27 轮：文案与 server/internal/pricing/pricing.go、Web 端逐字一致（三端同文案，测试锁定）。
 const STATUS_LABELS = {
-  pending: '待处理',
+  pending: '待备货',
   delivering: '配送中',
-  ready: '待自提',
+  ready: '待取货',
   done: '已完成',
   cancelled: '已取消'
 }
 const STATUS_TABS = [
   { key: '', label: '全部' },
-  { key: 'pending', label: '待处理' },
+  { key: 'pending', label: '待备货' },
   { key: 'delivering', label: '配送中' },
-  { key: 'ready', label: '待自提' },
+  { key: 'ready', label: '待取货' },
   { key: 'done', label: '已完成' },
   { key: 'cancelled', label: '已取消' }
 ]

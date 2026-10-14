@@ -304,7 +304,7 @@ async function main() {
   let orders = loadPage('pages/orders/orders.js')
   await orders.onShow()
   ok(orders.data.orders.length === 1, '离线订单列表读到本地那笔')
-  ok(orders.data.orders[0].statusText === '待处理', '状态文案：待处理')
+  ok(orders.data.orders[0].statusText === '待备货', '状态文案：待备货（第 27 轮与 Web 归一）')
   ok(orders.data.orders[0].deliveryText === '送货上门', '配送方式：送货上门')
   ok(orders.data.orders[0].summary.indexOf('可口可乐') >= 0, '摘要含商品名：' + orders.data.orders[0].summary)
   const oid = orders.data.orders[0].id
@@ -314,6 +314,8 @@ async function main() {
   ok(orders.data.orders[0].statusText === '已取消', '确认后订单变已取消')
 
   global.wx = mkWx(ONLINE)
+  // 第 27 轮：订单/地址接口按身份过滤，换回在线后要重新带上手机号（换假 wx 会换掉本地存储）
+  api.rememberPhone('13800138000')
   orders = loadPage('pages/orders/orders.js')
   await orders.onShow()
   ok(orders.data.orders.length === 1 && orders.data.orders[0].id === 'M1', '在线：订单来自服务端')
@@ -519,8 +521,8 @@ async function main() {
   od.onLoad({ id: oid2 })
   await od.onShow()
   ok(od.data.o && od.data.o.id === oid2, '按订单号查到详情')
-  ok(od.data.o.statusText === '待处理', '状态文案：待处理')
-  ok(od.data.o.canCancel === true && od.data.o.canAdvance === false, '待处理只给「取消订单」')
+  ok(od.data.o.statusText === '待备货', '状态文案：待备货（第 27 轮与 Web 归一）')
+  ok(od.data.o.canCancel === true && od.data.o.canAdvance === false, '待备货只给「取消订单」')
   ok(od.data.o.items[0].emoji && od.data.o.items[0].emoji.length > 0, '订单行没有图就用名字回推 emoji')
   od.copyId()
   ok(global.wx.clipboard[0] === oid2, '订单号可复制')
@@ -728,9 +730,9 @@ async function main() {
   so.onShow()
   await so.load()
   ok(so.data.list.length === 1 && so.data.list[0].id === 'M9', '员工订单页列出订单')
-  ok(so.data.list[0].statusText === '待处理', '状态文案与顾客端逐字一致：' + so.data.list[0].statusText)
+  ok(so.data.list[0].statusText === '待备货', '状态文案与顾客端逐字一致：' + so.data.list[0].statusText)
   ok(so.data.list[0].acts[0].to === 'delivering' && so.data.list[0].acts[0].label === '开始配送', '配送单给「开始配送」')
-  ok(so.data.list[0].acts[1].to === 'cancelled' && so.data.list[0].acts[1].label === '取消', '待处理单也给「取消」')
+  ok(so.data.list[0].acts[1].to === 'cancelled' && so.data.list[0].acts[1].label === '取消', '待备货单也给「取消」')
   await so.advance({ currentTarget: { dataset: { id: 'M9', to: 'delivering', label: '开始配送' } } })
   await new Promise((r) => setTimeout(r, 10))
   const adv = global.wx._calls.filter((c) => c.path === '/api/orders/M9/advance').pop()
@@ -763,6 +765,242 @@ async function main() {
   })
   ok(staffWired, '5 个员工页都带自绘底栏并声明了 staff-nav')
   ok(fs.readFileSync(path.join(ROOT, 'pages/mine/mine.js'), 'utf8').indexOf('role: role') >= 0, '登录时把身份一起提交给服务端')
+
+  /* ---------- ⑬ 第 27 轮：四态 / 角标 / 离线 / 二次确认 / 结算真源 ---------- */
+  section('⑬ 第 27 轮：错误态与空态 / 角标同步 / 离线 / 二次确认 / 结算真源')
+  const p27ui = require('./pages/common/ui.js')
+  const p27health = { method: 'GET', path: '/healthz', body: { ok: true, cloudConfigured: true, circuitOpen: false, cloudFails: 0 } }
+  const p27settings = { name: '啥都有快送', phone: '0531-88886666', address: '幸福路 1 号', lowStock: 2, minFree: 50, deliveryFee: 6, pickupFee: 0 }
+
+  // ⑬.1 错误文案必须先过一遍「人话」转换（技术串绝不甩给顾客，业务错误原文透传）
+  ok(p27ui.errText(new Error('无法连接后端（/api）：request:fail timeout')) === p27ui.NET_HINT,
+    '网络类错误换成人话：' + p27ui.errText(new Error('无法连接后端（/api）：request:fail timeout')))
+  ok(p27ui.errText(new Error('库存不足，只剩 1 件')) === '库存不足，只剩 1 件',
+    '服务端的业务错误原文透传，不被盖成「没连上」')
+
+  // ⑬.2 首页：请求失败 ≠ 没货（P0-1）
+  const p27flaky = [p27health, { method: 'GET', path: '/api/products', fail: 'request:fail timeout' }]
+  global.wx = mkWx(p27flaky)
+  store.clearCart()
+  const p27idx = loadPage('pages/index/index.js')
+  p27idx.onLoad()
+  await p27idx.onShow()
+  ok(p27idx.data.online === true, '这台设备连着店里系统（不是离线自动降级）')
+  ok(p27idx.data.loadErr === '店里系统没连上，请稍后重试', '商品接口失败 → 人话错误卡：' + p27idx.data.loadErr)
+  ok(p27idx.data.empty === false && p27idx.data.products.length === 0, '请求失败不许冒充「没货」空态')
+  // 只数商品列表请求（'/api/products?…'）；'/api/products/categories?…' 是分类请求，不能混进来
+  const p27before = global.wx._calls.filter((c) => c.path.indexOf('/api/products?') === 0).length
+  p27flaky[1].fail = null
+  p27flaky[1].body = { items: SERVER_PRODUCTS, total: 2 }
+  await p27idx.reload()
+  ok(global.wx._calls.filter((c) => c.path.indexOf('/api/products?') === 0).length === p27before + 1, '「重新加载」真的重新发了一次请求')
+  ok(p27idx.data.products.length === 2 && p27idx.data.loadErr === '', '重新加载成功后错误卡消失、列表回来')
+  p27flaky[1].body = { items: [], total: 0 }
+  await p27idx.reload()
+  ok(p27idx.data.empty === true && p27idx.data.loadErr === '', '只有请求成功且为空，才显示「没有找到商品」')
+  const p27idxWxml = fs.readFileSync(path.join(ROOT, 'pages/index/index.wxml'), 'utf8')
+  ok(/bindtap="reload"/.test(p27idxWxml) && /wx:elif="\{\{loadErr\}\}"/.test(p27idxWxml), '首页错误卡接线到「重新加载」按钮')
+
+  // ⑬.3 订单列表：失败 ≠ 没有订单（P0-1）
+  const p27ofail = [p27health, { method: 'GET', path: '/api/orders', fail: 'request:fail timeout' }]
+  global.wx = mkWx(p27ofail)
+  api.rememberPhone('13800138000')
+  let p27orders = loadPage('pages/orders/orders.js')
+  await p27orders.onShow()
+  ok(p27orders.data.loadErr === '店里系统没连上，请稍后重试', '订单列表失败 → 人话错误卡')
+  ok(p27orders.data.empty === false, '订单接口失败不许说「这里还没有订单」')
+  p27ofail[1].fail = null
+  p27ofail[1].body = { items: [], total: 0 }
+  await p27orders.reload()
+  ok(p27orders.data.empty === true && p27orders.data.loadErr === '', '订单请求成功且为空才是空态')
+  ok(/bindtap="reload"/.test(fs.readFileSync(path.join(ROOT, 'pages/orders/orders.wxml'), 'utf8')), '订单页错误卡 / 身份引导卡都有「重新加载」')
+
+  // ⑬.4 身份前置拦截：没身份不打后端（P0-8）
+  global.wx = mkWx(ONLINE)
+  api.clearSession()
+  await api.probe()
+  ok(p27ui.hasIdentity() === false, '清掉会话后没有身份')
+  p27orders = loadPage('pages/orders/orders.js')
+  await p27orders.onShow()
+  ok(p27orders.data.needIdentity === true, '在线但没身份 → 页面先拦住并引导登录 / 填手机号')
+  ok(global.wx._calls.filter((c) => c.method === 'GET' && c.path.indexOf('/api/orders') === 0).length === 0,
+    '没身份不打卡后端（顾客看不到「缺少身份」那种后端报错）')
+  api.rememberPhone('13800138000')
+  ok(p27ui.hasIdentity() === true, '下单时填过手机号，身份就绪')
+
+  // ⑬.5 角标与计数在所有入口同步（P0-2）
+  global.wx = mkWx(ONLINE)
+  store.clearCart()
+  const p27subIdx = loadPage('pages/index/index.js')
+  p27subIdx.onLoad()
+  await p27subIdx.onShow()
+  ok(p27subIdx.data.cartCount === 0, '起点：首页计数 0')
+  store.addToCart(SERVER_PRODUCTS[0], 2)
+  ok(p27subIdx.data.cartCount === 2, '别处加购后首页计数自动跟上（store.subscribe）')
+  const p27badge = global.wx.badges[global.wx.badges.length - 1]
+  ok(!!p27badge && p27badge.text === '2', 'tabBar 角标同步成 2：' + JSON.stringify(p27badge))
+  const p27subCat = loadPage('pages/category/category.js')
+  p27subCat.onLoad()
+  await p27subCat.onShow()
+  store.clearCart()
+  store.addToCart(SERVER_PRODUCTS[1], 1)
+  ok(p27subCat.data.cartCount === 1, '分类页计数跟着 store 广播走（这个入口原来漏同步）')
+  const p27subSearch = loadPage('pages/search/search.js')
+  p27subSearch.onLoad()
+  ok(p27subSearch.data.cartCount === 1, '搜索页一进来就带上车里现有件数')
+  store.addToCart(SERVER_PRODUCTS[0], 1)
+  ok(p27subSearch.data.cartCount === 2, '搜索页加购后本页计数同步（P0-7）')
+  const p27subGoods = loadPage('pages/goods/goods.js')
+  await p27subGoods.onLoad({ code: '6901234567892' })
+  store.clearCart()
+  store.addToCart(SERVER_PRODUCTS[0], 3)
+  ok(p27subGoods.data.cartCount === 3, '商品详情页计数也实时跟着变（原来只在 onShow 刷一次）')
+
+  // ⑬.6 离线下单：记一笔本地单，但绝不跳进「下单成功」流程（P0-3）
+  global.wx = mkWx(OFFLINE)
+  store.clearCart()
+  store.addToCart({ code: '6901234567892', name: '可口可乐', salePrice: 2.5, unit: '罐' }, 2)
+  const p27offCart = loadPage('pages/cart/cart.js')
+  p27offCart.onLoad()
+  await p27offCart.onShow()
+  const p27modals = []
+  global.wx.showModal = (o) => { p27modals.push(o); if (o && o.success) o.success({ confirm: true }) }
+  p27offCart.onName({ detail: { value: '张三' } })
+  p27offCart.onPhone({ detail: { value: '13800138000' } })
+  p27offCart.onAddress({ detail: { value: '3 栋 502' } })
+  const p27local = await p27offCart.submit()
+  ok(!!p27local && String(p27local.id).charAt(0) === 'L', '离线仍记一笔本地单（不丢单）')
+  ok(p27modals.length === 1 && p27modals[0].title === '离线未提交' && String(p27modals[0].content).indexOf('离线未提交') === 0,
+    '离线下单弹「离线未提交，请连上店里系统后重试」')
+  ok(global.wx.tabs.indexOf('/pages/orders/orders') < 0, '离线不跳进正常下单成功流程')
+  await new Promise((r) => setTimeout(r, 700))
+  ok(global.wx.tabs.indexOf('/pages/orders/orders') < 0, '等过 600ms 也不跳（没有排队的跳转）')
+  ok(global.wx.toasts.some((t) => t && t.indexOf('本地演示') >= 0), '离线仍明确告知未入库')
+
+  // ⑬.7 立即购买二次确认（P0-4）
+  global.wx = mkWx(OFFLINE)
+  const p27goods = loadPage('pages/goods/goods.js')
+  await p27goods.onLoad({ code: '6901234567892' })
+  p27goods.onStep({ detail: 2 })
+  const p27bnModals = []
+  global.wx.showModal = (o) => { p27bnModals.push(o); if (o && o.success) o.success({ confirm: false }) }
+  p27goods.buyNow()
+  ok(p27bnModals.length === 1 && p27bnModals[0].title === '马上下单？', '「立即购买」先弹二次确认')
+  ok(global.wx.tabs.indexOf('/pages/cart/cart') < 0 && !store.takeBuyNow(), '点「再想想」什么都不发生（不跳转、不生成待下单）')
+  global.wx.showModal = (o) => { if (o && o.success) o.success({ confirm: true }) }
+  p27goods.buyNow()
+  const p27bn = store.takeBuyNow()
+  ok(!!p27bn && p27bn.length === 1 && p27bn[0].qty === 2, '确认后才放进结算（数量 2）')
+  ok(global.wx.tabs.indexOf('/pages/cart/cart') >= 0, '确认后才跳购物车结算')
+
+  // ⑬.8 结算区：配送费 / 免运费门槛 / 自提门店信息都来自 settings（P0-5）
+  const p27onlineSettings = ONLINE.concat([{ method: 'GET', path: '/api/settings', body: p27settings }])
+  global.wx = mkWx(p27onlineSettings)
+  store.clearCart()
+  store.addToCart({ code: '6901234567892', name: '可口可乐', unit: '罐', salePrice: 2.5, stock: 120 }, 2)
+  const p27setCart = loadPage('pages/cart/cart.js')
+  p27setCart.onLoad()
+  await p27setCart.onShow()
+  ok(p27setCart.data.shop.address === '幸福路 1 号' && p27setCart.data.shop.phone === '0531-88886666',
+    '自提门店地址与电话来自 settings')
+  ok(p27setCart.data.feeText === '6.00', '配送费取自服务端 settings（6 元），不是页面写死的 3 元')
+  ok(String(p27setCart.data.feeHint).indexOf('还差 45 元') === 0, '免运费差额按 settings 的 50 元门槛算：' + p27setCart.data.feeHint)
+  p27setCart.onDelivery({ currentTarget: { dataset: { kind: 'pickup' } } })
+  ok(p27setCart.data.feeText === '0.00' && p27setCart.data.feeHint === '自提免配送费', '自提免配送费（同样走 settings/rules）')
+  p27setCart.callShop()
+  ok(global.wx.calls2[global.wx.calls2.length - 1] === '0531-88886666', '自提能一键打门店电话')
+  const p27cartWxml = fs.readFileSync(path.join(ROOT, 'pages/cart/cart.wxml'), 'utf8')
+  ok(p27cartWxml.indexOf('pickupinfo') > 0 && p27cartWxml.indexOf('shop.address') > 0, '自提时页面上真的显示门店地址')
+  ok(p27cartWxml.indexOf('feeHint') > 0 && p27cartWxml.indexOf('feeText') > 0, '结算区显示配送费 / 免运费差额')
+
+  // ⑬.9 购物车数量上限 + 失效商品分组 + 一键清理（P0-6）
+  const p27low = [
+    p27health,
+    { method: 'GET', path: '/api/products', body: { items: [Object.assign({}, SERVER_PRODUCTS[0], { stock: 2 })], total: 1 } },
+    { method: 'GET', path: '/api/settings', body: p27settings }
+  ]
+  global.wx = mkWx(p27low)
+  store.clearCart()
+  store.addToCart({ code: '6901234567892', name: '可口可乐', unit: '罐', salePrice: 2.5 }, 1)
+  const p27cap = loadPage('pages/cart/cart.js')
+  p27cap.onLoad()
+  await p27cap.onShow()
+  ok(p27cap.data.lines[0].max === 2, '步进器上限 = 该商品库存（' + p27cap.data.lines[0].max + '）')
+  p27cap.onStep({ currentTarget: { dataset: { code: '6901234567892' } }, detail: 5 })
+  ok(p27cap.data.lines[0].qty === 2, '数量超库存被夹回上限 2（不静默改数）')
+  ok(global.wx.toasts.indexOf('最多只能买 2 件（库存就这么多）') >= 0, '超库存给出人话提示')
+  p27low[1].body = { items: [], total: 0 }
+  await p27cap.reload()
+  ok(p27cap.data.lines.length === 0 && p27cap.data.badLines.length === 1, '已下架 / 没货的商品单独分组，不混进可买清单')
+  ok(p27cap.data.badLines[0].name === '可口可乐', '失效分组里仍看得见是哪件')
+  await p27cap.clearBad()
+  ok(p27cap.data.badLines.length === 0 && store.cartCount() === 0, '一键清理把失效商品删掉（不给它们进订单）')
+  ok(global.wx.toasts.indexOf('已清理') >= 0, '清理有回执')
+
+  // ⑬.10 搜索结果里直接加购 + 缺货不可买（P0-7）
+  const p27oos = [
+    p27health,
+    {
+      method: 'GET',
+      path: '/api/products',
+      body: { items: SERVER_PRODUCTS.concat([{ code: '6900000000009', name: '冰红茶', unit: '瓶', salePrice: 3, stock: 0, category: '饮料' }]), total: 3 }
+    }
+  ]
+  global.wx = mkWx(p27oos)
+  store.clearCart()
+  const p27search = loadPage('pages/search/search.js')
+  p27search.onLoad()
+  p27search.setData({ keyword: '饮料' })
+  await p27search.doSearch(false)
+  ok(p27search.data.searched === true && p27search.data.results.length === 3, '搜索结果正常渲染（' + p27search.data.results.length + ' 件）')
+  p27search.onAdd({ currentTarget: { dataset: { code: '6900000000009' } } })
+  ok(store.cartCount() === 0 && global.wx.toasts.indexOf('这件暂时没货') >= 0, '缺货商品加不进去（按钮不可用）')
+  p27search.onAdd({ currentTarget: { dataset: { code: '6901234567892' } } })
+  ok(store.cartCount() === 1 && p27search.data.cartCount === 1, '搜索结果里能直接加购，本页计数同步')
+  const p27searchWxml = fs.readFileSync(path.join(ROOT, 'pages/search/search.wxml'), 'utf8')
+  ok(/catchtap="onAdd"/.test(p27searchWxml) && /item\.stock\s*<=\s*0/.test(p27searchWxml), '搜索结果的加购按钮接上，并按库存标缺货')
+  ok(p27searchWxml.indexOf('sstock') > 0 && p27searchWxml.indexOf('lowStock') > 0, '搜索结果里显示库存 / 缺货状态（阈值来自服务端）')
+
+  // ⑬.11 低库存阈值单一真源（P0-9）
+  global.wx = mkWx(p27onlineSettings)
+  await api.probe()
+  await api.getSettings()
+  ok(api.lowStock() === 2, 'api.lowStock() 读服务端下发的阈值（2），不是兜底 5')
+  const p27g2 = loadPage('pages/goods/goods.js')
+  await p27g2.onLoad({ code: '6901234567892' })
+  ok(p27g2.data.lowStock === 2, '商品详情页阈值来自服务端：' + p27g2.data.lowStock)
+  ok(loadPage('pages/staff/stock.js').data.lowStock === 2, '员工端库存页阈值同样来自服务端（单一真源）')
+  ok(loadPage('pages/staff/home.js').data.lowStock === 2, '员工工作台阈值也不再写死 5')
+  let p27hard = 0
+  ;['pages/index/index.wxml', 'pages/search/search.wxml', 'pages/category/category.wxml', 'pages/goods/goods.wxml'].forEach((f) => {
+    const t = fs.readFileSync(path.join(ROOT, f), 'utf8')
+    if (/stock\s*<=\s*5\b/.test(t) || /仅剩\s*5/.test(t)) { p27hard++; console.log('    还在写死阈值：' + f) }
+  })
+  ok(p27hard === 0, '四个顾客页的「仅剩 N 件」都用 lowStock 变量，没有写死的 5')
+
+  // ⑬.12 地址簿 / 我的：同样区分「失败」与「空」（P0-1）
+  const p27afail = [p27health, { method: 'GET', path: '/api/addresses', fail: 'request:fail timeout' }]
+  global.wx = mkWx(p27afail)
+  api.rememberPhone('13800001111')
+  const p27addr = loadPage('pages/address/list.js')
+  await p27addr.onShow()
+  ok(p27addr.data.loadErr === '店里系统没连上，请稍后重试', '地址列表失败 → 人话错误卡')
+  ok(p27addr.data.empty === false, '地址接口失败不许说「还没有收货地址」')
+  p27afail[1].fail = null
+  p27afail[1].body = { items: [] }
+  await p27addr.reload()
+  ok(p27addr.data.empty === true && p27addr.data.loadErr === '', '地址请求成功且为空才是空态')
+  const p27mfail = [p27health, { method: 'GET', path: '/api/orders', fail: 'request:fail timeout' }]
+  global.wx = mkWx(p27mfail)
+  api.rememberPhone('13800138000')
+  const p27mine = loadPage('pages/mine/mine.js')
+  await p27mine.onShow()
+  ok(p27mine.data.loadErr === '店里系统没连上，请稍后重试', '「我的」页订单数拉不到 → 错误卡（不是显示 0）')
+  p27mfail[1].fail = null
+  p27mfail[1].body = { items: [], total: 0 }
+  await p27mine.reload()
+  ok(p27mine.data.loadErr === '' && p27mine.data.loading === false, '「我的」页重新加载后错误卡消失')
+  ok(/bindtap="reload"/.test(fs.readFileSync(path.join(ROOT, 'pages/mine/mine.wxml'), 'utf8')), '「我的」页错误卡也有「重新加载」')
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +25,9 @@ var (
 	ErrConflict  = errors.New("状态冲突")
 	ErrBadInput  = errors.New("参数不合法")
 	ErrStockLess = errors.New("库存不足")
+	// ErrDuplicated（第 27 轮）：下单幂等命中——同一个 clientToken 已经出过单了。
+	// 这不是失败：调用方应把已存在的那张订单按 200 返回给客户端（绝不重复扣库存）。
+	ErrDuplicated = errors.New("重复下单")
 )
 
 // Product 商品档案层（还包含经营数据：进价、售价、库存、比价参考价）。
@@ -50,7 +55,11 @@ type Product struct {
 	// OnSale 上架状态（任务池⑥，D23）：下架只在顾客端生效——商品不再出现在商城、
 	// 不能加购下单；档案、库存、历史订单与条码字典都不动。始终下发（不 omitempty），
 	// 否则 false 会被前端当成「字段缺失」而误判为上架。
-	OnSale     bool   `json:"onSale"`
+	OnSale bool `json:"onSale"`
+	// IsDemo 内置示例数据标记（第 27 轮 / 审计 E-P0-1）：只有 seedIfEmpty 写入的 6 条演示商品
+	// 为 true，店里真实建档/第三方脚本灌的数据一律 false。管理后台据此把演示数据和真货分开。
+	// 始终下发（不 omitempty），否则 false 会被前端当成「字段缺失」。
+	IsDemo     bool   `json:"isDemo"`
 	SyncStatus string `json:"syncStatus,omitempty"` // synced / pending
 	CreatedAt  string `json:"createdAt,omitempty"`
 	UpdatedAt  string `json:"updatedAt,omitempty"`
@@ -93,12 +102,15 @@ type Order struct {
 }
 
 // NewOrderInput 下单入参（只带条码与数量，价格与库存一律以服务端为准）。
+// ClientToken（第 27 轮）：端上生成的幂等键。同一次结算重试（手抖连点、网络超时重发）
+// 必须复用同一个 token，服务端才认得出「这是刚才那单」而不是新单。
 type NewOrderInput struct {
 	CustomerName string              `json:"customerName"`
 	Phone        string              `json:"phone"`
 	Address      string              `json:"address"`
 	DeliveryType string              `json:"deliveryType"`
 	Items        []NewOrderInputItem `json:"items"`
+	ClientToken  string              `json:"clientToken"`
 }
 
 // NewOrderInputItem 下单行入参。
@@ -141,10 +153,13 @@ var schemaStmts = []string{
 		stock REAL NOT NULL DEFAULT 0,
 		is_wholesale INTEGER NOT NULL DEFAULT 0,
 		on_sale INTEGER NOT NULL DEFAULT 1,
+		is_demo INTEGER NOT NULL DEFAULT 0,
 		sync_status TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL DEFAULT ''
 	)`,
+	// 第 27 轮补索引：分类页按 category 过滤、顾客端商城按 on_sale 过滤。
+	`CREATE INDEX IF NOT EXISTS idx_product_category ON product(category)`,
 	`CREATE TABLE IF NOT EXISTS barcode_lib (
 		code TEXT PRIMARY KEY,
 		name TEXT NOT NULL DEFAULT '',
@@ -184,9 +199,14 @@ var schemaStmts = []string{
 		delivery_fee REAL NOT NULL DEFAULT 0,
 		total REAL NOT NULL DEFAULT 0,
 		status TEXT NOT NULL DEFAULT 'pending',
+		client_token TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL DEFAULT ''
 	)`,
+	// 第 27 轮：下单幂等键。索引见 postMigrateStmts —— 它建在老库靠 ALTER TABLE 才有的列上。
+	// 第 27 轮：订单归属查询（顾客只看自己的单）与状态筛选/对账排序都要用。
+	`CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(phone)`,
+	`CREATE INDEX IF NOT EXISTS idx_orders_status_created ON orders(status, created_at)`,
 	`CREATE TABLE IF NOT EXISTS order_item (
 		order_id TEXT NOT NULL,
 		code TEXT NOT NULL,
@@ -206,6 +226,7 @@ var schemaStmts = []string{
 	)`,
 	// 任务池⑧ / D25：库存流水落库。库存一律手动调整（D8），所以每次变更都要能回答
 	// 「谁、什么时候、为什么、从多少到多少」——以前这份审计只存在浏览器 localStorage 里。
+	// 第 27 轮补 order_id：下单扣减/取消回补的流水要能追溯回订单。
 	`CREATE TABLE IF NOT EXISTS stock_log (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		at INTEGER NOT NULL DEFAULT 0,
@@ -218,7 +239,16 @@ var schemaStmts = []string{
 		before_qty REAL NOT NULL DEFAULT 0,
 		after_qty REAL NOT NULL DEFAULT 0,
 		reason TEXT NOT NULL DEFAULT '',
-		operator TEXT NOT NULL DEFAULT ''
+		operator TEXT NOT NULL DEFAULT '',
+		order_id TEXT NOT NULL DEFAULT ''
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_stock_log_code ON stock_log(code)`,
+	// 第 27 轮：地址簿能力令牌。手机号是弱身份（谁都能填），所以「读/删别人的地址簿」
+	// 需要一个只有本机保存过的随机 key 才能过——老板（管理员/员工）按手机号直查不受限。
+	`CREATE TABLE IF NOT EXISTS addr_key (
+		phone TEXT PRIMARY KEY,
+		key TEXT NOT NULL,
+		created_at TEXT NOT NULL
 	)`,
 	// 任务池⑧ / D25：配送员名单落库（原来只在 localStorage：换台设备就没人可派单）。
 	`CREATE TABLE IF NOT EXISTS courier (
@@ -247,6 +277,17 @@ var schemaStmts = []string{
 		last_login_at TEXT NOT NULL DEFAULT ''
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_wx_user_phone ON wx_user(phone)`,
+}
+
+// postMigrateStmts 建在「老库要靠 ALTER TABLE 才有的列」上的索引，必须在 ensureColumn 之后执行。
+// 放进 schemaStmts 会踩这个坑：老库的 CREATE TABLE IF NOT EXISTS 是空操作、列还不存在，
+// 建索引直接报 `no such column: client_token`，服务反复重启起不来（第 27 轮生产实测踩过）。
+var postMigrateStmts = []string{
+	// 第 27 轮：下单幂等键。部分唯一索引让「空 token 的老单」互不冲突，
+	// 同一个小程序端生成的 clientToken 重试只会命中同一张订单（绝不重复扣库存）。
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_token ON orders(client_token) WHERE client_token<>''`,
+	// 第 26 轮：员工令牌每次鉴权都要按 staff_token 查，没有索引就是全表扫。
+	`CREATE INDEX IF NOT EXISTS idx_wx_user_staff_token ON wx_user(staff_token)`,
 }
 
 // Open 打开（或创建）数据库并建表。
@@ -284,10 +325,22 @@ func Open(path string, cfg pricing.Config) (*Store, error) {
 		// 第 26 轮（D32）：角色（顾客 / 员工）与员工会话令牌——后台管角色，登录时选身份。
 		{"wx_user", "role", "TEXT NOT NULL DEFAULT 'customer'"},
 		{"wx_user", "staff_token", "TEXT NOT NULL DEFAULT ''"},
+		// 第 27 轮：orders.client_token（下单幂等键）与 stock_log.order_id（回补流水可追溯订单）。
+		{"orders", "client_token", "TEXT NOT NULL DEFAULT ''"},
+		{"stock_log", "order_id", "TEXT NOT NULL DEFAULT ''"},
+		// 第 27 轮（审计 E-P0-1）：内置示例数据标记，老库里的存量商品一律视为真实商品（0）。
+		{"product", "is_demo", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := ensureColumn(db, c.table, c.column, c.decl); err != nil {
 			db.Close()
 			return nil, err
+		}
+	}
+	// 补完列再建依赖这些列的索引（老库升级路径，见 postMigrateStmts 注释）。
+	for _, stmt := range postMigrateStmts {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("建索引失败: %w", err)
 		}
 	}
 	// 任务池⑧（D25）：配送员名单首次给一份 4 人雏形种子（只种一次，删空后不复活）。
@@ -409,11 +462,13 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 	p.UpdatedAt = nowStr()
 	// 注意：写入语句刻意不包含 on_sale（D23，与库存同理）——编辑商品档案不改变上下架状态，
 	// 新建商品默认上架，上下架只走 SetProductsOnSale / POST /api/products/onsale。
+	// is_demo（第 27 轮）同理不在 ON CONFLICT 里覆盖：演示标记只由首次灌种子时写在插入语句上，
+	// 后来老板编辑这条商品（或第三方脚本按条码覆盖）都不会把标记抹掉，前端筛选口径才稳定。
 	// 批发价（D24）随档案一起覆盖：调用方必须把 wholesalePrice 一并传（0 表示未设批发价），
 	// 与 img 同理——漏传会把已设的批发价清零（规则 19⑤）。
 	_, err := s.db.Exec(`INSERT INTO product
-		(code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
+		(code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,unit,stock,is_wholesale,on_sale,is_demo,sync_status,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)
 		ON CONFLICT(code) DO UPDATE SET
 			name=excluded.name, brand=excluded.brand, spec=excluded.spec, category=excluded.category,
 			img=excluded.img, cost_price=excluded.cost_price, sale_price=excluded.sale_price,
@@ -421,7 +476,7 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 			ref_price=excluded.ref_price, unit=excluded.unit, stock=excluded.stock,
 			is_wholesale=excluded.is_wholesale, sync_status=excluded.sync_status, updated_at=excluded.updated_at`,
 		p.Code, p.Name, p.Brand, p.Spec, p.Category, p.Img, p.CostPrice, p.SalePrice, p.WholesalePrice,
-		p.RefPrice, p.Unit, p.Stock, boolInt(p.IsWholesale), p.SyncStatus, p.CreatedAt, p.UpdatedAt)
+		p.RefPrice, p.Unit, p.Stock, boolInt(p.IsWholesale), boolInt(p.IsDemo), p.SyncStatus, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return Product{}, fmt.Errorf("写入商品失败: %w", err)
 	}
@@ -435,7 +490,7 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 // GetProduct 按条码取商品。
 func (s *Store) GetProduct(code string) (Product, error) {
 	row := s.db.QueryRow(`SELECT code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,
-		unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at FROM product WHERE code=?`, code)
+		unit,stock,is_wholesale,on_sale,is_demo,sync_status,created_at,updated_at FROM product WHERE code=?`, code)
 	p, err := scanProduct(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Product{}, fmt.Errorf("%w: 商品 %s", ErrNotFound, code)
@@ -486,7 +541,7 @@ func (s *Store) ListCategories(onSaleOnly bool) ([]CategoryStat, error) {
 
 func (s *Store) listProducts(keyword, category string, onSaleOnly bool) ([]Product, error) {
 	q := `SELECT code,name,brand,spec,category,img,cost_price,sale_price,wholesale_price,ref_price,
-		unit,stock,is_wholesale,on_sale,sync_status,created_at,updated_at FROM product`
+		unit,stock,is_wholesale,on_sale,is_demo,sync_status,created_at,updated_at FROM product`
 	var conds []string
 	var args []any
 	if onSaleOnly {
@@ -520,29 +575,36 @@ func (s *Store) listProducts(keyword, category string, onSaleOnly bool) ([]Produ
 	return out, rows.Err()
 }
 
-// 库存变更类型（stock_log.kind，任务池⑧ / D25）。
+// 库存变更类型（stock_log.kind，任务池⑧ / D25；第 27 轮补下单/取消两种）。
 const (
-	StockKindIn     = "stock_in"   // 入库（qty 为入库正数）
-	StockKindAdjust = "adjust"     // 直接改数（qty 为增减量，可正可负）
-	StockKindTake   = "stock_take" // 盘点（qty 为实盘数）
-	maxStockLog     = 500          // 流水只留最近 500 条，免得库无限长大
+	StockKindIn     = "stock_in"      // 入库（qty 为入库正数）
+	StockKindAdjust = "adjust"        // 直接改数（qty 为增减量，可正可负）
+	StockKindTake   = "stock_take"    // 盘点（qty 为实盘数）
+	StockKindOrder  = "order_out"     // 下单扣减（第 27 轮）
+	StockKindCancel = "cancel_return" // 取消订单回补（第 27 轮）
+	maxStockLog     = 500             // 流水只留最近 500 条，免得库无限长大
 )
+
+// 低库存阈值（第 27 轮单一真源）：工作时台与设置接口都用这一个值。
+const LowStockThreshold = 5
 
 // StockLog 一条库存流水（任务池⑧ / D25）。
 // D8 规定库存一律手动调整，所以每一次变更都要留下「谁、为什么、从多少到多少」。
+// OrderID（第 27 轮）：下单扣减/取消回补的流水挂到订单号上，便于「这单动了哪些库存」对账。
 type StockLog struct {
-	ID     int64   `json:"id"`
-	At     int64   `json:"at"`   // epoch 毫秒（前端时间显示用）
-	TS     string  `json:"ts"`   // RFC3339，便于阅读与以后导出
-	Kind   string  `json:"kind"` // stock_in / adjust / stock_take
-	Code   string  `json:"code"`
-	Name   string  `json:"name"`
-	Unit   string  `json:"unit"`
-	Delta  float64 `json:"delta"`
-	Before float64 `json:"before"`
-	After  float64 `json:"after"`
-	Reason string  `json:"reason"`
-	By     string  `json:"by"`
+	ID      int64   `json:"id"`
+	At      int64   `json:"at"`   // epoch 毫秒（前端时间显示用）
+	TS      string  `json:"ts"`   // RFC3339，便于阅读与以后导出
+	Kind    string  `json:"kind"` // stock_in / adjust / stock_take / order_out / cancel_return
+	Code    string  `json:"code"`
+	Name    string  `json:"name"`
+	Unit    string  `json:"unit"`
+	Delta   float64 `json:"delta"`
+	Before  float64 `json:"before"`
+	After   float64 `json:"after"`
+	Reason  string  `json:"reason"`
+	By      string  `json:"by"`
+	OrderID string  `json:"orderId,omitempty"`
 }
 
 // SetStock 直接改数（D8：库存一律手动调整，扫码只读）。
@@ -629,10 +691,10 @@ func (s *Store) ChangeStock(code, kind string, qty float64, reason, by string) (
 	}
 	now := time.Now()
 	res, err := tx.Exec(`INSERT INTO stock_log
-		(at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		(at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator,order_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now.UnixMilli(), now.Format(time.RFC3339), kind, code, name, unit,
-		after-before, before, after, reason, by)
+		after-before, before, after, reason, by, "")
 	if err != nil {
 		return StockLog{}, fmt.Errorf("写入库存流水失败: %w", err)
 	}
@@ -658,7 +720,7 @@ func (s *Store) ListStockLog(limit int) ([]StockLog, error) {
 	if limit <= 0 || limit > maxStockLog {
 		limit = maxStockLog
 	}
-	rows, err := s.db.Query(`SELECT id,at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator
+	rows, err := s.db.Query(`SELECT id,at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator,order_id
 		FROM stock_log ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("查询库存流水失败: %w", err)
@@ -668,7 +730,7 @@ func (s *Store) ListStockLog(limit int) ([]StockLog, error) {
 	for rows.Next() {
 		var e StockLog
 		if err := rows.Scan(&e.ID, &e.At, &e.TS, &e.Kind, &e.Code, &e.Name, &e.Unit,
-			&e.Delta, &e.Before, &e.After, &e.Reason, &e.By); err != nil {
+			&e.Delta, &e.Before, &e.After, &e.Reason, &e.By, &e.OrderID); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -752,15 +814,16 @@ func (s *Store) SetProductsOnSale(codes []string, on bool) ([]string, error) {
 
 func scanProduct(sc interface{ Scan(...any) error }) (Product, error) {
 	var p Product
-	var wholesale, onSale int
+	var wholesale, onSale, isDemo int
 	err := sc.Scan(&p.Code, &p.Name, &p.Brand, &p.Spec, &p.Category, &p.Img, &p.CostPrice,
-		&p.SalePrice, &p.WholesalePrice, &p.RefPrice, &p.Unit, &p.Stock, &wholesale, &onSale,
+		&p.SalePrice, &p.WholesalePrice, &p.RefPrice, &p.Unit, &p.Stock, &wholesale, &onSale, &isDemo,
 		&p.SyncStatus, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return Product{}, err
 	}
 	p.IsWholesale = wholesale != 0
 	p.OnSale = onSale != 0
+	p.IsDemo = isDemo != 0
 	// 有效价默认等于零售价；带上 phone 的请求会由 HTTP 层按顾客等级改写（D24）。
 	p.Price = p.SalePrice
 	return p, nil
@@ -837,15 +900,17 @@ func (s *Store) ListLib(limit int) ([]LibEntry, error) {
 /* ------------------------------ 订单 ------------------------------ */
 
 // stateFlow 订单状态机：pending → delivering / ready → done；pending → cancelled。
+// 状态字面量统一取 pricing 包常量，避免「文案一处、状态串又一处」。
 var stateFlow = map[string][]string{
-	"pending":    {"delivering", "ready", "cancelled"},
-	"delivering": {"done"},
-	"ready":      {"done"},
-	"done":       {},
-	"cancelled":  {},
+	pricing.StatusPending:    {pricing.StatusDelivering, pricing.StatusReady, pricing.StatusCancelled},
+	pricing.StatusDelivering: {pricing.StatusDone},
+	pricing.StatusReady:      {pricing.StatusDone},
+	pricing.StatusDone:       {},
+	pricing.StatusCancelled:  {},
 }
 
-// CreateOrder 事务下单：校验 → 扣库存 → 写订单（库存与前缀校验都在同一事务内，避免超卖）。
+// CreateOrder 事务下单：幂等检查 → 校验 → 原子扣库存（+流水）→ 写订单。
+// 全流程在同一个事务里，任何一步校验失败都整单回滚——不会出现「扣了库存单没成立」。
 func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 	if in.DeliveryType != "pickup" && in.DeliveryType != "delivery" {
 		return Order{}, fmt.Errorf("%w: 配送方式只能是 pickup / delivery", ErrBadInput)
@@ -859,6 +924,25 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 	if len(in.Items) == 0 {
 		return Order{}, fmt.Errorf("%w: 购物车为空", ErrBadInput)
 	}
+	// 合并重复条码：购物车里同一件商品出现两行时，order_item 的主键 (order_id,code)
+	// 会撞车导致整单 500。这里按 code 累加数量，语义上等价于「一共买了几件」。
+	merged := make([]NewOrderInputItem, 0, len(in.Items))
+	idx := make(map[string]int, len(in.Items))
+	for _, it := range in.Items {
+		code := strings.TrimSpace(it.Code)
+		if code == "" {
+			return Order{}, fmt.Errorf("%w: 商品条码不能为空", ErrBadInput)
+		}
+		if it.Qty <= 0 {
+			return Order{}, fmt.Errorf("%w: 数量必须大于 0", ErrBadInput)
+		}
+		if i, ok := idx[code]; ok {
+			merged[i].Qty += it.Qty
+			continue
+		}
+		idx[code] = len(merged)
+		merged = append(merged, NewOrderInputItem{Code: code, Qty: it.Qty})
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -866,8 +950,22 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 	}
 	defer tx.Rollback()
 
+	// 幂等（第 27 轮）：同一个 clientToken 只认一张单，重试直接返回已存在的那张，
+	// 绝不再扣一次库存。token 为空（老客户端 / 老数据）不走幂等，保持旧行为。
+	if tk := strings.TrimSpace(in.ClientToken); tk != "" {
+		var id string
+		err := tx.QueryRow(`SELECT id FROM orders WHERE client_token=?`, tk).Scan(&id)
+		if err == nil {
+			return Order{}, fmt.Errorf("%w: 重复下单 %s", ErrDuplicated, id)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Order{}, fmt.Errorf("查询下单幂等键失败: %w", err)
+		}
+	}
+
 	// 顾客等级决定这一单用零售价还是批发价（D24）。手机号即身份（延续 D18），
 	// 没有档案就是零售；等级改动只影响之后的单，旧单价格是下单当时的快照。
+	// NormalizeTier 会把库里的脏值（如 'foo'）归一到零售，避免脏等级算出怪价。
 	tier := pricing.TierRetail
 	if err := tx.QueryRow(`SELECT tier FROM customer WHERE phone=?`, in.Phone).Scan(&tier); err != nil &&
 		!errors.Is(err, sql.ErrNoRows) {
@@ -875,17 +973,16 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 	}
 	tier = pricing.NormalizeTier(tier)
 
-	items := make([]OrderItem, 0, len(in.Items))
+	now := nowStr()
+	items := make([]OrderItem, 0, len(merged))
+	logIDs := make([]int64, 0, len(merged))
 	var subtotal float64
-	for _, it := range in.Items {
-		if it.Qty <= 0 {
-			return Order{}, fmt.Errorf("%w: 数量必须大于 0", ErrBadInput)
-		}
+	for _, it := range merged {
 		var name string
-		var price, wholesale, stock float64
+		var price, wholesale float64
 		var onSale int
-		err := tx.QueryRow(`SELECT name, sale_price, wholesale_price, stock, on_sale FROM product WHERE code=?`, it.Code).
-			Scan(&name, &price, &wholesale, &stock, &onSale)
+		err := tx.QueryRow(`SELECT name, sale_price, wholesale_price, on_sale FROM product WHERE code=?`, it.Code).
+			Scan(&name, &price, &wholesale, &onSale)
 		if errors.Is(err, sql.ErrNoRows) {
 			return Order{}, fmt.Errorf("%w: 商品 %s", ErrNotFound, it.Code)
 		}
@@ -896,17 +993,50 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 		if onSale == 0 {
 			return Order{}, fmt.Errorf("%w: 商品「%s」已下架，请从购物车移除后重新结算", ErrConflict, name)
 		}
-		if stock < it.Qty {
-			return Order{}, fmt.Errorf("%w: %s 仅剩 %v", ErrStockLess, name, stock)
+		// 原子扣减：条件写进 UPDATE，避免「先读后判再写」的竞态（两个并发事务同时读到
+		// 同一库存后各自扣减 → 负库存）。RowsAffected==0 即库存不足或商品已不在。
+		res, err := tx.Exec(`UPDATE product SET stock=stock-?, sync_status='pending', updated_at=?
+			WHERE code=? AND on_sale=1 AND stock>=?`, it.Qty, now, it.Code, it.Qty)
+		if err != nil {
+			return Order{}, fmt.Errorf("扣减库存失败: %w", err)
 		}
-		if _, err := tx.Exec(`UPDATE product SET stock=stock-?, updated_at=? WHERE code=?`,
-			it.Qty, nowStr(), it.Code); err != nil {
-			return Order{}, err
+		if n, err := res.RowsAffected(); err != nil {
+			return Order{}, fmt.Errorf("扣减库存失败: %w", err)
+		} else if n == 0 {
+			// 回读剩余数量只为把话说明白；整单会因 defer tx.Rollback() 回滚，
+			// 前面已经扣掉的行不会留下痕迹。
+			var left float64
+			_ = tx.QueryRow(`SELECT stock FROM product WHERE code=?`, it.Code).Scan(&left)
+			return Order{}, fmt.Errorf("%w: 库存不足：%s（还剩 %v 件）", ErrStockLess, name, left)
 		}
 		// 价格以服务端算的为准，不信任前端传来的价（D12/D24）。
 		unit := pricing.EffectivePrice(tier, price, wholesale)
 		items = append(items, OrderItem{Code: it.Code, Name: name, Price: unit, Qty: it.Qty})
 		subtotal += unit * it.Qty
+		// 每一次扣减都留一条流水（D25：库存变了必须有账）。operator 写「下单」，
+		// order_id 先留空，拿到订单号后统一回填（见下）。扣减后的库存回读一次，
+		// 让流水带上真实的「从多少到多少」——账要能对得上。
+		after := 0.0
+		if err := tx.QueryRow(`SELECT stock FROM product WHERE code=?`, it.Code).Scan(&after); err != nil {
+			return Order{}, fmt.Errorf("读取扣减后库存失败: %w", err)
+		}
+		lr, err := tx.Exec(`INSERT INTO stock_log
+			(at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator,order_id)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			time.Now().UnixMilli(), now, StockKindOrder, it.Code, name, unit,
+			-it.Qty, after+it.Qty, after, "下单扣减", "下单", "")
+		if err != nil {
+			return Order{}, fmt.Errorf("写入库存流水失败: %w", err)
+		}
+		if id, err := lr.LastInsertId(); err == nil {
+			logIDs = append(logIDs, id)
+		}
+	}
+
+	// 起送价（第 27 轮）：按 round2 后的货款比较，minOrder<=0 表示不限起送。
+	// 起送价存在 setting 表（k=store.minOrder），下单时实时读——老板改完立刻生效。
+	if gap := pricing.MinOrderGap(pricing.Round2(subtotal), s.minOrderTx(tx)); gap > 0 {
+		return Order{}, fmt.Errorf("%w: 还差 %s 元起送", ErrBadInput, trimFloat(gap))
 	}
 
 	fee, err := pricing.DeliveryFee(in.DeliveryType, subtotal, s.cfg)
@@ -916,20 +1046,30 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 	o := Order{
 		ID:           fmt.Sprintf("M%d", time.Now().UnixNano()),
 		CustomerName: in.CustomerName, Phone: in.Phone, Address: in.Address,
-		DeliveryType: in.DeliveryType, Subtotal: round2(subtotal), DeliveryFee: fee,
-		Total: round2(subtotal + fee), Status: "pending", Items: items, CreatedAt: nowStr(),
+		DeliveryType: in.DeliveryType, Subtotal: pricing.Round2(subtotal), DeliveryFee: fee,
+		Total: pricing.Round2(subtotal + fee), Status: "pending", Items: items, CreatedAt: now,
 	}
 	if _, err := tx.Exec(`INSERT INTO orders
-		(id,customer_name,phone,address,delivery_type,subtotal,delivery_fee,total,status,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		(id,customer_name,phone,address,delivery_type,subtotal,delivery_fee,total,status,client_token,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		o.ID, o.CustomerName, o.Phone, o.Address, o.DeliveryType, o.Subtotal, o.DeliveryFee, o.Total,
-		o.Status, o.CreatedAt, o.CreatedAt); err != nil {
+		o.Status, strings.TrimSpace(in.ClientToken), now, now); err != nil {
+		// 两个并发请求带同一个 token：唯一索引只会放行一个，输的那个回滚改读已存在的单。
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return Order{}, fmt.Errorf("%w: 并发重复下单", ErrDuplicated)
+		}
 		return Order{}, err
 	}
 	for _, it := range items {
 		if _, err := tx.Exec(`INSERT INTO order_item (order_id,code,name,price,qty) VALUES (?,?,?,?,?)`,
 			o.ID, it.Code, it.Name, it.Price, it.Qty); err != nil {
 			return Order{}, err
+		}
+	}
+	// 回填流水的订单号：先插订单拿到号，才能把扣减流水挂到单上。
+	for _, id := range logIDs {
+		if _, err := tx.Exec(`UPDATE stock_log SET order_id=? WHERE id=?`, o.ID, id); err != nil {
+			return Order{}, fmt.Errorf("回填库存流水订单号失败: %w", err)
 		}
 	}
 	if _, err := tx.Exec(`INSERT INTO customer (phone,name,created_at) VALUES (?,?,?)
@@ -971,38 +1111,93 @@ func (s *Store) GetOrder(id string) (Order, error) {
 	return o, rows.Err()
 }
 
-// ListOrders 订单列表（status 为空表示全部）。
-func (s *Store) ListOrders(status string) ([]Order, error) {
-	q := `SELECT id FROM orders`
+// GetOrderByClientToken 按幂等键取已存在的订单（重复下单时返回原单用，绝不重复扣库存）。
+func (s *Store) GetOrderByClientToken(token string) (Order, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return Order{}, fmt.Errorf("%w: 缺少幂等键 clientToken", ErrBadInput)
+	}
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM orders WHERE client_token=?`, token).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Order{}, fmt.Errorf("%w: 订单（clientToken %s）", ErrNotFound, token)
+	}
+	if err != nil {
+		return Order{}, err
+	}
+	return s.GetOrder(id)
+}
+
+// OrderFilter 订单查询过滤（第 27 轮）。
+// Phone 为空 = 员工/管理员看全量；非空 = 只看该手机号的订单（顾客侧）。
+// Limit<=0 表示不分页（工作台统计要全量）；Offset 只在分页时生效。
+type OrderFilter struct {
+	Phone  string
+	Status string
+	Limit  int
+	Offset int
+}
+
+// ListOrdersFiltered 按过滤条件返回一页订单与**符合条件的总数**。
+// total 与 items 是两个口径：total 是「按过滤条件一共有多少单」，items 是当前页
+// （以前 total 直接等于页大小，前端根本没法判断「还有没有下一页」）。
+func (s *Store) ListOrdersFiltered(f OrderFilter) ([]Order, int, error) {
+	var conds []string
 	var args []any
-	if status != "" {
-		q += ` WHERE status=?`
+	if phone := strings.TrimSpace(f.Phone); phone != "" {
+		conds = append(conds, `phone = ?`)
+		args = append(args, phone)
+	}
+	if status := strings.TrimSpace(f.Status); status != "" {
+		conds = append(conds, `status = ?`)
 		args = append(args, status)
 	}
-	q += ` ORDER BY created_at DESC, id DESC`
-	rows, err := s.db.Query(q, args...)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + joinAnd(conds)
+	}
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM orders`+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("统计订单数失败: %w", err)
+	}
+	q := `SELECT id FROM orders` + where + ` ORDER BY created_at DESC, id DESC`
+	qargs := append([]any{}, args...)
+	if f.Limit > 0 {
+		q += ` LIMIT ? OFFSET ?`
+		qargs = append(qargs, f.Limit, f.Offset)
+	}
+	rows, err := s.db.Query(q, qargs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, 0, err
 		}
 		ids = append(ids, id)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	out := []Order{}
 	for _, id := range ids {
 		o, err := s.GetOrder(id)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, o)
 	}
-	return out, nil
+	return out, total, nil
+}
+
+// ListOrders 全量订单（status 为空表示全部）。工作台统计用，保留原签名。
+func (s *Store) ListOrders(status string) ([]Order, error) {
+	out, _, err := s.ListOrdersFiltered(OrderFilter{Status: status})
+	return out, err
 }
 
 // AdvanceOrder 状态流转；非法流转返回 ErrConflict。
@@ -1012,10 +1207,11 @@ func (s *Store) AdvanceOrder(id, to string) (Order, error) {
 		return Order{}, err
 	}
 	if !canAdvance(o.Status, to) {
-		return Order{}, fmt.Errorf("%w: 状态不允许从「%s」变更为「%s」", ErrConflict, o.Status, to)
+		return Order{}, fmt.Errorf("%w: 状态不允许从「%s」变更为「%s」", ErrConflict,
+			pricing.StatusText(o.Status), pricing.StatusText(to))
 	}
-	if to == "cancelled" {
-		return s.cancel(id, o)
+	if to == pricing.StatusCancelled {
+		return s.CancelOrder(id, "顾客")
 	}
 	if _, err := s.db.Exec(`UPDATE orders SET status=?, updated_at=? WHERE id=?`, to, nowStr(), id); err != nil {
 		return Order{}, err
@@ -1023,26 +1219,111 @@ func (s *Store) AdvanceOrder(id, to string) (Order, error) {
 	return s.GetOrder(id)
 }
 
-// cancel 取消订单并回补库存（仅 pending 可取消，由调用方保证）。
-func (s *Store) cancel(id string, o Order) (Order, error) {
+// CancelOrder 取消订单并回补库存，**回补必须写 stock_log**（第 27 轮修：以前回补不写流水，
+// 库存凭空多出来没账）。operator 用员工名或「顾客」；商品已被删除时回补无处可去，
+// 记一条异常流水 + WARN 日志，但**不算失败**（订单该取消还是要取消）。
+func (s *Store) CancelOrder(id, operator string) (Order, error) {
+	id = strings.TrimSpace(id)
+	operator = strings.TrimSpace(operator)
+	if operator == "" {
+		operator = "顾客"
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Order{}, err
 	}
 	defer tx.Rollback()
-	for _, it := range o.Items {
-		if _, err := tx.Exec(`UPDATE product SET stock=stock+?, sync_status='pending', updated_at=? WHERE code=?`,
-			it.Qty, nowStr(), it.Code); err != nil {
+
+	// 事务内重读状态：判定与写入必须在同一个事务里，避免并发取消重复回补。
+	var status string
+	err = tx.QueryRow(`SELECT status FROM orders WHERE id=?`, id).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Order{}, fmt.Errorf("%w: 订单 %s", ErrNotFound, id)
+	}
+	if err != nil {
+		return Order{}, err
+	}
+	if status == pricing.StatusCancelled {
+		// 已经取消了：直接返回，不回补第二次（幂等）。
+		// 必须先结束事务再回读：内存库只开一个连接，事务没结束就去读会一直等连接（死锁）。
+		_ = tx.Rollback()
+		return s.GetOrder(id)
+	}
+	if !canAdvance(status, pricing.StatusCancelled) {
+		return Order{}, fmt.Errorf("%w: 订单已「%s」，不能再取消", ErrConflict, pricing.StatusText(status))
+	}
+
+	rows, err := tx.Query(`SELECT code,name,qty FROM order_item WHERE order_id=? ORDER BY code`, id)
+	if err != nil {
+		return Order{}, fmt.Errorf("查询订单明细失败: %w", err)
+	}
+	type line struct {
+		code, name string
+		qty        float64
+	}
+	var lines []line
+	for rows.Next() {
+		var l line
+		if err := rows.Scan(&l.code, &l.name, &l.qty); err != nil {
+			rows.Close()
 			return Order{}, err
 		}
+		lines = append(lines, l)
 	}
-	if _, err := tx.Exec(`UPDATE orders SET status='cancelled', updated_at=? WHERE id=?`, nowStr(), id); err != nil {
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Order{}, err
+	}
+
+	now := nowStr()
+	for _, l := range lines {
+		var before float64
+		var unit string
+		err := tx.QueryRow(`SELECT stock,unit FROM product WHERE code=?`, l.code).Scan(&before, &unit)
+		if errors.Is(err, sql.ErrNoRows) {
+			s.logLostReturn(tx, id, l.code, l.name, "", l.qty, operator, now, "商品已删除，未回补")
+			continue
+		}
+		if err != nil {
+			return Order{}, err
+		}
+		res, err := tx.Exec(`UPDATE product SET stock=stock+?, sync_status='pending', updated_at=? WHERE code=?`,
+			l.qty, now, l.code)
+		if err != nil {
+			return Order{}, err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			// 查到了却更新 0 行（并发删除）：同样按「回补丢失」记账，不失败。
+			s.logLostReturn(tx, id, l.code, l.name, unit, l.qty, operator, now, "商品已删除，未回补")
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO stock_log
+			(at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator,order_id)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			time.Now().UnixMilli(), now, StockKindCancel, l.code, l.name, unit,
+			l.qty, before, before+l.qty, "取消订单回补", operator, id); err != nil {
+			return Order{}, fmt.Errorf("写入取消回补流水失败: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`UPDATE orders SET status=?, updated_at=? WHERE id=?`,
+		pricing.StatusCancelled, now, id); err != nil {
 		return Order{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Order{}, err
 	}
 	return s.GetOrder(id)
+}
+
+// logLostReturn 记录「回补丢失」：商品已删除时回补无处可去。写一条 delta=0 的异常流水
+// （D25 精神：库存相关的事都要有账）+ 一行 WARN 日志，但绝不阻断取消流程。
+func (s *Store) logLostReturn(tx *sql.Tx, orderID, code, name, unit string, qty float64, operator, at, reason string) {
+	log.Printf("[WARN] 订单 %s 取消回补失败：商品 %s（%s）已删除，%v %s 未回补",
+		orderID, code, name, qty, unit)
+	_, _ = tx.Exec(`INSERT INTO stock_log
+		(at,ts,kind,code,name,unit,delta,before_qty,after_qty,reason,operator,order_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		time.Now().UnixMilli(), at, StockKindCancel, code, name, unit, 0, 0, 0, reason, operator, orderID)
 }
 
 func canAdvance(from, to string) bool {
@@ -1489,20 +1770,42 @@ func (s *Store) SaveCourier(name, phone string, remove bool) ([]Courier, error) 
 	return s.ListCouriers()
 }
 
-// Settings 门店抬头（小票表头）。原来只存在浏览器 localStorage，现在落库（D25）。
+// Settings 门店抬头 + 规则参数（小票表头与「钱」的口径都要跨设备一致，所以落库，D25）。
+// 第 27 轮（单一真源）：把低库存阈值、起送价、配送费、免运费门槛一起随 GET /api/settings
+// 下发，前端不再各自硬编码 5 / 30 / 3 这些数字。
 type Settings struct {
 	Name    string `json:"name"`
 	Phone   string `json:"phone"`
 	Address string `json:"address"`
 	Footer  string `json:"footer"`
+	// LowStock 低库存阈值（默认 5，取值 <=0 时回落到 LowStockThreshold）。
+	LowStock float64 `json:"lowStock"`
+	// MinOrder 起送价：货款低于它就拒单（0 或负数表示不限起送）。
+	MinOrder float64 `json:"minOrder"`
+	// DeliveryFee 未达门槛时的配送费；MinFree 免运费门槛（<=0 表示永不包邮）。
+	DeliveryFee float64 `json:"deliveryFee"`
+	MinFree     float64 `json:"minFree"`
 }
 
 // defaultSettings 门店抬头默认值，与前端 Admin.DEFAULT_STORE 保持一致。
-var defaultSettings = Settings{Name: "家庭超市", Footer: "谢谢惠顾，欢迎再来！"}
+var defaultSettings = Settings{
+	Name: "家庭超市", Footer: "谢谢惠顾，欢迎再来！",
+	LowStock: LowStockThreshold, MinOrder: 0, DeliveryFee: 3, MinFree: 30,
+}
 
-// GetSettings 读门店抬头；一项都没存过就用默认值。
+// 规则参数的 setting 键（第 27 轮）。起送价与低库存阈值可由老板在管理端改；
+// 配送费/免运费门槛本轮仍以服务端配置（pricing.Config）为真源，只做下发。
+const (
+	settingMinOrder = "store.minOrder"
+	settingLowStock = "store.lowStock"
+)
+
+// GetSettings 读门店抬头与规则参数；一项都没存过就用默认值。
+// 返回值永远是「可以照着用」的全量配置：页面拿到就能直接显示，不必自己兜底。
 func (s *Store) GetSettings() (Settings, error) {
 	out := defaultSettings
+	out.DeliveryFee = s.cfg.DeliveryFee
+	out.MinFree = s.cfg.MinFree
 	rows, err := s.db.Query(`SELECT k,v FROM setting WHERE k LIKE 'store.%'`)
 	if err != nil {
 		return out, fmt.Errorf("查询门店设置失败: %w", err)
@@ -1526,13 +1829,23 @@ func (s *Store) GetSettings() (Settings, error) {
 			if v != "" {
 				out.Footer = v
 			}
+		case settingMinOrder:
+			if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
+				out.MinOrder = pricing.Round2(n)
+			}
+		case settingLowStock:
+			if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
+				out.LowStock = n
+			}
 		}
 	}
 	return out, rows.Err()
 }
 
-// SaveSettings 保存门店抬头。店名必填且 ≤ 20 字（小票表头必须有店名），
+// SaveSettings 保存门店抬头与规则参数。店名必填且 ≤ 20 字（小票表头必须有店名），
 // 页脚留空则回到默认那句（与前端 setStoreInfo 同规则）。
+// 规则参数：MinOrder/LowStock 传 0 或负数表示「回默认」（不限起送 / 阈值 5），
+// 这样管理端只改店名时不会把老板设过的起送价莫名其妙留着或清成怪值。
 func (s *Store) SaveSettings(in Settings) (Settings, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Phone = strings.TrimSpace(in.Phone)
@@ -1544,8 +1857,22 @@ func (s *Store) SaveSettings(in Settings) (Settings, error) {
 	if len([]rune(in.Name)) > 20 {
 		return Settings{}, fmt.Errorf("%w: 店名不能超过 20 字", ErrBadInput)
 	}
+	if in.MinOrder < 0 {
+		return Settings{}, fmt.Errorf("%w: 起送价不能为负数", ErrBadInput)
+	}
+	if in.LowStock < 0 {
+		return Settings{}, fmt.Errorf("%w: 低库存阈值不能为负数", ErrBadInput)
+	}
 	if in.Footer == "" {
 		in.Footer = defaultSettings.Footer
+	}
+	minOrder := 0.0
+	if in.MinOrder > 0 {
+		minOrder = pricing.Round2(in.MinOrder)
+	}
+	lowStock := 0.0
+	if in.LowStock > 0 {
+		lowStock = in.LowStock
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -1555,6 +1882,8 @@ func (s *Store) SaveSettings(in Settings) (Settings, error) {
 	for _, kv := range [][2]string{
 		{"store.name", in.Name}, {"store.phone", in.Phone},
 		{"store.address", in.Address}, {"store.footer", in.Footer},
+		{settingMinOrder, strconv.FormatFloat(minOrder, 'f', -1, 64)},
+		{settingLowStock, strconv.FormatFloat(lowStock, 'f', -1, 64)},
 	} {
 		if _, err := tx.Exec(`INSERT INTO setting (k,v) VALUES (?,?)
 			ON CONFLICT(k) DO UPDATE SET v=excluded.v`, kv[0], kv[1]); err != nil {
@@ -1565,6 +1894,26 @@ func (s *Store) SaveSettings(in Settings) (Settings, error) {
 		return Settings{}, fmt.Errorf("提交设置事务失败: %w", err)
 	}
 	return s.GetSettings()
+}
+
+// minOrderTx 在事务里读起送价（POST /api/orders 用）：老板改完立刻生效，不必重启。
+// 没配、解析失败或 <=0 都表示「不限起送」。
+func (s *Store) minOrderTx(tx *sql.Tx) float64 {
+	var v string
+	if err := tx.QueryRow(`SELECT v FROM setting WHERE k=?`, settingMinOrder).Scan(&v); err != nil {
+		return 0
+	}
+	n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return pricing.Round2(n)
+}
+
+// trimFloat 把金额格式化成最短的十进制字符串（12.30 → "12.3"），用于「还差 X 元起送」
+// 这类给人看的错误文案，避免 %v 打出 12.340000000000001 这种浮点噪声。
+func trimFloat(v float64) string {
+	return strconv.FormatFloat(pricing.Round2(v), 'f', -1, 64)
 }
 
 // ListAddresses 列出某手机号的收货地址簿，默认地址排最前（D18）。
@@ -1724,6 +2073,74 @@ func (s *Store) RecordSyncBatch(kind, filename string, total, ok, diff int) erro
 	_, err := s.db.Exec(`INSERT INTO sync_batch (kind,filename,total,ok,diff,created_at) VALUES (?,?,?,?,?,?)`,
 		kind, filename, total, ok, diff, nowStr())
 	return err
+}
+
+/* ------------------------------ 地址簿能力令牌（第 27 轮） ------------------------------ */
+
+// AddressKey 能力令牌：手机号是「谁」，令牌是「凭据」。
+// 手机号是能被猜到的（一串 11 位数字），只拿手机号就能读写别人的收货地址簿
+// （姓名+门牌）显然是泄漏；所以第一次保存地址时服务端发一枚 32 位 hex 随机令牌，
+// 客户端存本地、之后读写地址簿都要带上。令牌丢了不影响历史订单（订单地址是快照）。
+//
+// 设计取舍：令牌**不是**登录凭据，只保护地址簿这一个能力面；手机号用户依然能
+// 不登录直接下单（延续 D18 的「少打字优先」），只是看不到别人存过的地址。
+// GetAddressKey 取某手机号的令牌；没发过返回空串（不是错误）。
+func (s *Store) GetAddressKey(phone string) (string, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return "", nil
+	}
+	var key string
+	err := s.db.QueryRow(`SELECT key FROM addr_key WHERE phone=?`, phone).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("读取地址令牌失败: %w", err)
+	}
+	return key, nil
+}
+
+// EnsureAddressKey 取令牌，没有就生成一枚并持久化（POST /api/addresses 用）。
+// 已发过的手机号**复用同一枚**，不轮换——否则顾客换台设备就读不到自己的地址了。
+func (s *Store) EnsureAddressKey(phone string) (string, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return "", fmt.Errorf("%w: 手机号不能为空", ErrBadInput)
+	}
+	if key, err := s.GetAddressKey(phone); err != nil || key != "" {
+		return key, err
+	}
+	buf := make([]byte, 16) // 16 字节 = 32 位 hex
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("生成地址令牌失败: %w", err)
+	}
+	key := hex.EncodeToString(buf)
+	// ON CONFLICT DO NOTHING + 回读：并发首次保存时以先落库的那枚为准。
+	if _, err := s.db.Exec(`INSERT INTO addr_key (phone,key,created_at) VALUES (?,?,?)
+		ON CONFLICT(phone) DO NOTHING`, phone, key, nowStr()); err != nil {
+		return "", fmt.Errorf("保存地址令牌失败: %w", err)
+	}
+	return s.GetAddressKey(phone)
+}
+
+// CheckAddressKey 校验「手机号 + 令牌」是否匹配。手机号没发过令牌时返回 false
+// （而不是「无令牌即放行」——那等于没有这道门）。
+func (s *Store) CheckAddressKey(phone, key string) (bool, error) {
+	phone = strings.TrimSpace(phone)
+	key = strings.TrimSpace(key)
+	if phone == "" || key == "" {
+		return false, nil
+	}
+	var want string
+	err := s.db.QueryRow(`SELECT key FROM addr_key WHERE phone=?`, phone).Scan(&want)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("读取地址令牌失败: %w", err)
+	}
+	return want == key, nil
 }
 
 /* ------------------------------ 小工具 ------------------------------ */

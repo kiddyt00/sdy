@@ -13,7 +13,7 @@ Page({
     openid: '',
     roleText: '员工',
     shop: { name: '啥都有快送', phone: '', address: '', hours: '' },
-    version: '0.5.0'
+    version: '0.6.0'
   },
 
   onShow() {

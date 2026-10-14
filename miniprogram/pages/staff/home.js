@@ -10,7 +10,8 @@ Page({
     loading: true,
     error: '',
     name: '',
-    lowStock: 5,
+    // 第 27 轮 P0-9：阈值真源 = 服务端（overview 下发优先，其次 api.lowStock()），这里只做兜底起点
+    lowStock: api.lowStock(),
     stats: { revenueText: '0.00', todayOrders: 0, pending: 0, lowStockCount: 0, products: 0 },
     pendingOrders: [],
     lowStockItems: [],
@@ -37,7 +38,9 @@ Page({
         this.setData({
           loading: false,
           ready: true,
-          lowStock: d.lowStock || 5,
+          // 第 27 轮 P0-9：服务端 /api/staff/overview 的 lowStock 是唯一真源，
+          // 拿不到才退回 api.lowStock()（读 settings，兜底 5）
+          lowStock: (d && Number(d.lowStock) > 0) ? Number(d.lowStock) : api.lowStock(),
           stats: {
             revenueText: staff.money(st.todayRevenue),
             todayOrders: st.todayOrders || 0,

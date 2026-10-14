@@ -45,8 +45,16 @@
 
   <van-skeleton wx:if="{{loading}}" title row="6" />
 
+  <!-- 第 27 轮 P0-2：请求失败给错误卡 + 「重新加载」，绝不渲染成「没货」 -->
+  <view class="errbox" wx:elif="{{loadErr}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{loadErr}}</view>
+    <view class="errsub">东西还在，只是这会儿没连上店里系统</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
   <!-- 双列网格 -->
-  <view class="grid" wx:else>
+  <view class="grid" wx:elif="{{!empty}}">
     <view
       class="gitem"
       wx:for="{{products}}"
@@ -58,6 +66,7 @@
         <image wx:if="{{item.img}}" class="gimg" src="{{item.img}}" mode="aspectFill" lazy-load />
         <text wx:else>{{item.emoji}}</text>
         <view class="gtag out" wx:if="{{item.stock <= 0}}">缺货</view>
+        <view class="gtag low" wx:elif="{{item.stock <= lowStock}}">仅剩 {{item.stock}} 件</view>
         <view class="gtag" wx:elif="{{item.isWholesale}}">批发</view>
       </view>
       <view class="gbody">
@@ -78,7 +87,7 @@
     </view>
   </view>
 
-  <van-empty wx:if="{{!loading && empty}}" description="没有找到商品，换个词试试" />
+  <van-empty wx:if="{{!loading && !loadErr && empty}}" description="没有找到商品，换个词试试" />
 
   <view class="more" wx:if="{{!loading && total > 0}}">{{hasMore ? '上拉看更多' : '—— 没有更多了 ——'}}</view>
 

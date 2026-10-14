@@ -312,6 +312,44 @@ function sessionLabel() {
   return '已登录 · ' + displayName() + ' · ' + rules.tierLabel(s.tier)
 }
 
+/* ---------- 请求身份（第 27 轮契约：员工令牌 > openid > phone > 无身份 400） ---------- */
+// 小程序有 openid 就优先带 openid（服务端按档案认人，甩不掉换号）；否则退回下单时填的手机号。
+// 员工令牌由 staffHeaders() 单独带，优先级最高。
+const NO_IDENTITY = '缺少身份：顾客请先登录或填收货手机号'
+function identityParams() {
+  const s = session() || {}
+  let qs = ''
+  const header = {}
+  if (s.openid) {
+    qs = 'openid=' + encodeURIComponent(s.openid)
+    header['X-Wx-Openid'] = String(s.openid)
+  } else if (s.phone) {
+    qs = 'phone=' + encodeURIComponent(s.phone)
+  }
+  return { qs: qs, header: header }
+}
+// 合并身份头 + 员工令牌（顾客身份与员工令牌可以同时存在）
+function authHeader() {
+  const id = identityParams()
+  const h = staffHeaders()
+  const out = {}
+  Object.keys(id.header).forEach((k) => { out[k] = id.header[k] })
+  Object.keys(h).forEach((k) => { out[k] = h[k] })
+  return out
+}
+
+// 地址簿能力钥匙（第 27 轮契约）：首次保存地址时服务端下发 32 位 key，
+// 之后读写都要带上；本地还没拿到 key 时，空列表是「还没存过地址」而不是错误。
+const LS_ADDR_KEY = 'sdy_mp_addr_key'
+function addrKey() {
+  const k = sget(LS_ADDR_KEY, '')
+  return k ? String(k) : ''
+}
+function saveAddrKey(k) {
+  if (k) sset(LS_ADDR_KEY, String(k))
+  return addrKey()
+}
+
 // 记住下单时填的手机号（第 25 轮 / D31）：登录不再问手机号，但手机号仍是
 // 「价格身份 + 地址簿钥匙」（D24），所以下单时填过的号要留在本地会话里，
 // 之后的价格查询、地址簿、再来一单才能用上；**等级一律由服务端按档案下发，本地不推断**。
@@ -584,21 +622,30 @@ function createOrder(input) {
     saveLocalOrders(list)
     return Promise.resolve({ order: o, local: true })
   }
-  return request('POST', '/api/orders', body).then((d) => ({ order: mapOrder(d), local: false }))
+  // 第 27 轮契约：带上身份（openid/phone）与 clientToken，弱网重试不会重复下单、不会重复扣库存
+  const id = identityParams()
+  if (!id.qs) return Promise.reject(new Error(NO_IDENTITY))
+  body.clientToken = 'C' + Date.now() + Math.floor(Math.random() * 1000)
+  return request('POST', '/api/orders' + (id.qs ? '?' + id.qs : ''), body, authHeader()).then((d) => ({ order: mapOrder(d), local: false, duplicated: !!(d && d.duplicated) }))
 }
 
 // 订单列表；status 传空 = 全部（第 24 轮订单页状态 tab）
+// 第 27 轮契约：服务端按身份过滤（员工令牌 > openid > phone > 无身份 400），
+// 所以顾客侧每次都要把身份带上，否则要么 400、要么看不见自己的单。
 function listOrders(status) {
   const st = String(status || '').trim()
   if (!state.online) {
     const list = localOrders().map(mapOrder)
     return Promise.resolve(st ? list.filter((o) => o.status === st) : list)
   }
-  const qs = st ? '?status=' + encodeURIComponent(st) : ''
-  return request('GET', '/api/orders' + qs).then((d) => (d.items || []).map(mapOrder))
+  const id = identityParams()
+  if (!id.qs) return Promise.reject(new Error(NO_IDENTITY))
+  const qs = '?' + id.qs + (st ? '&status=' + encodeURIComponent(st) : '')
+  return request('GET', '/api/orders' + qs, null, authHeader()).then((d) => (d.items || []).map(mapOrder))
 }
 
-// 推进订单状态（顾客端只用「确认收货」→ done；取消请用 cancelOrder）
+// 推进订单状态：员工可以推任何目标值；顾客只能把自己的单推进到 done（「确认收货」）
+// 第 27 轮契约：advance 对非员工收紧；但顾客收货不能因此消失（服务端放行「归属人 + done」）
 function advanceOrder(id, to) {
   if (!state.online) {
     const list = localOrders()
@@ -608,7 +655,13 @@ function advanceOrder(id, to) {
     saveLocalOrders(list)
     return Promise.resolve(mapOrder(hit))
   }
-  return request('POST', '/api/orders/' + encodeURIComponent(id) + '/advance', { to: to }).then(mapOrder)
+  if (staffToken()) {
+    return request('POST', '/api/orders/' + encodeURIComponent(id) + '/advance', { to: to }, staffHeaders()).then(mapOrder)
+  }
+  if (to !== 'done') return Promise.reject(new Error('只有店主可以推进订单状态'))
+  const ident = identityParams()
+  if (!ident.qs) return Promise.reject(new Error(NO_IDENTITY))
+  return request('POST', '/api/orders/' + encodeURIComponent(id) + '/advance?' + ident.qs, { to: to }, authHeader()).then(mapOrder)
 }
 
 function getOrder(id) {
@@ -616,19 +669,40 @@ function getOrder(id) {
     const hit = localOrders().filter((o) => o.id === id)[0]
     return hit ? Promise.resolve(mapOrder(hit)) : Promise.reject(new Error('订单不存在'))
   }
-  return request('GET', '/api/orders/' + encodeURIComponent(id)).then(mapOrder)
+  const ident = identityParams()
+  if (!ident.qs) return Promise.reject(new Error(NO_IDENTITY))
+  return request('GET', '/api/orders/' + encodeURIComponent(id) + '?' + ident.qs, null, authHeader()).then(mapOrder)
 }
 
 // 顾客端只能取消自己的待处理订单（其余状态由店里在管理端推进）
+// 第 27 轮契约：取消是顾客自己的动作，走 POST /api/orders/{id}/cancel（advance 已收紧为员工专属）
 function cancelOrder(id) {
-  return advanceOrder(id, 'cancelled')
+  if (!state.online) {
+    const list = localOrders()
+    const hit = list.filter((o) => o.id === id)[0]
+    if (!hit) return Promise.reject(new Error('订单不存在'))
+    hit.status = 'cancelled'
+    saveLocalOrders(list)
+    return Promise.resolve(mapOrder(hit))
+  }
+  const ident = identityParams()
+  if (!ident.qs) return Promise.reject(new Error(NO_IDENTITY))
+  return request('POST', '/api/orders/' + encodeURIComponent(id) + '/cancel?' + ident.qs, { to: 'cancelled' }, authHeader())
+    .then((d) => (d && d.id ? mapOrder(d) : mapOrder(Object.assign({}, d, { status: 'cancelled' }))))
 }
 
 // ---------- 店铺信息（我的页 / 公告）：与 Web 端同一份 /api/settings ----------
 const LS_SETTINGS_KEY = 'sdy_mp_settings'
+const LOW_STOCK_FALLBACK = 5 // 接口没给时的兜底；页面不再各写一份硬编码 5
 function cachedSettings() {
   const s = sget(LS_SETTINGS_KEY, null)
   return s && typeof s === 'object' ? s : null
+}
+// 低库存阈值（第 27 轮契约：来自 GET /api/settings 的 lowStock，缺省 5）
+function lowStock() {
+  const s = cachedSettings() || {}
+  const n = Number(s.lowStock)
+  return isFinite(n) && n > 0 ? n : LOW_STOCK_FALLBACK
 }
 function getSettings() {
   if (!state.online) {
@@ -656,25 +730,43 @@ function mapAddress(a) {
 function addrPhone(phone) {
   return String(phone == null ? '' : phone).trim() || boundPhone()
 }
-function listAddresses(phone) {
+// 拿地址簿身份：手机号 + 能力钥匙（key）。登录过就用 openid 打头，服务端按档案认人。
+function addrAuth(phone) {
   const ph = addrPhone(phone)
-  if (!ph) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
+  if (!ph) return null
+  const out = ['phone=' + encodeURIComponent(ph)]
+  const k = addrKey()
+  if (k) out.push('key=' + encodeURIComponent(k))
+  const header = authHeader()
+  return { ph: ph, qs: out.join('&'), header: header }
+}
+function listAddresses(phone) {
+  const a = addrAuth(phone)
+  if (!a) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
   if (!state.online) return Promise.resolve([])
-  return request('GET', '/api/addresses?phone=' + encodeURIComponent(ph)).then((d) => (d.items || []).map(mapAddress))
+  // 契约：本地还没拿到 key、或者 key 对不上时，服务端返回空列表（不是错误）。
+  // 页面据此显示「还没有存过地址」，不要把空列表当加载失败。
+  return request('GET', '/api/addresses?' + a.qs, null, a.header).then((d) => (d.items || []).map(mapAddress))
 }
 function saveAddress(a, phone) {
-  const ph = addrPhone(phone)
-  if (!ph) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
+  const auth = addrAuth(phone)
+  if (!auth) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
   if (!state.online) return Promise.reject(new Error('后端未连接：地址簿要连上服务端才能保存'))
-  const body = { phone: ph, contact: a.contact, address: a.address, isDefault: !!a.isDefault }
+  const body = { phone: auth.ph, contact: a.contact, address: a.address, isDefault: !!a.isDefault }
   if (a.id) body.id = Number(a.id)
-  return request('POST', '/api/addresses', body).then(mapAddress)
+  const k = addrKey()
+  if (k) body.key = k
+  return request('POST', '/api/addresses', body, auth.header).then((d) => {
+    // 首次保存时服务端下发 key，必须落本地并在此后的读写里带上
+    if (d && d.key) saveAddrKey(d.key)
+    return mapAddress(d)
+  })
 }
 function deleteAddress(id, phone) {
-  const ph = addrPhone(phone)
-  if (!ph) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
+  const a = addrAuth(phone)
+  if (!a) return Promise.reject(new Error('先填收货手机号，才能用地址簿'))
   if (!state.online) return Promise.reject(new Error('后端未连接：地址簿要连上服务端才能改'))
-  return request('DELETE', '/api/addresses/' + encodeURIComponent(id) + '?phone=' + encodeURIComponent(ph))
+  return request('DELETE', '/api/addresses/' + encodeURIComponent(id) + '?' + a.qs, null, a.header)
 }
 
 // 扫码找货（**只读**，D8）：只回答「这个条码是哪个商品」，绝不改库存、绝不自动加购。
@@ -731,6 +823,12 @@ module.exports = {
   boundPhone: boundPhone,
   displayName: displayName,
   sessionLabel: sessionLabel,
+  // 请求身份 + 地址簿钥匙（第 27 轮契约）
+  identityParams: identityParams,
+  authHeader: authHeader,
+  addrKey: addrKey,
+  saveAddrKey: saveAddrKey,
+  NO_IDENTITY: NO_IDENTITY,
   createOrder: createOrder,
   listOrders: listOrders,
   getOrder: getOrder,
@@ -738,6 +836,8 @@ module.exports = {
   advanceOrder: advanceOrder,
   getSettings: getSettings,
   cachedSettings: cachedSettings,
+  lowStock: lowStock,
+  LOW_STOCK_FALLBACK: LOW_STOCK_FALLBACK,
   listAddresses: listAddresses,
   saveAddress: saveAddress,
   deleteAddress: deleteAddress,

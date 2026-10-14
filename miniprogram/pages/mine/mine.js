@@ -8,6 +8,7 @@
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
 const rules = require('../../utils/rules.js')
+const ui = require('../common/ui.js')
 
 const TAB_KEY = 'sdy_mp_order_tab'
 const AVATAR_KEY = 'sdy_mp_avatar'
@@ -41,11 +42,16 @@ Page({
     isStaff: false,
     staffView: false,
     counts: { pending: 0, delivering: 0, ready: 0, done: 0 },
+    // 第 27 轮 P0-1：订单概览也要把「加载中 / 失败 / 没身份 / 有数据」分开
+    loading: true,
+    loadErr: '',
+    needIdentity: false,
+    // 第 27 轮：格子文案取 rules.STATUS_LABELS（「待备货 / 待取货」），页面不再自己写「待处理」
     orderGrid: [
-      { key: 'pending', label: '待处理', icon: 'tosend' },
-      { key: 'delivering', label: '配送中', icon: 'logistics' },
-      { key: 'ready', label: '待自提', icon: 'shop-o' },
-      { key: 'done', label: '已完成', icon: 'completed' }
+      { key: 'pending', label: rules.STATUS_LABELS.pending, icon: 'tosend' },
+      { key: 'delivering', label: rules.STATUS_LABELS.delivering, icon: 'logistics' },
+      { key: 'ready', label: rules.STATUS_LABELS.ready, icon: 'shop-o' },
+      { key: 'done', label: rules.STATUS_LABELS.done, icon: 'completed' }
     ],
     shop: {
       name: '啥都有快送',
@@ -58,10 +64,7 @@ Page({
     this.syncSession()
     this.setData({ cartCount: store.cartCount() })
     this.loadAvatar()
-    return this.refresh().then((st) => {
-      this.loadCounts()
-      return st
-    })
+    return this.refresh().then((st) => this.loadCounts().then(() => st))
   },
 
   // 把登录态同步到页面（登录/退出/换头像昵称后都调一次）
@@ -167,7 +170,7 @@ Page({
       })
       .catch((e) => {
         this.setData({ busy: false })
-        this.toast(e.message)
+        this.toast(ui.errText(e))
         return null
       })
   },
@@ -218,14 +221,38 @@ Page({
   },
 
   loadCounts() {
+    // 第 27 轮 P0-8：订单接口必须带身份（openid 或手机号）。
+    // 没身份就在页面里拦住并引导，不要打到后端拿那句「缺少身份」报错。
+    if (this.data.online && !ui.hasIdentity()) {
+      this.setData({
+        loading: false,
+        needIdentity: true,
+        counts: { pending: 0, delivering: 0, ready: 0, done: 0 }
+      })
+      return Promise.resolve(null)
+    }
+    this.setData({ loading: true, loadErr: '', needIdentity: false })
     return api.listOrders('').then((list) => {
       const c = { pending: 0, delivering: 0, ready: 0, done: 0 }
       ;(list || []).forEach((o) => {
         if (c[o.status] !== undefined) c[o.status] += 1
       })
-      this.setData({ counts: c })
+      this.setData({ counts: c, loading: false, loadErr: '' })
       return c
-    }, () => null)
+    }, (e) => {
+      // 第 27 轮 P0-1：读不到订单 ≠ 没有订单，给错误卡 + 「重新加载」
+      this.setData({
+        loading: false,
+        loadErr: ui.errText(e),
+        counts: { pending: 0, delivering: 0, ready: 0, done: 0 }
+      })
+      return null
+    })
+  },
+
+  // 错误卡 / 身份引导卡上的「重新加载」：真正重新发请求
+  reload() {
+    return this.refresh().then(() => this.loadCounts())
   },
 
   goOrders() {

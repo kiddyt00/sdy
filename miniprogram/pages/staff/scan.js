@@ -16,7 +16,8 @@ Page({
     product: null,
     resolve: null,
     recent: [],
-    lowStock: 5,
+    // 第 27 轮 P0-9：阈值真源 = 服务端 settings（api.lowStock()，兜底 5），页面不再写死 5
+    lowStock: api.lowStock(),
     qty: '1',
     busy: false,
     editing: false,
@@ -97,7 +98,8 @@ Page({
           found: !!(d && d.found),
           product: p ? this.mapProduct(p) : null,
           resolve: r,
-          lowStock: (d && d.lowStock) || 5,
+          // 第 27 轮 P0-9：扫码接口下发的 lowStock 优先，拿不到退回 api.lowStock()（兜底 5）
+          lowStock: (d && Number(d.lowStock) > 0) ? Number(d.lowStock) : api.lowStock(),
           recent: ((d && d.recent) || []).map((e) => ({
             id: String(e.id || ''),
             deltaText: (Number(e.delta) > 0 ? '+' : '') + e.delta,

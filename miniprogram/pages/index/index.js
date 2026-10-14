@@ -3,6 +3,7 @@
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
 const config = require('../../utils/config.js')
+const ui = require('../common/ui.js')
 
 const PAGE_SIZE = 20
 
@@ -20,16 +21,29 @@ Page({
     total: 0,
     loading: true,
     empty: false,
+    loadErr: '',
+    // 第 27 轮 P0-9：低库存阈值由服务端 settings 下发（api.lowStock 兜底 5），页面不再写死 5
+    lowStock: api.lowStock(),
     cartCount: 0,
     cartAmountText: '0.00'
   },
 
   onLoad() {
-    this.setData({ shop: Object.assign({ name: config.STORE_NAME }, api.cachedSettings() || {}) })
+    this.setData({
+      shop: Object.assign({ name: config.STORE_NAME }, api.cachedSettings() || {}),
+      lowStock: api.lowStock()
+    })
+    // 购物车变更 → 页面计数 + tabBar 角标由 store 一处广播（第 27 轮 P0-1）
+    this._off = store.subscribe(() => this.syncCart())
+  },
+
+  onUnload() {
+    if (this._off) this._off()
   },
 
   onShow() {
     this.syncCart()
+    this.setData({ lowStock: api.lowStock() })
     return api.probe().then((st) => {
       this.setData({ online: !!st.online })
       return this.load()
@@ -50,7 +64,7 @@ Page({
 
   // 拉商品 + 分类；分类接口失败就按商品自己归类（离线 / 老后端也能用）
   load() {
-    this.setData({ loading: true })
+    this.setData({ loading: true, loadErr: '' })
     return Promise.all([
       api.listProducts('', ''),
       api.listCategories().catch(() => [])
@@ -72,13 +86,32 @@ Page({
         all: items,
         cats: [{ name: '全部', count: items.length }].concat(cats),
         cat: cat,
-        loading: false
+        loading: false,
+        loadErr: ''
       })
       this.applyFilter()
       return items
-    }, () => {
-      this.setData({ loading: false, all: [], products: [], empty: true })
+    }, (e) => {
+      // 第 27 轮 P0-2：拉不到商品 ≠ 店里没货。失败给错误卡 + 「重新加载」，
+      // 只有请求成功且结果为空才允许显示「没有找到商品」。
+      this.setData({
+        loading: false,
+        all: [],
+        products: [],
+        total: 0,
+        hasMore: false,
+        empty: false,
+        loadErr: ui.errText(e)
+      })
       return []
+    })
+  },
+
+  // 错误卡上的「重新加载」：真的重新探测 + 重新发请求（不是把旧数据再渲染一遍）
+  reload() {
+    return api.probe().then((st) => {
+      this.setData({ online: !!st.online })
+      return this.load()
     })
   },
 
@@ -93,7 +126,7 @@ Page({
       products: shown,
       total: list.length,
       hasMore: list.length > shown.length,
-      empty: shown.length === 0 && !this.data.loading
+      empty: shown.length === 0 && !this.data.loading && !this.data.loadErr
     })
     return shown
   },
@@ -136,6 +169,13 @@ Page({
     if (!p) return
     if (p.stock <= 0) {
       wx.showToast({ title: '这件暂时没货', icon: 'none' })
+      return
+    }
+    // 第 27 轮 P0-6：购物车里的数量上限就是这件商品的库存，到顶了就别再加
+    const line = (store.getCart() || []).filter((x) => x.code === code)[0]
+    const have = line ? Number(line.qty) || 0 : 0
+    if (have + 1 > p.stock) {
+      wx.showToast({ title: '最多只能买 ' + p.stock + (p.unit || '件'), icon: 'none' })
       return
     }
     store.addToCart(p, 1)

@@ -46,14 +46,43 @@
   }
   .dot-mode.on { background: var(--green); box-shadow: 0 0 0 4px var(--green-bg); }
   .dot-mode.off { background: #d1d5db; }
+
+  /* 第 27 轮（P0-1）：离线降级提示条。黄色底 + 深黄字，和「下单成功」的绿色一眼区分。 */
+  .offline-wrap {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--amber-bg); border: 1px solid var(--amber-line);
+    border-radius: var(--r-sm); padding: 9px 12px; margin: 0 0 10px;
+  }
+  .offline-bar { color: var(--amber); font-size: 12.5px; line-height: 1.5; }
+  .offline-wrap .offline-bar { flex: 1; min-width: 150px; }
+  .offline-retry {
+    flex: none; font-family: inherit; font-size: 12.5px; color: var(--amber); cursor: pointer;
+    background: #fff; border: 1px solid var(--amber-line); border-radius: 7px; padding: 6px 12px;
+  }
+  /* 结算弹窗里的同款提示：弹窗盖住了顶部提示条，必须就地再说一次 */
+  #coOffline {
+    background: var(--amber-bg); border: 1px solid var(--amber-line);
+    border-radius: var(--r-sm); padding: 9px 12px; margin-bottom: 12px;
+  }
+  /* 第 27 轮（P1-9）：这两个是「一组控件」的标题，没有单一 for 目标，不能写成空 label */
+  .fld-label { font-size: 12px; font-weight: 500; color: var(--muted); }
+  /* 第 27 轮（P1-9）：div 改成真按钮后抹掉浏览器默认样式，视觉保持原样 */
+  .topnav .tn { font-family: inherit; background: transparent; }
+  .dopt { font-family: inherit; text-align: left; width: 100%; }
 </style>
 </head>
 <body>
-<div class="mask" id="mask" onclick="closeAll()"></div>
+<div class="mask" id="mask" onclick="closeAll()" role="presentation" aria-hidden="true"></div>
 
 <!-- ============ 顶部 ============ -->
 <header class="shop-head">
   <div class="shop" style="padding-bottom:0">
+    <!-- 第 27 轮（P0-1）：离线降级常驻警示条。探测失败会静默降级成「本地演示」，
+         顾客却照样看到绿色下单成功——这条黄条 + 禁用提交按钮就是让降级看得见。 -->
+    <div class="offline-wrap hide" id="offlineWrap">
+      <span class="offline-bar" id="offlineBar" role="status" aria-live="polite"></span>
+      <button class="offline-retry" type="button" onclick="retryConnect()">🔄 重试连接</button>
+    </div>
     <div class="row-between">
       <div class="brand">
         <div class="logo">🛒</div>
@@ -65,8 +94,8 @@
       <div class="row">
         <span class="dot-mode" id="modeBadge" title="后端状态"></span>
         <div class="topnav">
-          <div class="tn on" id="tabHome" onclick="switchView('home')">逛商品</div>
-          <div class="tn" id="tabOrders" onclick="switchView('orders')">我的订单</div>
+          <button type="button" class="tn on" id="tabHome" onclick="switchView('home')">逛商品</button>
+          <button type="button" class="tn" id="tabOrders" onclick="switchView('orders')">我的订单</button>
         </div>
         <button class="cart-btn" onclick="openCart()">🛒 购物车<span class="cart-dot" id="cartDot">0</span></button>
       </div>
@@ -143,26 +172,28 @@
 <div class="modal" id="dlgCheckout">
   <div class="modal-head"><h3 style="font-size:16px">确认下单</h3><button class="icon-btn" onclick="closeAll()">✕</button></div>
   <div class="modal-body">
+    <!-- 第 27 轮（P0-1）：结算弹窗盖住顶部提示条，这里再提醒一次，顾客才知道提交按钮为什么点不动 -->
+    <div class="offline-bar hide" id="coOffline" role="status" aria-live="polite"></div>
     <div class="field">
-      <label>配送方式</label>
-      <div class="deliv-opts">
-        <div class="dopt on" id="optPickup" onclick="pickDelivery('pickup')"><b>到店自提</b><span>免配送费 · 到店报手机号</span></div>
-        <div class="dopt" id="optDelivery" onclick="pickDelivery('delivery')"><b>送货上门</b><span>满 30 元免，否则 3 元</span></div>
+      <div class="fld-label" id="delivLabel">配送方式</div>
+      <div class="deliv-opts" role="group" aria-labelledby="delivLabel">
+        <button type="button" class="dopt on" id="optPickup" onclick="pickDelivery('pickup')"><b>到店自提</b><span>免配送费 · 到店报手机号</span></button>
+        <button type="button" class="dopt" id="optDelivery" onclick="pickDelivery('delivery')"><b>送货上门</b><span>满 30 元免，否则 3 元</span></button>
       </div>
     </div>
     <div class="field mt-lg hide" id="addrPickWrap">
       <div class="fld-head">
-        <label>常用地址（点一下带出）</label>
+        <div class="fld-label">常用地址（点一下带出）</div>
         <button class="btn btn-xs" type="button" onclick="openAddrBook()">地址簿管理</button>
       </div>
       <div class="addr-list" id="addrPick"></div>
     </div>
     <div class="row mt-lg" style="gap:12px">
-      <div class="field grow"><label>收货人</label><input class="input" id="cName" placeholder="怎么称呼" maxlength="20"></div>
-      <div class="field grow"><label>手机号</label><input class="input" id="cPhone" placeholder="11 位手机号" maxlength="11" onchange="onPhoneChange()"></div>
+      <div class="field grow"><label for="cName">收货人</label><input class="input" id="cName" placeholder="怎么称呼" maxlength="20"></div>
+      <div class="field grow"><label for="cPhone">手机号</label><input class="input" id="cPhone" placeholder="11 位手机号" maxlength="11" onchange="onPhoneChange()"></div>
     </div>
     <div class="field mt hide" id="addrField">
-      <label>送货地址</label>
+      <label for="cAddr">送货地址</label>
       <input class="input" id="cAddr" placeholder="小区 / 楼栋 / 门牌" maxlength="120">
       <label class="chk mt" id="addrSaveWrap"><input type="checkbox" id="addrSave" checked> 保存到地址簿，下次一键带出</label>
     </div>
@@ -175,7 +206,7 @@
   </div>
   <div class="modal-foot">
     <button class="btn" onclick="closeAll()">再逛逛</button>
-    <button class="btn btn-primary" id="btnSubmit" onclick="submitOrder()">提交订单</button>
+    <button class="btn btn-primary" id="btnSubmit" type="button" onclick="submitOrder()">提交订单</button>
   </div>
 </div>
 
@@ -188,10 +219,10 @@
     <div class="card mt-lg" style="padding:14px 16px">
       <div style="font-weight:600;font-size:13.5px;margin-bottom:10px" id="afTitle">新增地址</div>
       <div class="row" style="gap:12px">
-        <div class="field grow"><label>收货人</label><input class="input" id="afContact" placeholder="怎么称呼" maxlength="20"></div>
-        <div class="field grow"><label>手机号</label><input class="input" id="afPhone" placeholder="11 位手机号" maxlength="11"></div>
+        <div class="field grow"><label for="afContact">收货人</label><input class="input" id="afContact" placeholder="怎么称呼" maxlength="20"></div>
+        <div class="field grow"><label for="afPhone">手机号</label><input class="input" id="afPhone" placeholder="11 位手机号" maxlength="11"></div>
       </div>
-      <div class="field mt"><label>送货地址</label><input class="input" id="afAddr" placeholder="小区 / 楼栋 / 门牌" maxlength="120"></div>
+      <div class="field mt"><label for="afAddr">送货地址</label><input class="input" id="afAddr" placeholder="小区 / 楼栋 / 门牌" maxlength="120"></div>
       <label class="chk mt"><input type="checkbox" id="afDefault"> 设为默认地址</label>
       <div class="row mt" style="justify-content:flex-end;gap:8px">
         <button class="btn" type="button" onclick="resetAddrForm()">清空</button>
@@ -231,7 +262,7 @@
   <div class="modal-head"><h3 style="font-size:16px">扫码找货</h3><button class="icon-btn" onclick="closeAll()">✕</button></div>
   <div class="modal-body">
     <div class="field">
-      <label>商品条码（8–14 位）</label>
+      <label for="scanCode">商品条码（8–14 位）</label>
       <input class="input" id="scanCode" placeholder="扫码枪直接扫，或手动输入条码" onkeydown="if(event.key==='Enter')scanNow()">
     </div>
     <div class="muted" style="font-size:12px;margin-top:10px" id="scanTip"></div>
@@ -239,7 +270,8 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<!-- 第 27 轮（P1-4）：下单结果要能被读屏播报，toast 加 role=status + aria-live=polite -->
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="mall.js"></script>
 <script src="pricing.js"></script>
@@ -253,18 +285,69 @@ const yuan = n => '¥' + (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
 
 let curCat = '全部', curFilter = '', view = 'home', selCode = null, detailQty = 1, deliveryType = 'pickup';
 let pickedAddrId = 0, editAddrId = 0;   // 地址簿（D18）：当前选中的地址 / 正在编辑的地址
+let searchTimer = null;                 // 第 27 轮（P1-10）：搜索防抖计时器
+let modeSettled = false;                // 第 27 轮（P0-1）：探测结果没回来前不下「离线」结论
 
 let toastTimer = null;
-function toast(msg, ms) {
+// 第 27 轮（P0-1/P1-3）：下单反馈要分色——kind='ok' 绿色（真进店系统），kind='warn' 黄色（离线未入库）。
+// 颜色本身就是结论，别让顾客读完一整句才发现这单根本没进店。
+function toast(msg, ms, kind) {
   const t = $('toast');
-  t.textContent = msg; t.className = 'toast show';
+  const cls = 'toast' + (kind ? ' ' + kind : '');
+  t.textContent = msg; t.className = cls + ' show';
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.className = 'toast'; }, ms || 2400);
+  toastTimer = setTimeout(() => { t.className = cls; }, ms || 2400);
 }
 function show(id) { const e = $(id); e.className = e.className.replace(' show', '') + ' show'; $('mask').className = 'mask show'; }
 function closeAll() {
   ['cartSheet', 'dlgCheckout', 'dlgDetail', 'dlgScan', 'dlgAddr'].forEach(id => { const e = $(id); e.className = e.className.replace(' show', ''); });
   $('mask').className = 'mask';
+}
+
+/* ---------------- 连接模式 / 降级提示（第 27 轮 P0-1） ---------------- */
+// SdyApi 探测失败会静默把 mode 置成 local（离线演示），页面以前照样弹绿色「下单成功」，
+// 顾客就以为店里收到了。这里把降级显式化：常驻黄条 + 结算处再提醒 + 禁用提交按钮；
+// 恢复在线（重试连接 / 浏览器 online 事件）后自动收起。判断只看 SdyApi，页面不自己写死。
+const OFFLINE_TEXT = '⚠️ 当前是本地演示模式：下单不会进店里系统，店里收不到，请检查网络后刷新页面重试。';
+const PENDING_TEXT = '⏳ 正在连接店里系统…连上之前不能提交订单。';
+const OFFLINE_TEXT_CO = '⚠️ 本地演示模式：这一单不会进店里系统，所以「提交订单」已停用；请检查网络后刷新页面重试。';
+function applyMode() {
+  const online = modeSettled && SdyApi.on();   // 探测没回来一律按「不可下单」处理（fail-closed）
+  // 先让提示区可见、再把文字写进去，读屏才会播报这次变化
+  const bar = $('offlineBar');
+  if (bar) bar.textContent = online ? '' : (modeSettled ? OFFLINE_TEXT : PENDING_TEXT);
+  const wrap = $('offlineWrap');
+  if (wrap) wrap.className = 'offline-wrap' + (online ? ' hide' : '');
+  const co = $('coOffline');
+  if (co) {
+    co.className = 'offline-bar' + (online ? ' hide' : '');
+    co.textContent = online ? '' : OFFLINE_TEXT_CO;
+  }
+  const btn = $('btnSubmit');
+  if (btn) {
+    const busy = btn.textContent === '提交中…';
+    btn.disabled = !online;
+    btn.className = 'btn btn-primary' + (online ? '' : ' dis');
+    if (!busy) btn.textContent = '提交订单';
+  }
+}
+function renderModeBadge(st) {
+  const badge = $('modeBadge'); if (!badge) return;
+  badge.textContent = '';
+  // 顾客端不露技术报错（title 里以前是 Failed to fetch），只给一句人话
+  badge.title = (st && st.online) ? '已连接店里系统' : '本地演示模式：未连接店里系统';
+  badge.className = 'dot-mode ' + (st && st.online ? 'on' : 'off');
+}
+async function retryConnect() {
+  const st = await SdyApi.boot();
+  modeSettled = true;
+  renderModeBadge(st);
+  applyMode();
+  if (st && st.online) refreshAll();
+}
+// 第 27 轮（P1-9）：卡片/chip 原来只有 onclick，键盘完全按不动。统一补 Enter/Space 等价于点按。
+function keyAct(e, fn, arg) {
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); fn(arg); }
 }
 
 /* ---------------- 小工具 ---------------- */
@@ -317,10 +400,14 @@ function picHTML(p, cls) {
 function renderCats() {
   const cats = ['全部'].concat([...new Set(products().map(p => p.category).filter(Boolean))]);
   $('cats').innerHTML = cats.map(c =>
-    '<div class="chip' + (c === curCat ? ' on' : '') + '" onclick="pickCat(\'' + esc(c) + '\')">' + esc(c) + '</div>').join('');
+    '<div class="chip' + (c === curCat ? ' on' : '') + '" role="button" tabindex="0" onclick="pickCat(\'' + esc(c) + '\')" onkeydown="keyAct(event,pickCat,\'' + esc(c) + '\')">' + esc(c) + '</div>').join('');
 }
 function pickCat(c) { curCat = c; renderCats(); renderGrid(); }
-function doSearch() { renderGrid(); }
+// 第 27 轮（P1-10）：每敲一个字就整块重建商品卡 DOM 太费，250ms 内只渲染最后一次输入
+function doSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(renderGrid, 250);
+}
 function renderGrid() {
   const kw = (($('q') && $('q').value) || '').trim().toLowerCase();
   const list = products().filter(p => {
@@ -334,7 +421,7 @@ function renderGrid() {
 }
 function cardHTML(p) {
   const out = p.stock <= 0;
-  return '<div class="pcard" onclick="openDetail(\'' + p.code + '\')">' +
+  return '<div class="pcard" role="button" tabindex="0" onclick="openDetail(\'' + p.code + '\')" onkeydown="keyAct(event,openDetail,\'' + p.code + '\')">' +
     '<div class="ph">' + picHTML(p, 'pimg') + (out ? '<div class="oos">已售罄</div>' : '') + '</div>' +
     '<div class="pb">' +
       '<div class="pname">' + esc(p.name) + '</div>' +
@@ -454,7 +541,7 @@ function renderAddrPick() {
   wrap.className = 'field mt-lg';
   const list = addrListOf(curPhone());
   $('addrPick').innerHTML = list.length ? list.map(a =>
-    '<div class="addr-item' + (a.id === pickedAddrId ? ' on' : '') + '" onclick="pickAddr(' + a.id + ')">' +
+    '<div class="addr-item' + (a.id === pickedAddrId ? ' on' : '') + '" role="button" tabindex="0" onclick="pickAddr(' + a.id + ')" onkeydown="keyAct(event,pickAddr,' + a.id + ')">' +
       '<div class="who"><b>' + esc(a.contact) + '</b><span class="mono">' + esc(a.phone) + '</span>' +
       (a.isDefault ? '<span class="badge st-done">默认</span>' : '') + '</div>' +
       '<div class="ad">' + esc(a.address) + '</div>' +
@@ -581,6 +668,7 @@ async function goCheckout() {
   renderAddrPick();
   renderCheckout();
   closeAll(); show('dlgCheckout');
+  applyMode();   // 第 27 轮（P0-1）：弹窗盖住了顶部提示条，这里同步弹窗内提示与提交按钮禁用态
 }
 function pickDelivery(t) {
   deliveryType = t;
@@ -611,6 +699,7 @@ async function submitOrder() {
   if (deliveryType === 'delivery' && !address) return toast('送货上门需要填地址');
   const btn = $('btnSubmit');
   btn.textContent = '提交中…'; btn.className = 'btn btn-primary dis';
+  const online = SdyApi.on();   // 第 27 轮（P0-1）：先记下这单是要进店里系统，还是只留在本地演示
   try {
     const order = await SdyApi.createOrder({ deliveryType: deliveryType, customer: { name: name, phone: phone, address: address } });
     Mall._save('mall_customer', { name: name, phone: phone, address: address });
@@ -624,21 +713,31 @@ async function submitOrder() {
         catch (e) { console.warn('地址簿保存失败：' + e.message); }
       }
     }
-    toast((SdyApi.on() ? '下单成功：' : '本地演示（未入库）：') + order.id, 3000);
+    // 第 27 轮（P0-1/P1-3）：在线=绿色「已下单」；离线=黄色警示且必须写明「未入库」，
+    // 绝不能再让顾客把离线演示当成下单成功。
+    if (online) {
+      toast('✅ 已下单 ' + order.id + '：店家已收到，可以在「我的订单」里看进度', 3200, 'ok');
+    } else {
+      toast('⚠️ 未入库：这一单只存在本机演示里，店里收不到，请连上网络后重新下单（单号 ' + order.id + '）', 5200, 'warn');
+    }
     closeAll(); refreshAll();
-    if (SdyApi.on()) switchView('orders');
+    // 第 27 轮（P1-13）：在线成功才进「我的订单」；离线不跳转，免得像走完了正常下单流程
+    if (online) switchView('orders');
   } catch (e) {
     toast(e.message, 3600);   // 后端原文照播（如「库存不足」），购物车不清空
   } finally {
-    btn.textContent = '提交订单'; btn.className = 'btn btn-primary';
+    btn.textContent = '提交订单';
+    applyMode();   // 第 27 轮（P0-1）：恢复按钮的在线/离线态（离线仍保持禁用）
   }
 }
 
 /* ---------------- 我的订单 ---------------- */
-const FILTERS = [['全部', ''], ['待备货', 'pending'], ['配送中', 'delivering'], ['待自提', 'ready'], ['已完成', 'done'], ['已取消', 'cancelled']];
+// 第 27 轮（P1-12）：状态名真源只有 mall.js 的 STATUS_META（ready=待取货、pending=待备货），
+// 页面不再自己写一份——以前这里自己写的名字和小程序/后端对不上。
+const FILTERS = [['全部', '']].concat(['pending', 'delivering', 'ready', 'done', 'cancelled'].map(s => [Mall.STATUS_META[s].label, s]));
 function renderFilters() {
   $('filters').innerHTML = FILTERS.map(f =>
-    '<div class="chip' + (curFilter === f[1] ? ' on' : '') + '" onclick="pickF(\'' + f[1] + '\')">' + f[0] + '</div>').join('');
+    '<div class="chip' + (curFilter === f[1] ? ' on' : '') + '" role="button" tabindex="0" onclick="pickF(\'' + f[1] + '\')" onkeydown="keyAct(event,pickF,\'' + f[1] + '\')">' + f[0] + '</div>').join('');
 }
 function pickF(f) { curFilter = f; renderFilters(); renderOrders(); }
 function renderOrders() {
@@ -681,7 +780,8 @@ async function cancelMine(id) {
   if (typeof confirm === 'function' && !confirm('确定取消这一单？库存会自动回补。')) return;
   try { await SdyApi.cancelOrder(id); toast('订单已取消'); }
   catch (e) { toast(e.message, 3600); }
-  renderOrders();
+  // 第 27 轮（P1-11）：取消会回补库存，首页商品列表/购物车也得跟着刷新，否则还显示旧库存
+  refreshAll();
 }
 // 送货到家 / 到店自提 → 已完成（与小程序同一状态机，服务端拦非法迁移）
 async function advanceMine(id) {
@@ -728,17 +828,21 @@ function refreshAll() {
 Mall.loadCatalog();
 refreshAll();
 renderCart();
+applyMode();   // 第 27 轮（P0-1））探测还没回来：先禁用提交并显示「正在连接…」
 
 (async function initApi() {
   // 连接状态只用一个点表示（第 25 轮 / D31）：绿=后端在线，灰=本地演示。
   // 文字说明留在 title 里，页面上不出现「后端已连接」这种开发信息。
-  const badge = $('modeBadge');
   const st = await SdyApi.boot();
-  badge.textContent = '';
-  badge.title = st.detail;
-  badge.className = 'dot-mode ' + (st.online ? 'on' : 'off');
+  modeSettled = true;   // 第 27 轮（P0-1）：探测有结果了，离线态才作数
+  renderModeBadge(st);
+  applyMode();
   if (st.online) refreshAll();
 })();
+// 第 27 轮（P0-1）：浏览器报「网络恢复」时自动重连一次，黄条随之消失（假 DOM 没有这个 API，跳过）
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('online', retryConnect);
+}
 </script>
 </body>
 </html>

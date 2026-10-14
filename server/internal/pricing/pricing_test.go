@@ -24,8 +24,130 @@ func TestDeliveryFee(t *testing.T) {
 			t.Errorf("DeliveryFee(%s,%v)=%v，期望 %v", c.kind, c.subtotal, got, c.want)
 		}
 	}
-	if _, err := DeliveryFee("drone", 100, cfg); err == nil {
-		t.Error("未知配送方式应当报错")
+	if _, err := DeliveryFee("drone", 100, cfg); err != nil {
+		t.Errorf("第 27 轮起未知配送方式按 delivery 处理，不应报错: %v", err)
+	}
+}
+
+// 第 27 轮：免运费门槛必须先 round2 再比较（与 web/pricing.js、小程序 rules.js 同口径），
+// 否则 29.999 这类金额会出现「前端显示免运费、服务端实收 3 元」。
+func TestDeliveryFeeRoundsBeforeCompare(t *testing.T) {
+	cfg := DefaultConfig() // MinFree=30, DeliveryFee=3
+	cases := []struct {
+		subtotal float64
+		want     float64
+	}{
+		{29.994, 3}, // round2 → 29.99，仍差 1 分钱
+		{29.995, 0}, // round2 → 30（与 JS Math.round(29.995*100)/100 同口径）
+		{29.999, 0}, // round2 → 30，正好达标
+		{30, 0},
+	}
+	for _, c := range cases {
+		got, err := DeliveryFee("delivery", c.subtotal, cfg)
+		if err != nil {
+			t.Fatalf("DeliveryFee(delivery,%v) 报错: %v", c.subtotal, err)
+		}
+		if got != c.want {
+			t.Errorf("DeliveryFee(delivery,%v)=%v，期望 %v（round2=%v）",
+				c.subtotal, got, c.want, Round2(c.subtotal))
+		}
+	}
+	if Round2(29.999) != 30 {
+		t.Errorf("Round2(29.999) 期望 30，实际 %v", Round2(29.999))
+	}
+}
+
+// 第 27 轮：MinFree<=0 表示「永不包邮」（不再被 Normalize 强制改回 30）。
+func TestDeliveryFeeMinFreeZeroMeansNeverFree(t *testing.T) {
+	cfg := Config{PickupFee: 0, MinFree: 0, DeliveryFee: 3, MaxRetailRatio: 0.95, ExcludeWholesale: true}
+	if got := cfg.Normalize().MinFree; got != 0 {
+		t.Fatalf("Normalize 不应把 MinFree=0 改回 30，实际 %v", got)
+	}
+	if got, _ := DeliveryFee("delivery", 1000, cfg); got != 3 {
+		t.Errorf("MinFree=0 时应始终收配送费 3，实际 %v", got)
+	}
+	if got, _ := DeliveryFee("delivery", 0, cfg); got != 3 {
+		t.Errorf("MinFree=0、货款 0 时应收配送费 3，实际 %v", got)
+	}
+	neg := Config{MinFree: -1, DeliveryFee: 3}
+	if got, _ := DeliveryFee("delivery", 999, neg); got != 3 {
+		t.Errorf("MinFree<0 同样表示永不包邮，实际 %v", got)
+	}
+	if got := DefaultConfig().Normalize().MinFree; got != 30 {
+		t.Errorf("默认配置的 30 应保留，实际 %v", got)
+	}
+}
+
+// 第 27 轮：未知配送方式按 delivery 处理（不再 400），自提仍取 PickupFee。
+func TestDeliveryFeeUnknownKindFallsBackToDelivery(t *testing.T) {
+	cfg := DefaultConfig()
+	if got, _ := DeliveryFee("express", 10, cfg); got != 3 {
+		t.Errorf("未知方式应按配送计费 3，实际 %v", got)
+	}
+	if got, _ := DeliveryFee("", 10, cfg); got != 3 {
+		t.Errorf("空方式应按配送计费 3，实际 %v", got)
+	}
+	if got, _ := DeliveryFee("pickup", 10, cfg); got != 0 {
+		t.Errorf("自提应取 PickupFee=0，实际 %v", got)
+	}
+}
+
+// 第 27 轮：起送价差额（POST /api/orders 的「还差 X 元起送」）。
+func TestMinOrderGap(t *testing.T) {
+	cases := []struct {
+		goods, minOrder, want float64
+	}{
+		{10, 0, 0},      // 不限起送
+		{10, -5, 0},     // 负数同样表示不限
+		{10, 30, 20},    // 还差 20
+		{30, 30, 0},     // 正好达标
+		{31, 30, 0},     // 超出
+		{29.999, 30, 0}, // 先 round2 → 30，正好达标
+		{29.994, 30, 0.01},
+	}
+	for _, c := range cases {
+		if got := MinOrderGap(c.goods, c.minOrder); got != c.want {
+			t.Errorf("MinOrderGap(%v,%v)=%v，期望 %v", c.goods, c.minOrder, got, c.want)
+		}
+	}
+}
+
+// 第 27 轮：状态中文文案集中一处（真源=Go）。
+func TestStatusText(t *testing.T) {
+	cases := map[string]string{
+		StatusPending:    "待备货",
+		StatusDelivering: "配送中",
+		StatusReady:      "待取货",
+		StatusDone:       "已完成",
+		StatusCancelled:  "已取消",
+	}
+	for status, want := range cases {
+		if got := StatusText(status); got != want {
+			t.Errorf("StatusText(%q)=%q，期望 %q", status, got, want)
+		}
+	}
+	if got := StatusText("weird"); got != "weird" {
+		t.Errorf("未知状态应原样返回，实际 %q", got)
+	}
+	// 常量本身也必须是稳定字符串（三端按它对齐）
+	if StatusPending != "pending" || StatusDelivering != "delivering" || StatusReady != "ready" ||
+		StatusDone != "done" || StatusCancelled != "cancelled" {
+		t.Error("订单状态常量取值被改了（三端契约会断）")
+	}
+}
+
+// 第 27 轮：脏 tier 一律归零售（不再原样透出）。
+func TestNormalizeTierDirtyValues(t *testing.T) {
+	for _, in := range []string{"", "foo", "GOLD", "retailX", "  ", "gold"} {
+		if got := NormalizeTier(in); got != TierRetail {
+			t.Errorf("NormalizeTier(%q)=%q，期望 retail", in, got)
+		}
+	}
+	if got := NormalizeTier(TierWholesale); got != TierWholesale {
+		t.Errorf("批发等级应保留，实际 %q", got)
+	}
+	if got := NormalizeTier(TierVIP); got != TierVIP {
+		t.Errorf("白名单等级应保留，实际 %q", got)
 	}
 }
 

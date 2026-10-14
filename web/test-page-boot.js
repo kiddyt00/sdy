@@ -51,6 +51,10 @@ function makeEnv(opts) {
   global.window = window;
   global.fetch = fetchImpl;
   SdyApi._resetForTest();
+  // 第 27 轮身份收敛：顾客页没有手机号就看不到自己的订单，所以需要订单的用例要先把
+  // 「我的手机号」写进本地存储（模拟「这台手机以前下过单」），否则镜像永远是空的。
+  // 注意 mall.js 的本地存储约定是 JSON 字符串（loadLS 里 JSON.parse），别写裸字符串。
+  if (opts && opts.myPhone) localStorage.setItem('mall_my_phone', JSON.stringify(String(opts.myPhone)));
   SdyApi.configure({ fetchImpl: fetchImpl, mall: Mall, admin: Admin, timeoutMs: 300, base: (opts && opts.base) || '' });
 
   const sandbox = {
@@ -78,7 +82,8 @@ const offline = { fetch: async () => { throw new Error('connection refused'); } 
 const online = {
   base: 'http://127.0.0.1:8093',
   fetch: async (url, opts) => {
-    const p = String(url).replace(/^https?:\/\/[^/]+/, '');
+    // 第 27 轮：请求会带上身份 query（?phone= / ?key=），路由表按路径匹配，忽略 query。
+    const p = String(url).replace(/^https?:\/\/[^/]+/, '').replace(/\?.*$/, '');
     const method = (opts && opts.method) || 'GET';
     const routes = {
       'GET /healthz': { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true },
@@ -115,7 +120,7 @@ const online = {
   /* ---------- 顾客端：在线 ---------- */
   section('② index.html · 后端可用（拉镜像）');
   {
-    const env = await bootPage('index.html', online);
+    const env = await bootPage('index.html', { base: online.base, fetch: online.fetch, myPhone: '13800000000' });
     ok(env.els.modeBadge.className.indexOf('dot-mode') >= 0 && env.els.modeBadge.className.indexOf('on') >= 0, '后端可用时小点是绿的：' + env.els.modeBadge.className);
     ok(SdyApi.on() === true, 'SdyApi 处于 server 模式');
     ok(Mall.loadCatalog().length === 2, '页面已被后端镜像覆盖（2 条，非 6 条种子）');
@@ -825,6 +830,83 @@ const online = {
     aenv.els.note_13800001111 = fakeEl('note_13800001111'); aenv.els.note_13800001111.value = '常买整箱水';
     await actx.saveNote('13800001111');
     ok(aenv.els.toast.textContent.indexOf('顾客档案已保存') >= 0, '备注保存回执：' + aenv.els.toast.textContent.slice(0, 20));
+  }
+
+  /* ---------- 顾客端：第 27 轮 离线降级可见性 / 无障碍 / 防抖 ---------- */
+  section('⑬ index.html · 第 27 轮：离线降级可见 / 在线恢复 / 无障碍 / 防抖');
+  {
+    const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+    const css = fs.readFileSync(path.join(__dirname, 'assets', 'theme.css'), 'utf8');
+    const grab = (env, ids) => { ids.forEach(id => { env.els[id] = env.ctx.document.getElementById(id); }); return env; };
+
+    // —— 离线：常驻提示条 + 禁用提交（P0-1）——
+    const off = grab(await bootPage('index.html', offline),
+      ['offlineBar', 'offlineWrap', 'coOffline', 'btnSubmit', 'toast', 'grid', 'q', 'cName', 'cPhone', 'cAddr', 'tabHome', 'tabOrders', 'filters', 'cats']);
+    ok(off.els.offlineBar.textContent.indexOf('本地演示') >= 0 && off.els.offlineBar.textContent.indexOf('不会进店里系统') >= 0,
+      '离线常驻提示条说明「下单不会进店里系统」：' + off.els.offlineBar.textContent.slice(0, 22));
+    ok(off.els.offlineWrap.className.indexOf('hide') < 0, '离线提示条可见（无 hide）');
+    ok(off.els.btnSubmit.disabled === true && off.els.btnSubmit.className.indexOf('dis') >= 0, '离线 #btnSubmit 禁用且置灰');
+    ok(off.els.coOffline.textContent.indexOf('停用') >= 0, '结算弹窗内说明提交按钮为何停用');
+    ok(html.indexOf('id="offlineBar" role="status" aria-live="polite"') >= 0, '提示条是 aria-live 状态区（读屏可播报）');
+    ok(html.indexOf('id="toast" role="status" aria-live="polite"') >= 0, '下单 toast 是 aria-live 状态区');
+
+    // —— 离线下单：黄色警示 + 不跳订单页（P0-1 / P1-13）——
+    Mall.addToCart('6901234567892', 1);
+    await off.ctx.goCheckout();
+    off.ctx.pickDelivery('pickup');
+    off.els.cName.value = '李四'; off.els.cPhone.value = '13800000002';
+    await off.ctx.submitOrder();
+    ok(off.els.toast.className.indexOf('warn') >= 0 && off.els.toast.className.indexOf('ok') < 0, '离线 toast 不是绿色成功样式：' + off.els.toast.className);
+    ok(off.els.toast.textContent.indexOf('未入库') >= 0, '离线下单文案明说「未入库」：' + off.els.toast.textContent.slice(0, 16));
+    ok(off.els.tabOrders.className.indexOf('on') < 0, '离线下单不跳「我的订单」');
+    ok(off.els.btnSubmit.disabled === true, '离线提交完按钮仍禁用');
+
+    // —— 取消订单回补库存后首页刷新（P1-11）——
+    const oid = Mall.getOrders()[0].id;
+    off.els.grid.innerHTML = 'SENTINEL';
+    await off.ctx.cancelMine(oid);
+    ok(off.els.grid.innerHTML.indexOf('可口可乐') >= 0, '取消订单回补库存后首页商品列表被刷新（refreshAll）');
+
+    // —— 搜索防抖 250ms（P1-10）——
+    off.els.grid.innerHTML = 'SENTINEL';
+    off.els.q.value = '可乐';
+    off.ctx.doSearch();
+    ok(off.els.grid.innerHTML === 'SENTINEL', '搜索防抖：doSearch() 当场不重渲染');
+    await new Promise(r => setTimeout(r, 320));
+    ok(off.els.grid.innerHTML.indexOf('可口可乐') >= 0 && off.els.grid.innerHTML.indexOf('伊利纯牛奶') < 0, '250ms 后只按关键词渲一次');
+
+    // —— 在线：提示条收起 + 按钮可用 + 绿色成功 + 跳订单页（P0-1 / P1-3 / P1-13）——
+    const onlineOrder = {
+      base: online.base,
+      // 下单后 sync() 会带 ?phone= 再拉一次商品，这里去掉 query 再交给标准 mock，别让它 404
+      fetch: async (url, opts) => {
+        const p = String(url).replace(/^https?:\/\/[^/]+/, '').split('?')[0];
+        const method = (opts && opts.method) || 'GET';
+        if (method === 'POST' && p === '/api/orders') {
+          return { ok: true, status: 200, text: async () => JSON.stringify({ id: 'M900', status: 'pending', total: 5 }) };
+        }
+        return online.fetch(online.base + p, opts);
+      }
+    };
+    const on = grab(await bootPage('index.html', onlineOrder), ['offlineBar', 'offlineWrap', 'btnSubmit', 'toast', 'cName', 'cPhone', 'cAddr', 'tabOrders']);
+    ok(on.els.offlineWrap.className.indexOf('hide') >= 0 && on.els.offlineBar.textContent === '', '在线时提示条自动收起并清空');
+    ok(on.els.btnSubmit.disabled === false && on.els.btnSubmit.className.indexOf('dis') < 0, '在线时 #btnSubmit 恢复可用');
+    Mall.addToCart('6901234567892', 1);
+    await on.ctx.goCheckout();
+    on.ctx.pickDelivery('pickup');
+    on.els.cName.value = '王五'; on.els.cPhone.value = '13800000003';
+    await on.ctx.submitOrder();
+    ok(on.els.toast.className.indexOf('ok') >= 0 && on.els.toast.textContent.indexOf('已下单') >= 0, '在线下单是绿色「已下单」：' + on.els.toast.className);
+    ok(on.els.tabOrders.className.indexOf('on') >= 0, '在线下单后跳「我的订单」');
+
+    // —— 状态名真源 / 键盘可达 / 对比度 / 热区（P1-6~P1-12，字符串断言）——
+    ok(off.els.filters.innerHTML.indexOf('待取货') >= 0 && off.els.filters.innerHTML.indexOf('待自提') < 0, 'ready 统一叫「待取货」，不再出现「待自提」');
+    ok(off.els.cats.innerHTML.indexOf('role="button"') >= 0 && off.els.cats.innerHTML.indexOf('tabindex="0"') >= 0 && off.els.cats.innerHTML.indexOf('onkeydown=') >= 0, '分类 chip 键盘可达');
+    ok(html.indexOf('id="tabHome" onclick="switchView(\'home\')"') >= 0 && html.indexOf('<button type="button" class="tn') >= 0, '顶部 tab 改成真按钮');
+    ok(html.indexOf('<div class="tn"') < 0 && html.indexOf('<div class="dopt"') < 0, '不再有 div 版 tab / 配送方式');
+    ok(css.indexOf('--faint: #5f6b7d') >= 0, '--faint 调深（白底 5.40:1 / --bg 4.99:1）');
+    ok(css.indexOf('.toast.warn') >= 0 && css.indexOf('.toast.ok') >= 0, 'toast 有绿/黄两种配色');
+    ok(css.indexOf('width: 44px; height: 44px') >= 0, '热区用 44×44 伪元素撑开（视觉尺寸不变）');
   }
 
   console.log('\n========================================');

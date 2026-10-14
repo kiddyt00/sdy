@@ -53,6 +53,12 @@
   .bulk-preview tr.blocked td { background: #fff7ed; }
   .bulk-preview tr.same td { color: var(--muted); }
   .bulk-cb { width: 15px; height: 15px; cursor: pointer; }
+  /* 演示数据标记（第 27 轮 / E-P0-3）：没连过后端时才出现，提醒老板看到的是本地演示值 */
+  .demo-banner { margin: 0 0 14px; padding: 9px 13px; border-radius: var(--r-sm); font-size: 12px;
+    background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-line); }
+  .demo-badge { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-line);
+    border-radius: 999px; padding: 0 6px; font-size: 11px; margin-left: 6px; white-space: nowrap; }
+  .remark-line { margin-top: 4px; font-size: 12px; color: var(--amber); }
   /* 商品图片与分类管理（任务池⑥） */
   .pcell { display: flex; align-items: center; gap: 9px; }
   .pcell .pmeta { min-width: 0; }
@@ -111,10 +117,18 @@
         <h1 id="crumb">经营总览</h1>
       </div>
       <div class="row">
+        <label class="row" id="pollWrap" style="gap:6px;font-size:12px" title="打开后每 30 秒拉一次后端订单，只在本页可见时轮询">
+          <input type="checkbox" id="pollToggle" onchange="togglePoll(this.checked)">
+          <span id="pollLabel">新订单提醒（关）</span>
+        </label>
+        <button class="btn btn-xs" id="newOrderBtn" style="display:none" onclick="clearNewOrderFlag()"></button>
         <span class="pill-mode" id="modeBadge">⏳ 正在探测后端…</span>
         <button class="btn btn-xs" onclick="refreshAll()">↻ 刷新</button>
       </div>
     </div>
+
+    <!-- 演示数据标记（E-P0-3）：只有「从没连过后端」才允许用本地演示值，且必须显式标出来 -->
+    <div class="demo-banner" id="demoBanner" style="display:none"></div>
 
     <!-- ---------- 总览 ---------- -->
     <section class="page" id="viewDash">
@@ -125,14 +139,21 @@
           <div class="k-foot" id="kpiOrdersSub">含全部状态</div>
         </div>
         <div class="kpi">
-          <div class="k-label">待处理<span style="margin-left:auto">⏰</span></div>
+          <!-- 口径说明（第 27 轮收口）：上面两张是「今天下的单」，这张是「现在还没做完的活」
+               （不限日期，昨天的单今天没做完也得显示），脚注写清楚，避免看起来自相矛盾。 -->
+          <div class="k-label">当前待处理<span style="margin-left:auto">⏰</span></div>
           <div class="k-value" id="kpiPending">0</div>
-          <div class="k-foot" id="kpiPendingSub">尽快备货 / 派送</div>
+          <div class="k-foot" id="kpiPendingSub">不限日期 · 待备货</div>
         </div>
         <div class="kpi">
           <div class="k-label">今日营业额<span style="margin-left:auto">💰</span></div>
           <div class="k-value" id="kpiRevenue">¥0.00</div>
-          <div class="k-foot" id="kpiRevenueSub">已取消订单不计入</div>
+          <div class="k-foot" id="kpiRevenueSub">只算已完成（下单≠收款）</div>
+        </div>
+        <div class="kpi">
+          <div class="k-label">进行中金额<span style="margin-left:auto">⏳</span></div>
+          <div class="k-value" id="kpiOpenAmount">¥0.00</div>
+          <div class="k-foot" id="kpiOpenSub">待备货 / 配送中 / 待自提</div>
         </div>
         <div class="kpi">
           <div class="k-label">库存预警<span style="margin-left:auto">📦</span></div>
@@ -346,9 +367,10 @@
             <div class="field grow" style="max-width:160px"><label>姓名 / 店名（选填）</label><input class="input" id="newCustName" placeholder="张老板"></div>
             <div class="field grow" style="max-width:130px"><label>等级</label>
               <select class="sel" id="newCustTier">
+                <!-- 默认零售（第 27 轮收口）：原来是批发，误点一下就把顾客按批发价放出去 -->
+                <option value="retail" selected>零售价（默认）</option>
                 <option value="wholesale">批发价</option>
                 <option value="vip">白名单价</option>
-                <option value="retail">零售价</option>
               </select>
             </div>
             <button class="btn btn-primary" onclick="addCustomer()">登记顾客等级</button>
@@ -496,6 +518,9 @@ function toast(msg, ms) {
 function closeAll() { $('mask').className = 'mask'; $('sidebar').className = 'sidebar'; closeProductDlg(); }
 function toggleSide() { const s = $('sidebar'); s.className = s.className.indexOf('open') >= 0 ? 'sidebar' : 'sidebar open'; }
 function online() { return SdyApi.on(); }
+// 「本地演示数据是否可作数」（第 27 轮 / E-P0-3）：只有离线演示模式才允许拿本地镜像垫底。
+// 后端一旦连上、又明确回了空，就必须如实显示空态——否则老板看到的是假流水/假数字。
+function demoOk() { return !online(); }
 
 /* ---------------- 视图切换 ---------------- */
 const TABS = { dash: ['经营总览', 'navDash', 'viewDash'], report: ['销售报表', 'navReport', 'viewReport'], orders: ['订单处理', 'navOrders', 'viewOrders'], stock: ['库存与流水', 'navStock', 'viewStock'], products: ['商品档案', 'navProducts', 'viewProducts'], pricing: ['价格防护', 'navPricing', 'viewPricing'], cust: ['顾客档案', 'navCust', 'viewCust'], sys: ['系统与工具', 'navSys', 'viewSys'] };
@@ -512,36 +537,50 @@ function switchTab(t) {
 }
 
 /* ---------------- 总览 ---------------- */
+// 今日营业额口径（E-P0-7）：没有在线支付 → 下单 ≠ 收款，营业额只算「已完成」的实收，
+// 待备货 / 配送中 / 待自提另列「进行中金额」。口径与报表页 doneAmount / openAmount 一致。
 function kpi() {
   const orders = Mall.getOrders();
-  const today = new Date().toDateString();
-  const todays = orders.filter(o => new Date(o.createdAt).toDateString() === today);
-  const valid = todays.filter(o => o.status !== 'cancelled');
+  const t = Admin.kpiOf(orders);
   return {
-    today: todays.length,
+    today: t.today,
+    valid: t.valid,
+    cancelled: t.cancelled,
     pending: orders.filter(o => o.status === 'pending').length,
-    revenue: valid.reduce((s, o) => s + (Number(o.total) || 0), 0),
-    low: Mall.loadCatalog().filter(p => p.stock <= 5).length,
+    revenue: t.doneAmount,          // 今日营业额 = 已完成（实收）
+    doneCount: t.done,
+    openAmount: t.openAmount,       // 进行中金额（还没收到的钱）
+    openCount: t.open,
+    low: Mall.loadCatalog().filter(p => p.stock <= Admin.LOW_STOCK).length,
     cust: Admin.getCustomers().length
   };
 }
 function renderDash() {
   const k = kpi();
   $('kpiOrders').textContent = String(k.today);
+  $('kpiOrdersSub').textContent = k.cancelled > 0 ? ('含全部状态 · 已取消 ' + k.cancelled + ' 单') : '含全部状态';
   $('kpiPending').textContent = String(k.pending);
+  // 强调「不限日期」：这张卡是待办，不是今日口径（营业额/订单数才是今日）
+  $('kpiPendingSub').textContent = '不限日期 · 仅待备货';
   $('kpiRevenue').textContent = yuan(k.revenue);
+  $('kpiRevenueSub').textContent = '只算已完成 ' + k.doneCount + ' 单（下单≠收款）';
+  $('kpiOpenAmount').textContent = yuan(k.openAmount);
+  $('kpiOpenSub').textContent = '进行中 ' + k.openCount + ' 单 · 待收款';
   $('kpiLow').textContent = String(k.low);
+  $('kpiLowSub').textContent = '库存 ≤ ' + Admin.LOW_STOCK + ' 的商品';
   $('kpiCust').textContent = String(k.cust);
   $('navOrderBadge').textContent = k.pending > 0 ? String(k.pending) : '';
 
-  const recent = Mall.getOrders().slice(0, 6);
+  // 「最近订单」必须真按时间倒序（第 27 轮收口）：镜像按插入序返回，直接 slice 拿到的
+  // 可能是旧单，老板看到的「最近」就是假的。复制一份再排，避免就地改动 Mall 的数组。
+  const recent = Mall.getOrders().slice().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)).slice(0, 6);
   $('dashOrders').innerHTML = recent.length ? '<div class="table-wrap"><table class="table"><thead><tr><th>订单号</th><th>顾客</th><th>内容</th><th class="num">金额</th><th>状态</th></tr></thead><tbody>' +
     recent.map(o => { const v = Mall.orderView(o); return '<tr><td class="mono">' + esc(o.id) + '</td><td>' + esc(o.customer.name) + '</td>' +
       '<td>' + o.items.map(i => esc(i.name) + '×' + i.qty).join('、') + '</td>' +
       '<td class="num">' + yuan(o.total) + '</td><td><span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></td></tr>'; }).join('') +
     '</tbody></table></div>' : '<div class="empty"><span class="big">🧾</span>今天还没有订单</div>';
 
-  const lowList = Mall.loadCatalog().filter(p => p.stock <= 5);
+  const lowList = Mall.loadCatalog().filter(p => p.stock <= Admin.LOW_STOCK);
   $('dashLow').innerHTML = lowList.length ? lowList.map(p =>
     '<div class="logline"><span class="lgt ' + (p.stock <= 0 ? 'take' : 'adj') + '">' + (p.stock <= 0 ? '缺货' : '偏低') + '</span>' +
     '<b>' + esc(p.name) + '</b><span class="muted">' + esc(p.spec || '') + '</span>' +
@@ -710,13 +749,27 @@ async function assign(id) {
   const sel = $('cs_' + id);
   const c = sel ? sel.value : '';
   if (!c) return toast('先选一个配送员');
-  try { await SdyApi.advanceOrder(id, 'delivering'); } catch (e) { toast(e.message); }
+  // E-P0-5：这里原来没有 return，派单失败后照样写本地镜像并提示「进入配送中」，
+  // 老板以为派了单，服务端其实还是 pending。失败必须止步：不动镜像、不改状态。
+  try {
+    await SdyApi.advanceOrder(id, 'delivering');
+  } catch (e) {
+    return toast('派单失败：' + ((e && e.message) || '未知错误') + '，请重试', 4600);
+  }
   Admin.setCourier(id, c);
   if (Mall.updateOrder) Mall.updateOrder(id, { courier: c });
   toast('已分配 ' + c + '，订单进入配送中');
   renderAll();
 }
 async function adv(id, to) {
+  // E-④-7：状态推进不可逆（done 之后没有回退路径），动手前先确认对象与后果
+  const o = Mall.getOrders().filter(x => String(x.id) === String(id))[0];
+  const who = (o && o.customer && o.customer.name) ? o.customer.name : '该顾客';
+  if (!confirm(to === 'done'
+    ? '确认把「' + who + '」的订单标记为已完成？这一步不可撤销，之后才计入营业额。'
+    : to === 'ready'
+      ? '确认通知「' + who + '」到店自提？'
+      : '确认把「' + who + '」的订单状态改为「' + to + '」？')) return;
   try { await SdyApi.advanceOrder(id, to); toast(to === 'done' ? '订单已完成 ✅' : to === 'ready' ? '已通知顾客到店自提' : '状态已更新'); }
   catch (e) { toast(e.message, 3600); }
   renderAll();
@@ -841,15 +894,22 @@ function renderStock() {
 async function renderStockLog() {
   let log = Admin.getStockLog(30);
   let fromServer = false;
+  let isEmptyFromServer = false;
   if (online()) {
     try {
       const items = await SdyApi.listStockLog(30);
       if (items && items.length) { log = items; fromServer = true; }
+      else if (items) { log = []; fromServer = true; isEmptyFromServer = true; }   // 后端真的没有流水
     } catch (e) { }
   }
+  // E-P0-3：后端已连且明确返回空 → 显示空态，绝不回落成「本地演示流水」；
+  // 只有从没连上过后端（demoOk()）才允许拿本地记录垫着。
+  if (isEmptyFromServer && demoOk()) log = Admin.getStockLog(30);
   log = log.slice(0, 30);
   const LT = { stock_in: ['入库', 'in'], adjust: ['改数', 'adj'], stock_take: ['盘点', 'take'] };
-  $('stockLogCount').textContent = log.length ? '最近 ' + log.length + ' 条' + (fromServer ? '（后端审计）' : '') : '';
+  $('stockLogCount').textContent = isEmptyFromServer && !log.length
+    ? '后端暂无流水'
+    : (log.length ? '最近 ' + log.length + ' 条' + (fromServer ? (isEmptyFromServer ? '（本地演示）' : '（后端审计）') : '') : '');
   $('stockLog').innerHTML = log.length ? log.map(e => {
     const t = LT[e.kind || e.type] || ['操作', 'adj'];
     return '<div class="logline"><span class="lgt ' + t[1] + '">' + t[0] + '</span>' +
@@ -857,7 +917,7 @@ async function renderStockLog() {
       (e.delta ? '（' + (e.delta > 0 ? '+' : '') + e.delta + '）' : '') + '</span>' +
       '<span class="muted">' + esc(e.reason || '') + ' · ' + esc(e.by || BY) + '</span>' +
       '<span class="ts">' + when(e.at || e.ts) + '</span></div>';
-  }).join('') : '<div class="empty">还没有库存操作记录</div>';
+  }).join('') : '<div class="empty">' + (isEmptyFromServer ? '后端还没有库存流水（做一次入库 / 改数 / 盘点就会有）' : '还没有库存操作记录') + '</div>';
 }
 function toastChange(verb, code, e) {
   const p = Mall.getProduct(code) || { name: code, unit: '件' };
@@ -1163,6 +1223,9 @@ async function applyBulk() {
           category: p.category || Admin.DEFAULT_CATEGORY, unit: p.unit || Admin.DEFAULT_UNIT,
           img: p.img || '',
           costPrice: p.costPrice || 0, salePrice: r.newPrice, refPrice: p.refPrice || 0,
+          // 批发价必须原样带上（第 27 轮）：/api/products 是覆盖式 upsert，漏传=按 0 覆盖，
+          // 批量改个售价就把批发顾客的价格抹平了（审计 E-P0-4）。
+          wholesalePrice: p.wholesalePrice || 0,
           isWholesale: !!(p.isWholesale || p.wholesale)
         });
         Admin.logProductEvent('edit', Object.assign({}, p, { salePrice: r.newPrice }), { by: BY, reason: label, stock: p.stock });
@@ -1204,7 +1267,8 @@ async function applyCatToCodes(codes, cat, label) {
           code: p.code, name: p.name, brand: p.brand || '', spec: p.spec || '', category: cat,
           img: p.img || '',
           unit: p.unit || Admin.DEFAULT_UNIT, costPrice: p.costPrice || 0, salePrice: p.salePrice || 0,
-          refPrice: p.refPrice || 0, isWholesale: !!(p.isWholesale || p.wholesale)
+          refPrice: p.refPrice || 0, wholesalePrice: p.wholesalePrice || 0,   // 覆盖式 upsert：漏传批发价会被清零（第 27 轮 / E-P0-4）
+          isWholesale: !!(p.isWholesale || p.wholesale)
         });
         Admin.logProductEvent('edit', Object.assign({}, p, { category: cat }), { by: BY, reason: label, stock: p.stock });
         res.changed++;
@@ -1272,7 +1336,8 @@ async function applyBulkWhole() {
           code: p.code, name: p.name, brand: p.brand || '', spec: p.spec || '',
           category: p.category || Admin.DEFAULT_CATEGORY, unit: p.unit || Admin.DEFAULT_UNIT,
           img: p.img || '',
-          costPrice: p.costPrice || 0, salePrice: p.salePrice || 0, refPrice: p.refPrice || 0, isWholesale: on
+          costPrice: p.costPrice || 0, salePrice: p.salePrice || 0, refPrice: p.refPrice || 0, isWholesale: on,
+          wholesalePrice: p.wholesalePrice || 0   // 覆盖式 upsert：取消批发不等于清掉批发价（第 27 轮 / E-P0-4）
         });
         Admin.logProductEvent('edit', Object.assign({}, p, { isWholesale: on }), { by: BY, reason: label, stock: p.stock });
         res.changed++;
@@ -1430,8 +1495,11 @@ async function saveTier(phone) {
 async function addCustomer() {
   const phone = (($('newCustPhone') && $('newCustPhone').value) || '').trim();
   const name = (($('newCustName') && $('newCustName').value) || '').trim();
-  const tier = ($('newCustTier') && $('newCustTier').value) || 'wholesale';
+  // 缺省必须回落到零售（第 27 轮收口）：原来是 wholesale，下拉没选中就会默默给批发价
+  const tier = ($('newCustTier') && $('newCustTier').value) || 'retail';
   if (!phone) return toast('请填手机号', 3000);
+  // 等级直接决定顾客看到的价格，提交前确认一次，防止误点下拉就放出批发价
+  if (!confirm('确认把 ' + phone + (name ? '（' + name + '）' : '') + ' 登记为「' + Admin.tierLabel(tier) + '价」顾客？')) return;
   try { await Admin.setTier(phone, name, tier); }
   catch (e) { return toast('登记失败：' + e.message, 4200); }
   $('newCustPhone').value = ''; $('newCustName').value = '';
@@ -1532,23 +1600,85 @@ function renderAll() {
   else if (tab === 'cust') { renderCust(); renderWxUsersPanel(); }
   else if (tab === 'sys') renderSys();
 }
+/* ---------------- 新订单提醒（第 27 轮 / E-P0-6） ----------------
+ * 老板不可能一直守着页面点刷新：打开后每 30 秒拉一次后端订单镜像，只比「最新下单时间」这一个
+ * 签名（Admin.orderSig），有新单就在顶栏亮一个「🔔 N 个新订单」按钮，点一下才算已读。
+ * 页面不可见时不轮询——省流量也省电；开关状态记在 localStorage，关掉以后不再自动打开。 */
+const POLL_KEY = 'mall_admin_poll';
+let pollTimer = null, pollSeen = '', pollNewCount = 0;
+function pollWanted() { try { return localStorage.getItem(POLL_KEY) !== '0'; } catch (e) { return true; } }
+function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+function newOrderFlag(n) {
+  pollNewCount = n;
+  const b = $('newOrderBtn');
+  if (!b) return;
+  if (!n) { b.style.display = 'none'; b.textContent = ''; return; }
+  b.style.display = '';
+  b.textContent = '🔔 ' + n + ' 个新订单';
+}
+function togglePoll(on, silent) {
+  try { localStorage.setItem(POLL_KEY, on ? '1' : '0'); } catch (e) { }
+  const cb = $('pollToggle'); if (cb && cb.checked !== !!on) cb.checked = !!on;
+  const lb = $('pollLabel'); if (lb) lb.textContent = '新订单提醒（' + (on ? '开' : '关') + '）';
+  stopPoll();
+  if (!on) return;
+  if (!online()) { if (!silent) toast('还没连上后端，连上后才会提醒新订单', 3600); return; }
+  pollSeen = Admin.orderSig(Mall.getOrders());   // 开启这一刻已有的单算已读，免得一开就弹一堆
+  newOrderFlag(0);
+  pollTimer = setInterval(pollOnce, 30000);
+}
+async function pollOnce() {
+  if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') return;
+  if (!online()) return;
+  try { await SdyApi.sync(null, { all: true }); } catch (e) { return; }   // 管理端：全店订单（all:true）
+  const fresh = Admin.newOrdersSince(Mall.getOrders(), pollSeen, '');
+  const prev = pollNewCount;
+  newOrderFlag(fresh.length);
+  if (fresh.length > prev) toast('🔔 来了 ' + fresh.length + ' 个新订单', 4200);
+  renderAll();
+}
+function clearNewOrderFlag() {
+  pollSeen = Admin.orderSig(Mall.getOrders());               // 点了就算看过，不再重复提醒
+  newOrderFlag(0);
+  switchTab('orders');
+}
+
 async function refreshAll() {
-  if (online()) { try { await SdyApi.sync(); } catch (e) { toast(e.message); } }
+  if (online()) { try { await SdyApi.sync(null, { all: true }); } catch (e) { toast(e.message); } }
   await loadWxUsers();                                  // 用户角色（D32）：顺手把微信用户列表也刷一遍
   renderAll();
 }
+// 演示商品提示条（第 27 轮 / E-P0-1）：服务端 SEED_DEMO 默认已关，但历史库里可能还留着
+// 内置示例商品；示例商品被当成真货卖出去就是事故，所以只要发现就常驻提示，并且说清怎么清。
+// 识别依据是后端下发的 isDemo 标记（Admin.isDemoProduct），不做「按条码猜」——那会把真商品误标。
+function renderDemoBanner() {
+  const el = $('demoBanner');
+  if (!el) return;
+  let n = 0, names = [];
+  try {
+    const list = Mall.listProducts();
+    n = Admin.demoCount(list);
+    names = list.filter(Admin.isDemoProduct).slice(0, 3).map(p => p.name || p.code);
+  } catch (e) { n = 0; }
+  if (!n) { el.style.display = 'none'; el.textContent = ''; return; }
+  el.style.display = '';
+  el.innerHTML = '⚠️ <b>商品库里有 ' + n + ' 件内置示例商品</b>（' + esc(names.join('、')) + (n > 3 ? ' 等' : '') + '）——' +
+    '这不是店里的真实商品，顾客照着下单会扑空。核对后请到「商品档案」逐条删除（删除要求库存为 0 且没有进行中的订单）。' +
+    ' <button class="btn btn-xs" onclick="switchTab(\'products\')">去商品档案</button>';
+}
+
 function renderAllAdmin() {
-  renderFilters(); renderOrders(); renderCouriers(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore(); renderWxUsersPanel();
+  renderFilters(); renderOrders(); renderCouriers(); renderStock(); renderCust(); renderPricing(); renderProducts(); renderDash(); renderReport(); renderSys(); renderStore(); renderWxUsersPanel(); renderDemoBanner();
 }
 async function initApi() {
   const badge = $('modeBadge');
   try {
-    const st = await SdyApi.boot();
+    const st = await SdyApi.boot({ all: true });   // 管理后台：订单镜像是全店口径（与 sync(null,{all:true}) 同一套）
     badge.textContent = st.label;
     badge.title = st.detail;
     badge.className = 'pill-mode ' + (st.online ? 'on' : 'off');
     if (st.online) {
-      try { await SdyApi.sync(); } catch (e) { }
+      try { await SdyApi.sync(null, { all: true }); } catch (e) { }
       try { await Admin.refreshCustomers(); } catch (e) { }   // 顾客等级（D24）：后端真源同步进本地档案
       // 库存流水 / 配送员 / 门店抬头（任务池⑧ / D25）：后端是真源，开机拉一次镜像
       try {
@@ -1564,6 +1694,11 @@ async function initApi() {
         if (h && h.circuitOpen) toast('⚠️ 条码云端查询已熔断（今日额度耗尽或连续失败），扫码台只查本地库', 4200);
         else if (h && h.cloudConfigured === false) toast('条码云端未配置 APPCODE，扫码台只查本地条码库', 3600);
       } catch (e) { }
+      togglePoll(pollWanted(), true);        // 新订单提醒（E-P0-6）：连上后端才启动，默认开
+    } else {
+      // 离线演示模式：没有后端就没有新订单，提醒开关置灰说明，但不覆盖老板「关掉」的选择
+      const cb = $('pollToggle'); if (cb) cb.checked = false;
+      const lb = $('pollLabel'); if (lb) lb.textContent = '新订单提醒（连上后端后可用）';
     }
   } catch (e) { }
   await loadWxUsers();                                    // 用户角色（D32）：在线拉后端列表，离线给中文提示

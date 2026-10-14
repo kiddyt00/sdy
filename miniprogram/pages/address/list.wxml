@@ -11,6 +11,14 @@
 
   <van-skeleton wx:elif="{{loading}}" title row="3" />
 
+  <!-- 第 27 轮 P0-2：读不到地址 ≠ 「还没有收货地址」，给错误卡 + 「重新加载」 -->
+  <view class="errbox" wx:elif="{{loadErr}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{loadErr}}</view>
+    <view class="errsub">地址都还在店里存着，只是这会儿没连上店里系统</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
   <van-empty wx:elif="{{empty}}" description="还没有收货地址" />
 
   <view class="alist" wx:else>

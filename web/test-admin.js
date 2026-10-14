@@ -614,6 +614,49 @@ fresh();
 
   if (hadSdy) global.SdyApi = savedSdy; else delete global.SdyApi;
 
+  // ============ ⑬ 第 27 轮新增纯函数：演示数据识别 / 营业额口径 / 新单签名 ============
+  section('⑬ 演示数据识别 / 营业额口径 / 新单签名（第 27 轮）');
+  {
+    ok(Admin.isDemoProduct({ isDemo: true }) === true, 'isDemo:true → 判定为示例商品');
+    ok(Admin.isDemoProduct({ is_demo: 1 }) === true, 'is_demo:1 → 判定为示例商品');
+    ok(Admin.isDemoProduct({ SEED_DEMO: '1' }) === true, "SEED_DEMO:'1' → 判定为示例商品");
+    ok(Admin.isDemoProduct({}) === false, '字段缺失 → 当正式商品（绝不误标真货）');
+    ok(Admin.isDemoProduct(null) === false && Admin.isDemoProduct(undefined) === false, 'null / undefined 不抛错，当正式商品');
+    ok(Admin.demoCount([{ isDemo: true }, {}, { is_demo: 1 }]) === 2, 'demoCount 数出 2 件示例商品');
+    ok(Admin.demoCount(null) === 0 && Admin.demoCount('x') === 0, 'demoCount 非数组入参 → 0，不抛错');
+  }
+  {
+    const now = Date.now();
+    const day = 24 * 3600 * 1000;
+    const mk = (id, status, total, at) => ({ id: id, status: status, total: total, createdAt: at == null ? now : at });
+    const orders = [
+      mk('A', 'pending', 10.005), mk('B', 'delivering', 20), mk('C', 'ready', 5.5),
+      mk('D', 'done', 30), mk('E', 'done', 0.1), mk('F', 'cancelled', 99),
+      mk('G', 'done', 1000, now - day)
+    ];
+    const k = Admin.kpiOf(orders, now);
+    ok(k.today === 6, '「今日」只数今天的 6 单，昨天的已完成单不进今日：' + k.today);
+    ok(k.valid === 5 && k.cancelled === 1, '取消单单独计数、不算有效单：valid=' + k.valid + ' cancelled=' + k.cancelled);
+    ok(k.done === 2, '今日已完成 2 单');
+    ok(k.doneAmount === 30.1, '今日营业额 = 已完成合计 30.10（下单≠收款，进行中不算）：' + k.doneAmount);
+    ok(k.open === 3 && k.openAmount === 35.51, '进行中 3 单 / 35.51（10.005 先 round2 成 10.01 再求和）');
+    ok(k.doneAmount + k.openAmount !== 129.61, '取消单的 99 元既不进营业额也不进进行中金额');
+    const empty = Admin.kpiOf([], now);
+    ok(empty.today === 0 && empty.doneAmount === 0 && empty.openAmount === 0, '空列表全 0，不抛错');
+    ok(Admin.kpiOf(null, now).today === 0, 'orders 为 null 时全 0，不抛错');
+  }
+  {
+    const now = Date.now();
+    const o1 = { id: 'M1', createdAt: now - 1000 }, o2 = { id: 'M2', createdAt: now };
+    ok(Admin.orderSig([o1, o2]) === String(now), 'orderSig = 镜像里最新的下单时间');
+    ok(Admin.orderSig([]) === '0' && Admin.orderSig(null) === '0', '空列表签名 0（首轮不会误报一堆新单）');
+    ok(Admin.orderSig([{ id: 'M0' }]) === '0', 'createdAt 缺失当 0，不抛错');
+    const fresh = Admin.newOrdersSince([o1, o2], String(now - 1000), String(now - 1000));
+    ok(fresh.length === 1 && fresh[0].id === 'M2', '传入上次签名后只提醒更新的单，历史单不重复弹');
+    ok(Admin.newOrdersSince([o2], now, String(now)).length === 0, '签名相同 → 不再提醒（轮询不会刷屏）');
+    ok(Admin.newOrdersSince(null, now, '').length === 0, 'orders 为 null → 空数组，不抛错');
+  }
+
   console.log('\n========================================');
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);

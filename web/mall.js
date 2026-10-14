@@ -5,7 +5,8 @@
  *           扫码建档后的商品在此立即可售；本 demo 另存购物车 mall_cart、
  *           订单 mall_orders。
  * 规则：
- *   - 配送费：自提 0；配送 满 30 免、否则 3 元（占位规则，可配）
+ *   - 配送费：自提 0；配送满 minFree 免、否则 deliveryFee（本地默认占位，真源在服务端 /api/settings）
+ *   - 起送价：subtotal < minOrder 时不下单，提示还差多少（minOrder=0 不限）
  *   - 下单：校验库存 → 扣减 → 生成订单（待备货）；库存为 0 禁购
  *   - 取消：仅「待备货」可取消，取消回补库存；已备货不可直接删单
  *   - 扫码只读（D8）：本模块不改库存，库存只随下单/取消/管理端手动调整
@@ -19,17 +20,26 @@ const Mall = (() => {
     products: 'bd_products', cart: 'mall_cart', orders: 'mall_orders', addresses: 'mall_addresses',
     myPhone: 'mall_my_phone', myTier: 'mall_my_tier'   // 我的手机号与等级（任务池⑦ / D24）
   };
-  const DELIVERY_RULES = { pickupFee: 0, minFree: 30, fee: 3 }; // 配送满 30 免、否则 3 元（占位）
+  // 本地兜底默认值（**唯一一处**）：服务端 /api/settings 下发什么就用什么（第 27 轮起
+  // GET /api/settings 同时下发 lowStock / minOrder / deliveryFee / minFree），
+  // 离线或服务端没下发这两个字段时才回落到这里。页面里别再硬编码 5 或 0。
+  const LOCAL_DEFAULTS = { pickupFee: 0, minFree: 30, deliveryFee: 3, lowStock: 5, minOrder: 0 };
+  // 生效中的配送费规则：对象身份保持不变，页面 index.html 直接读 Mall.DELIVERY_RULES
+  const DELIVERY_RULES = { pickupFee: LOCAL_DEFAULTS.pickupFee, minFree: LOCAL_DEFAULTS.minFree, fee: LOCAL_DEFAULTS.deliveryFee };
+  // 生效中的阈值：低库存阈值（≤ 它算「快没了」）/ 起送价
+  const thresholds = { lowStock: LOCAL_DEFAULTS.lowStock, minOrder: LOCAL_DEFAULTS.minOrder };
+  // 是否已经连上后端（由 sdy-api.js 探测/同步后告知）：连上了就不许再用本地演示商品重播种。
+  let serverConnected = false;
   const STATUS_FLOW = {                    // 订单状态机：合法迁移表
-    pending:    ['delivering', 'ready'],   // 待备货 → 配送中 | 待自提
+    pending:    ['delivering', 'ready'],   // 待备货 → 配送中 | 待取货
     delivering: ['done'],                  // 配送中 → 已完成
-    ready:      ['done'],                  // 待自提 → 已完成
+    ready:      ['done'],                  // 待取货 → 已完成
     done:       [], cancelled: []
   };
   const STATUS_META = {
     pending:    { label: '待备货', cls: 'st-pending' },
     delivering: { label: '配送中', cls: 'st-delivering' },
-    ready:      { label: '待自提', cls: 'st-ready' },
+    ready:      { label: '待取货', cls: 'st-ready' },
     done:       { label: '已完成', cls: 'st-done' },
     cancelled:  { label: '已取消', cls: 'st-cancelled' }
   };
@@ -59,11 +69,18 @@ const Mall = (() => {
   ];
 
   // ---------------- 商品库 ----------------
+  // 空库不重播种（P0-4）：后端已连但一件商品都没有时，必须如实显示「店里还没上架商品」，
+  // 绝不能拿 6 条本地演示商品顶上——否则顾客会照着假货下单。只有从没连过后端时才允许演示数据。
   function loadCatalog() {
     let list = loadLS(KEYS.products, null);
-    if (!list || !list.length) { saveLS(KEYS.products, SEED); list = SEED; }
+    if (!list || !list.length) {
+      if (serverConnected) return [];
+      saveLS(KEYS.products, SEED); list = SEED;
+    }
     return list.map(p => Object.assign({}, p));
   }
+  function setServerConnected(on) { serverConnected = !!on; return serverConnected; }
+  function isServerConnected() { return serverConnected; }
   function saveCatalog(list) { saveLS(KEYS.products, list); }
   function getProduct(code) {
     return loadCatalog().find(p => p.code === String(code).trim());
@@ -213,12 +230,56 @@ const Mall = (() => {
     return { count: count, subtotal: Math.round(subtotal * 100) / 100, lines: lines };
   }
 
-  // ---------------- 配送费规则 ----------------
+  // ---------------- 配送费 / 阈值（真源在服务端 /api/settings） ----------------
+  // 复用 pricing.js 的同一份实现（三端同一口径）；拿不到时走等价内联兜底。
+  function pricingModule() {
+    try {
+      if (typeof Pricing !== 'undefined' && Pricing && typeof Pricing.deliveryFee === 'function') return Pricing;
+    } catch (e) { /* pricing.js 还没执行到（TDZ）时忽略 */ }
+    if (typeof window !== 'undefined' && window.Pricing && typeof window.Pricing.deliveryFee === 'function') return window.Pricing;
+    if (typeof module !== 'undefined' && module.exports) { try { return require('./pricing.js'); } catch (e) { /* 忽略 */ } }
+    return null;
+  }
+  function deliveryCfg() {
+    return { pickupFee: DELIVERY_RULES.pickupFee, minFree: DELIVERY_RULES.minFree, deliveryFee: DELIVERY_RULES.fee };
+  }
   function calcDeliveryFee(deliveryType, subtotal) {
-    const s = Math.round((subtotal || 0) * 100) / 100;
+    const P = pricingModule();
+    if (P) return P.deliveryFee(deliveryType, subtotal, deliveryCfg());
+    // 内联兜底：未知配送方式按 delivery（与 pricing.js / Go 真源一致，不再抛错）
+    const goods = round2(subtotal);
     if (deliveryType === 'pickup') return DELIVERY_RULES.pickupFee;
-    if (deliveryType === 'delivery') return s >= DELIVERY_RULES.minFree ? 0 : DELIVERY_RULES.fee;
-    throw new Error('未知配送方式');
+    return (DELIVERY_RULES.minFree > 0 && goods >= DELIVERY_RULES.minFree) ? 0 : DELIVERY_RULES.fee;
+  }
+  // 服务端 /api/settings → 本地生效值：下发的字段优先，没下发的保持本地默认。
+  // 只认得出数字的字段，别把 undefined 当成 0 覆盖掉默认值（minOrder=0 代表「不限」，是真值）。
+  function setSettings(s) {
+    const x = s || {};
+    if (typeof x.deliveryFee === 'number') DELIVERY_RULES.fee = round2(x.deliveryFee);
+    if (typeof x.minFree === 'number') DELIVERY_RULES.minFree = round2(x.minFree);
+    if (typeof x.pickupFee === 'number') DELIVERY_RULES.pickupFee = round2(x.pickupFee);
+    if (typeof x.lowStock === 'number' && isFinite(x.lowStock)) thresholds.lowStock = Math.max(0, Math.floor(x.lowStock));
+    if (typeof x.minOrder === 'number' && isFinite(x.minOrder)) thresholds.minOrder = round2(x.minOrder);
+    return Object.assign({}, DELIVERY_RULES, { lowStock: thresholds.lowStock, minOrder: thresholds.minOrder });
+  }
+  // 回到本地默认（断线重连失败 / 测试复位用）
+  function resetSettings() {
+    DELIVERY_RULES.pickupFee = LOCAL_DEFAULTS.pickupFee;
+    DELIVERY_RULES.minFree = LOCAL_DEFAULTS.minFree;
+    DELIVERY_RULES.fee = LOCAL_DEFAULTS.deliveryFee;
+    thresholds.lowStock = LOCAL_DEFAULTS.lowStock;
+    thresholds.minOrder = LOCAL_DEFAULTS.minOrder;
+    return Object.assign({}, DELIVERY_RULES, { lowStock: thresholds.lowStock, minOrder: thresholds.minOrder });
+  }
+  function lowStock() { return thresholds.lowStock; }
+  function minOrder() { return thresholds.minOrder; }
+  // 起送价校验：返回 null 表示可以通过，否则返回给顾客看的中文原因
+  function minOrderBlock(subtotal) {
+    const min = thresholds.minOrder;
+    if (!(min > 0)) return null;
+    const goods = round2(subtotal);
+    if (goods >= min) return null;
+    return '还差 ' + round2(min - goods).toFixed(2) + ' 元起送';
   }
 
   // ---------------- 订单 ----------------
@@ -238,6 +299,8 @@ const Mall = (() => {
 
     const sum = cartSummary();
     if (!sum.count) throw new Error('购物车是空的');
+    const blocked = minOrderBlock(sum.subtotal);   // 起送价（真源在服务端设置，minOrder=0 不限）
+    if (blocked) throw new Error(blocked);
 
     const products = loadCatalog();
     // 1) 统一校验库存（顺手拦住「加购后商品被下架」的情况）
@@ -411,12 +474,22 @@ const Mall = (() => {
   // ---------------- 测试辅助 ----------------
   function _resetForTest() {
     buyNow = null;
+    serverConnected = false;
+    resetSettings();
     Object.keys(mem).forEach(k => delete mem[k]);
   }
 
   return {
     KEYS: KEYS,
+    LOCAL_DEFAULTS: LOCAL_DEFAULTS,
     DELIVERY_RULES: DELIVERY_RULES,
+    setSettings: setSettings,
+    resetSettings: resetSettings,
+    lowStock: lowStock,
+    minOrder: minOrder,
+    minOrderBlock: minOrderBlock,
+    setServerConnected: setServerConnected,
+    isServerConnected: isServerConnected,
     STATUS_FLOW: STATUS_FLOW,
     STATUS_META: STATUS_META,
     loadCatalog: loadCatalog,

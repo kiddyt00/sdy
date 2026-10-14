@@ -99,6 +99,21 @@ func main() {
 
 /* ------------------------------ 路由 ------------------------------ */
 
+// orderResp 下单响应（第 27 轮幂等）：订单字段仍然平铺在顶层（嵌入 store.Order），
+// 只有「这次是重复提交、返回的是原来那张单」时才多一个 duplicated 标记。
+type orderResp struct {
+	store.Order
+	Duplicated bool `json:"duplicated,omitempty"`
+}
+
+// addressResp 保存地址的响应（第 27 轮地址簿能力令牌）：地址字段平铺（嵌入 store.Address），
+// 另带 ok 与 key——key 只在第一次保存该手机号的地址时生成，之后每次都是同一个。
+type addressResp struct {
+	store.Address
+	OK  bool   `json:"ok"`
+	Key string `json:"key,omitempty"`
+}
+
 func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabled bool, wxc wxConf) http.Handler {
 	mux := http.NewServeMux()
 
@@ -109,6 +124,11 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			"cloudConfigured": cloudEnabled,
 		})
 	})
+
+	// 管理端鉴权通道（第 27 轮，默认关）：口令没配 → 两个端点都如实返回「通道未启用」，
+	// 管理接口一律放行（见 adminauth.go）。这两个端点**永远公开**，否则没人能登录。
+	mux.HandleFunc("/api/admin/login", adminLogin)
+	mux.HandleFunc("/api/admin/logout", adminLogout)
 
 	// 商品：列表 / 建档 / 手动改库存（D8）
 	mux.HandleFunc("/api/products", func(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +165,10 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			writeJSON(w, 200, map[string]any{"items": list, "total": len(list), "tier": tier})
 		case http.MethodPost:
 			// 建档 / 编辑商品档案（任务池①）。
+			// 管理端接口（第 27 轮）：ADMIN_PASSWORD 没配时放行，配了就要管理员 Cookie。
+			if !adminGate(w, r) {
+				return
+			}
 			// stock 用指针区分「没传」与「传 0」：编辑表单不带库存时不覆盖现有库存
 			// （不变量：编辑档案不改库存，库存只走 /api/products/stock）。
 			// 上下架同理：本接口不认 onSale，改状态只走 /api/products/onsale（D23）。
@@ -189,7 +213,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		}
 	})
 
-	mux.HandleFunc("/api/products/stock", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/products/stock", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -207,12 +231,12 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, p)
-	})
+	}))
 
 	// 库存变更（任务池⑧，D25）：入库 / 改数 / 盘点都走这一个入口，
 	// 服务端在一个事务里改库存 + 写流水。以前在线模式只用 SetStock 盖绝对值，
 	// 「为什么改」的审计只落在浏览器里，换台设备就查不到账。
-	mux.HandleFunc("/api/stock/change", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/stock/change", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -233,10 +257,10 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "entry": entry, "stock": entry.After})
-	})
+	}))
 
 	// 库存流水（任务池⑧，D25）：GET /api/stocklog?limit=30，最新在前。
-	mux.HandleFunc("/api/stocklog", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/stocklog", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -248,10 +272,10 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
-	})
+	}))
 
 	// 配送员名单（任务池⑧，D25）：GET 列表 / POST 新增或删除（remove=true）。
-	mux.HandleFunc("/api/couriers", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/couriers", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			list, err := st.ListCouriers()
@@ -278,7 +302,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		default:
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 		}
-	})
+	}))
 
 	// 门店抬头（任务池⑧，D25）：小票表头，跨设备要一致，所以落库。
 	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -291,18 +315,39 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			}
 			writeJSON(w, 200, s)
 		case http.MethodPost:
+			// 管理端接口（第 27 轮）：ADMIN_PASSWORD 没配时放行，配了就要管理员 Cookie。
+			if !adminGate(w, r) {
+				return
+			}
 			var in struct {
 				Name    string `json:"name"`
 				Phone   string `json:"phone"`
 				Address string `json:"address"`
 				Footer  string `json:"footer"`
+				// 规则参数（第 27 轮，单一真源）：低库存阈值与起送价。
+				// 用指针区分「这次没传」（保留现值）与「显式传 0」（回落到服务端默认）。
+				LowStock *float64 `json:"lowStock"`
+				MinOrder *float64 `json:"minOrder"`
 			}
 			if !decode(w, r, &in) {
 				return
 			}
-			saved, err := st.SaveSettings(store.Settings{
+			cur, err := st.GetSettings()
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			next := store.Settings{
 				Name: in.Name, Phone: in.Phone, Address: in.Address, Footer: in.Footer,
-			})
+				LowStock: cur.LowStock, MinOrder: cur.MinOrder,
+			}
+			if in.LowStock != nil {
+				next.LowStock = *in.LowStock
+			}
+			if in.MinOrder != nil {
+				next.MinOrder = *in.MinOrder
+			}
+			saved, err := st.SaveSettings(next)
 			if err != nil {
 				writeErr(w, err)
 				return
@@ -314,7 +359,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 	})
 
 	// 批量上下架（任务池⑥，D23）：POST /api/products/onsale {codes:[...], onSale:true|false}
-	mux.HandleFunc("/api/products/onsale", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/products/onsale", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -334,7 +379,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		writeJSON(w, 200, map[string]any{
 			"ok": true, "onSale": in.OnSale, "changed": changed, "count": len(changed),
 		})
-	})
+	}))
 
 	// 商品档案删除（D16）：DELETE /api/products/{code}
 	// 商品分类（顾客端分类页，第 24 轮）：/api/products/categories?onSale=1
@@ -379,6 +424,10 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			p.Price = pricing.EffectivePrice(tier, p.SalePrice, p.WholesalePrice)
 			writeJSON(w, 200, p)
 		case http.MethodDelete:
+			// 管理端接口（第 27 轮）：删档案是不可逆操作，必须先过管理员闸门。
+			if !adminGate(w, r) {
+				return
+			}
 			if err := st.DeleteProduct(code); err != nil {
 				writeErr(w, err)
 				return
@@ -390,15 +439,39 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 	})
 
 	// 订单：列表 / 下单 / 详情 / 状态流转
+	// 第 27 轮：订单接口一律先解析身份（管理员 > 员工令牌 > openid→手机号 > phone 参数）。
+	// 顾客只能看/改自己的单；员工与管理员看全量——以前谁都能读全站订单（含姓名手机地址）。
 	mux.HandleFunc("/api/orders", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			list, err := st.ListOrders(r.URL.Query().Get("status"))
+			ident, ok := identityOf(w, r, st)
+			if !ok {
+				return
+			}
+			if !ident.Admin && ident.Phone == "" {
+				writeJSON(w, 400, map[string]string{"error": "缺少身份：顾客请带 openid/phone，员工请带 X-Staff-Token"})
+				return
+			}
+			f := store.OrderFilter{
+				Status: strings.TrimSpace(r.URL.Query().Get("status")),
+				Limit:  queryInt(r, "limit", 50),
+				Offset: queryInt(r, "offset", 0),
+			}
+			if f.Limit > 200 {
+				f.Limit = 200 // 上限 200：一页最多 200 单，再多请翻页
+			}
+			if !ident.Admin {
+				f.Phone = ident.Phone // 顾客只看自己的单
+			}
+			list, total, err := st.ListOrdersFiltered(f)
 			if err != nil {
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
+			// total 是「符合条件的总数」，不是本页条数（第 27 轮修）。
+			writeJSON(w, 200, map[string]any{
+				"items": list, "total": total, "limit": f.Limit, "offset": f.Offset,
+			})
 		case http.MethodPost:
 			var in store.NewOrderInput
 			if !decode(w, r, &in) {
@@ -406,23 +479,75 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			}
 			o, err := st.CreateOrder(in)
 			if err != nil {
+				// 幂等命中（第 27 轮）：同一个 clientToken 已经出过单了——把原来那张单按 200
+				// 返回，并标记 duplicated，绝不重复扣库存。重复点击/断网重试都走这条路。
+				if errors.Is(err, store.ErrDuplicated) {
+					prev, gerr := st.GetOrderByClientToken(in.ClientToken)
+					if gerr != nil {
+						writeErr(w, gerr)
+						return
+					}
+					writeJSON(w, 200, orderResp{Order: prev, Duplicated: true})
+					return
+				}
+				// 库存不足按 400 回（第 27 轮契约）：这是「这一单下不了」的入参结果，
+				// 不是资源冲突；文案要说清哪件商品、还剩多少，顾客端直接展示。
+				if errors.Is(err, store.ErrStockLess) {
+					writeJSON(w, 400, map[string]string{"error": err.Error()})
+					return
+				}
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, 201, o)
+			writeJSON(w, 201, orderResp{Order: o})
 		default:
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 		}
 	})
 
 	mux.HandleFunc("/api/orders/", func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/api/orders/")
-		id := strings.TrimSuffix(path, "/advance")
+		path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/orders/"), "/")
+		action := ""
+		id := path
+		for _, a := range []string{"advance", "cancel"} {
+			if strings.HasSuffix(path, "/"+a) {
+				action = a
+				id = strings.TrimSuffix(path, "/"+a)
+				break
+			}
+		}
 		if id == "" {
 			writeJSON(w, 400, map[string]string{"error": "缺少订单号"})
 			return
 		}
-		if strings.HasSuffix(path, "/advance") {
+		ident, ok := identityOf(w, r, st)
+		if !ok {
+			return
+		}
+		switch action {
+		case "cancel":
+			if r.Method != http.MethodPost {
+				writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+				return
+			}
+			o, err := st.GetOrder(id)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			// 顾客只能取消自己的单；不是自己的单一律按「不存在」处理，不泄露订单是否存在。
+			if !ident.Admin && !orderBelongsTo(o, ident) {
+				writeJSON(w, 404, map[string]string{"error": "订单不存在"})
+				return
+			}
+			cancelled, err := st.CancelOrder(id, ident.Operator())
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, cancelled)
+			return
+		case "advance":
 			if r.Method != http.MethodPost {
 				writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 				return
@@ -433,12 +558,23 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			if !decode(w, r, &in) {
 				return
 			}
-			o, err := st.AdvanceOrder(id, in.To)
+			o, err := st.GetOrder(id)
 			if err != nil {
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, 200, o)
+			// 员工/管理员可以推任何状态；顾客只能「确认收货」（done）自己那一单——
+			// 备货、发货、取消都是店主的活。
+			if !ident.Admin && !(orderBelongsTo(o, ident) && in.To == pricing.StatusDone) {
+				writeJSON(w, 403, map[string]string{"error": "只有店主可以推进订单状态"})
+				return
+			}
+			advanced, err := st.AdvanceOrder(id, in.To)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, advanced)
 			return
 		}
 		if r.Method != http.MethodGet {
@@ -450,15 +586,39 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			writeErr(w, err)
 			return
 		}
+		if !ident.Admin && !orderBelongsTo(o, ident) {
+			writeJSON(w, 404, map[string]string{"error": "订单不存在"})
+			return
+		}
 		writeJSON(w, 200, o)
 	})
 
 	// 顾客收货地址簿（D18）：按手机号归档，顾客端一键带出。
 	// 只服务「少打字」：订单地址仍是下单当时的快照，改地址簿不影响历史订单。
+	// 第 27 轮：读/删要凭「地址簿能力令牌」——首次保存地址时服务端发一枚 32 位 hex key，
+	// 之后凭 phone+key 才读得到。没 key 一律静默空信封（不告诉调用方这个号有没有地址）。
 	mux.HandleFunc("/api/addresses", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			list, err := st.ListAddresses(r.URL.Query().Get("phone"))
+			phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+			if phone == "" {
+				writeJSON(w, 400, map[string]string{"error": "手机号不能为空"})
+				return
+			}
+			ident, ok := identityOf(w, r, st)
+			if !ok {
+				return
+			}
+			allowed, err := addressAllowed(r, st, ident, phone)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			if !allowed {
+				writeJSON(w, 200, map[string]any{"items": []store.Address{}, "total": 0})
+				return
+			}
+			list, err := st.ListAddresses(phone)
 			if err != nil {
 				writeErr(w, err)
 				return
@@ -474,7 +634,13 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, 200, saved)
+			// 保存成功才发/复用能力令牌：第一次生成，之后每次都回同一枚。
+			key, err := st.EnsureAddressKey(saved.Phone)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, addressResp{Address: saved, OK: true, Key: key})
 		default:
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 		}
@@ -495,7 +661,26 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			writeJSON(w, 400, map[string]string{"error": "地址编号不合法"})
 			return
 		}
-		if err := st.DeleteAddress(r.URL.Query().Get("phone"), id); err != nil {
+		phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+		if phone == "" {
+			writeJSON(w, 400, map[string]string{"error": "手机号不能为空"})
+			return
+		}
+		ident, ok := identityOf(w, r, st)
+		if !ok {
+			return
+		}
+		allowed, err := addressAllowed(r, st, ident, phone)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !allowed {
+			// 与读同理：不是自己的号（或没带 key）就按「地址不存在」处理，不泄露存在性。
+			writeJSON(w, 404, map[string]string{"error": "地址不存在"})
+			return
+		}
+		if err := st.DeleteAddress(phone, id); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -504,7 +689,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 
 	// 顾客等级（任务池⑦，D24）：GET 列表 / POST 设定。
 	// 等级只影响之后下单的有效价，历史订单价格是下单当时的快照。
-	mux.HandleFunc("/api/customers", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/customers", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -515,9 +700,9 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
-	})
+	}))
 
-	mux.HandleFunc("/api/customers/tier", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/customers/tier", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -536,10 +721,10 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, saved)
-	})
+	}))
 
 	// 顾客备注与标签（任务池⑧，D25）：等级走上面的 /tier，这里只维护 tags/note。
-	mux.HandleFunc("/api/customers/note", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/customers/note", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -559,7 +744,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, saved)
-	})
+	}))
 
 	// 微信登录（第 23 轮 / D28；第 25 轮 D31 起手机号改为可选）：小程序 wx.login 的 code 换 openid。
 	// 手机号仍是业务身份（D24）——但它是**下单时**才需要的东西：登录只让服务端记住「这台微信是谁」，
@@ -684,7 +869,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 	})
 
 	// 微信绑定审阅（只读，D28）：老板要能看见谁把哪台微信绑到了哪个手机号。
-	mux.HandleFunc("/api/wx/users", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/wx/users", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -701,12 +886,12 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
-	})
+	}))
 
 	// 角色管理（第 26 轮 / D32）：老板在后台把某个微信号改成「顾客 / 员工」。
 	// 员工 = 管理端同权限（老板明确要求）；改回顾客时服务端顺手清掉员工令牌，
 	// 免得「人已经被撤了，手机上的工作台还能进」。
-	mux.HandleFunc("/api/wx/role", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/wx/role", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, 405, map[string]string{"error": "方法不支持"})
 			return
@@ -731,29 +916,21 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			"ok": true, "openid": u.OpenID, "role": u.Role,
 			"nickname": u.Nickname, "phone": u.Phone, "lastLoginAt": u.LastLogin,
 		})
-	})
+	}))
 
 	// ————— 员工界面（第 26 轮 / D32）—————
 	// 员工接口都要求 `X-Staff-Token` 头（也接受 `?staff=` 查询参数，便于浏览器/CDP 直查）。
 	// 这里只管「是不是员工」；改库存/改价/建档等写操作复用小店现有接口——
 	// 老板要的是「员工跟管理后台一样」，而管理端鉴权本身是已推迟的独立事项。
-	const staffLowStock = 5 // 低库存阈值，与 Web 管理端 Admin.LOW_STOCK 同一口径
-	round2 := func(v float64) float64 { return float64(int64(v*100+0.5)) / 100 }
+	// 低库存阈值（第 27 轮单一真源）：Go 侧只此一处常量，随 /api/settings 下发，
+	// 页面不再各自硬编码 5（以前散在 main.go / web / 小程序共 5 处）。
+	// 低库存阈值只有 store.LowStockThreshold 一个真源（第 27 轮），
+	// 这里用常量而不是变量，才能继续和 float64 库存直接比较。
+	const staffLowStock = store.LowStockThreshold
+	round2 := pricing.Round2
+	// 员工令牌解析统一走 identity.go 的 staffFromReq（与 identityOf 共用同一套判定）。
 	staffFrom := func(w http.ResponseWriter, r *http.Request) (store.WxUser, bool) {
-		token := strings.TrimSpace(r.Header.Get("X-Staff-Token"))
-		if token == "" {
-			token = strings.TrimSpace(r.URL.Query().Get("staff"))
-		}
-		u, ok, err := st.GetStaffByToken(token)
-		if err != nil {
-			writeErr(w, err)
-			return store.WxUser{}, false
-		}
-		if !ok {
-			writeJSON(w, 401, map[string]string{"error": "员工身份已失效，请用员工身份重新登录"})
-			return store.WxUser{}, false
-		}
-		return u, true
+		return staffFromReq(w, st, r)
 	}
 
 	// 工作台：今日营业额/单数、待处理单、低库存、最近流水——老板手机上要一眼看完。
@@ -882,7 +1059,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 	})
 
 	// 条码字典层列表（扫码台「本地条码库」看数据用，只读）
-	mux.HandleFunc("/api/barcode/lib", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/barcode/lib", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		limit := 200
 		if v := r.URL.Query().Get("limit"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -895,10 +1072,10 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": list, "total": len(list)})
-	})
+	}))
 
 	// 价格防线巡检
-	mux.HandleFunc("/api/pricing/check", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/pricing/check", requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		list, err := st.ListProducts("", "")
 		if err != nil {
 			writeErr(w, err)
@@ -911,7 +1088,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		}
 		total, violations := pricing.PricingCheck(items, pricing.DefaultConfig())
 		writeJSON(w, 200, map[string]any{"total": total, "violations": violations, "over": len(violations)})
-	})
+	}))
 
 	// 管理端「干净地址」：/admin 直出 admin.html，地址栏里不出现 .html（D22）
 	// 必须没有结尾斜杠——/admin 的相对路径基准是根目录，页面里的 `assets/theme.css`、
@@ -1055,7 +1232,11 @@ func wxErrFor(code int, msg string) *wxLoginError {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		// X-Staff-Token / X-Openid / X-Wx-Openid / X-Phone 都要放行：第 27 轮起身份既走查询参数也走请求头，
+		// 少了这几个头，跨源页面（本机不同端口的 demo）根本发不出带身份的请求。
+		// X-Admin 是管理后台的显式声明（identity.go adminMarked）：管理端 Cookie 与顾客页
+		// 在同一个浏览器里共用，靠这个头把两者分开。
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,X-Staff-Token,X-Openid,X-Wx-Openid,X-Phone,X-Admin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
@@ -1114,7 +1295,13 @@ func getenv(k, def string) string {
 }
 
 // seedIfEmpty 首次启动写入示例商品（与 web/ 保持一致，便于联调）。
+// 第 27 轮（审计 E-P0-1）：**默认不灌**。生产库一旦被演示商品污染，老板要先删一遍才能建真档案，
+// 而且这些商品的库存/价格会跟着顾客端一起出现。只有显式 SEED_DEMO=1 时才灌（本机联调、演示环境）。
 func seedIfEmpty(st *store.Store) error {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("SEED_DEMO"))); v != "1" && v != "true" {
+		log.Printf("未设置 SEED_DEMO，跳过内置示例商品")
+		return nil
+	}
 	list, err := st.ListProducts("", "")
 	if err != nil {
 		return err
@@ -1123,18 +1310,18 @@ func seedIfEmpty(st *store.Store) error {
 		return nil
 	}
 	seeds := []store.Product{
-		{Code: "6901234567892", Name: "可口可乐", Spec: "330ml 罐装", Category: "饮料", Unit: "罐", CostPrice: 2.2, SalePrice: 2.5, Stock: 120, SyncStatus: "synced"},
-		{Code: "6902083881234", Name: "农夫山泉", Spec: "550ml", Category: "饮料", Unit: "瓶", CostPrice: 1.5, SalePrice: 1.8, Stock: 200, SyncStatus: "synced"},
-		{Code: "6921168509256", Name: "心相印抽纸", Spec: "3层100抽", Category: "日用品", Unit: "包", CostPrice: 3.9, SalePrice: 4.5, Stock: 60, SyncStatus: "pending"},
-		{Code: "6925303725941", Name: "旺旺雪饼", Spec: "84g", Category: "零食", Unit: "袋", CostPrice: 3.8, SalePrice: 4.5, Stock: 40, SyncStatus: "pending"},
-		{Code: "6901001100113", Name: "青岛啤酒", Spec: "330ml 罐装", Category: "酒水", Unit: "罐", CostPrice: 5.0, SalePrice: 6.0, Stock: 90, SyncStatus: "pending"},
-		{Code: "6907992751797", Name: "伊利纯牛奶", Spec: "250ml 盒装", Category: "乳品", Unit: "盒", CostPrice: 3.0, SalePrice: 3.5, Stock: 80, SyncStatus: "pending"},
+		{Code: "6901234567892", Name: "可口可乐", Spec: "330ml 罐装", Category: "饮料", Unit: "罐", CostPrice: 2.2, SalePrice: 2.5, Stock: 120, SyncStatus: "synced", IsDemo: true},
+		{Code: "6902083881234", Name: "农夫山泉", Spec: "550ml", Category: "饮料", Unit: "瓶", CostPrice: 1.5, SalePrice: 1.8, Stock: 200, SyncStatus: "synced", IsDemo: true},
+		{Code: "6921168509256", Name: "心相印抽纸", Spec: "3层100抽", Category: "日用品", Unit: "包", CostPrice: 3.9, SalePrice: 4.5, Stock: 60, SyncStatus: "pending", IsDemo: true},
+		{Code: "6925303725941", Name: "旺旺雪饼", Spec: "84g", Category: "零食", Unit: "袋", CostPrice: 3.8, SalePrice: 4.5, Stock: 40, SyncStatus: "pending", IsDemo: true},
+		{Code: "6901001100113", Name: "青岛啤酒", Spec: "330ml 罐装", Category: "酒水", Unit: "罐", CostPrice: 5.0, SalePrice: 6.0, Stock: 90, SyncStatus: "pending", IsDemo: true},
+		{Code: "6907992751797", Name: "伊利纯牛奶", Spec: "250ml 盒装", Category: "乳品", Unit: "盒", CostPrice: 3.0, SalePrice: 3.5, Stock: 80, SyncStatus: "pending", IsDemo: true},
 	}
 	for _, p := range seeds {
 		if _, err := st.UpsertProduct(p); err != nil {
 			return err
 		}
 	}
-	log.Printf("已写入 %d 个示例商品", len(seeds))
+	log.Printf("已写入 %d 个示例商品（isDemo=true）", len(seeds))
 	return nil
 }

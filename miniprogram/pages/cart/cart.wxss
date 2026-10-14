@@ -1,5 +1,30 @@
+@import "../../styles/state.wxss";
+
 /* 购物车（第 24 轮） */
 .cartpage { padding-bottom: 260rpx; }
+
+/* ---------- 第 27 轮新增：失效商品分组 / 库存上限 / 自提门店信息 / 结算明细 ---------- */
+.badsec { background: #fff; border-radius: 20rpx; margin: 12rpx 0 20rpx; padding: 20rpx 24rpx; }
+.badhead { display: flex; align-items: center; justify-content: space-between; }
+.badt { font-size: 26rpx; color: #6b7280; }
+.badclear { font-size: 26rpx; color: #16a34a; }
+.brow { display: flex; align-items: center; margin-top: 20rpx; }
+.brow .bthumb {
+  width: 88rpx; height: 88rpx; border-radius: 12rpx; background: #f3f4f6;
+  display: flex; align-items: center; justify-content: center; font-size: 40rpx; flex: none;
+}
+.brow .binfo { flex: 1; margin-left: 16rpx; min-width: 0; }
+.brow .bname { font-size: 27rpx; color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brow .btag {
+  display: inline-block; margin-top: 6rpx; font-size: 21rpx; color: #9ca3af;
+  background: #f3f4f6; border-radius: 6rpx; padding: 2rpx 10rpx;
+}
+.brow .bdel { font-size: 26rpx; color: #ef4444; padding: 12rpx 4rpx 12rpx 20rpx; flex: none; }
+.climit { font-size: 22rpx; color: #d97706; }
+.pickupinfo { margin-top: 12rpx; background: #f8fafc; border-radius: 12rpx; padding: 16rpx 20rpx; }
+.pickupinfo .pirow { font-size: 24rpx; color: #4b5563; line-height: 1.9; }
+.pickupinfo .pirow.link { color: #16a34a; }
+.cbar-fee { font-size: 21rpx; color: #9ca3af; display: block; }
 
 .chead {
   display: flex;

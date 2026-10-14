@@ -8,7 +8,9 @@ Page({
     kw: '',
     loading: false,
     err: '',
-    lowStock: 5,
+    // 第 27 轮 P0-9：低库存阈值只有一个真源 —— 服务端 settings（api.lowStock()，兜底 5）。
+    // 这里不再写死 5，否则改了后端阈值员工端还在按老数挑货。
+    lowStock: api.lowStock(),
     list: [],
     onlyLow: false
   },
@@ -39,7 +41,7 @@ Page({
   },
 
   load() {
-    this.setData({ loading: true, err: '' })
+    this.setData({ loading: true, err: '', lowStock: api.lowStock() })
     return api.listAllProducts(this.data.kw).then(
       (list) => {
         this.raw = list || []
@@ -48,6 +50,7 @@ Page({
         return this.raw
       },
       (e) => {
+        // 加载失败也换成顾客/员工看得懂的话，不把 request:fail 这类串甩出来（第 27 轮 P0-1 同口径）
         this.setData({ loading: false, err: (e && e.message) || '加载失败' })
         return null
       }

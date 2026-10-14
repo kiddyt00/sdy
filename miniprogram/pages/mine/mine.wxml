@@ -32,7 +32,27 @@
     <van-cell title="员工工作台" icon="scan" value="扫码找货 · 库存管理" is-link bind:click="goStaff" />
   </view>
 
-  <view class="mgrid">
+  <!-- 第 27 轮 P0-1 / P0-8：订单概览的「加载中 / 失败 / 没身份 / 有数据」分开，
+       失败给「重新加载」而不是装作「一单都没有」 -->
+  <view class="statecard" wx:if="{{loading}}">
+    <van-skeleton title row="1" />
+  </view>
+
+  <view class="errbox" wx:elif="{{loadErr}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{loadErr}}</view>
+    <view class="errsub">订单数只是暂时没取到，你的单还在店里</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
+  <view class="errbox" wx:elif="{{needIdentity}}">
+    <view class="errico">🔑</view>
+    <view class="errmsg">登录或填过收货手机号，才能看订单数</view>
+    <view class="errsub">订单按手机号/微信归到你名下，没身份分不清是谁的</view>
+    <view class="errbtn" bindtap="reload">我已登录，重新加载</view>
+  </view>
+
+  <view class="mgrid" wx:else>
     <view class="gcell" wx:for="{{orderGrid}}" wx:key="key" data-key="{{item.key}}" bindtap="goOrdersWith">
       <view class="gicon">
         <van-icon name="{{item.icon}}" size="44rpx" color="#16a34a" />
@@ -60,6 +80,6 @@
   </view>
 
   <view class="mfoot">
-    <text class="mf-ver">啥都有快送 · 小程序 0.5.0</text>
+    <text class="mf-ver">啥都有快送 · 小程序 0.6.0</text>
   </view>
 </view>

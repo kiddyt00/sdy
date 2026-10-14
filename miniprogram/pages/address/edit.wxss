@@ -1,3 +1,5 @@
+@import "../../styles/state.wxss";
+
 /* 编辑地址（第 24 轮） */
 .epage { padding: 20rpx 24rpx 200rpx; }
 

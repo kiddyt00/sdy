@@ -515,12 +515,15 @@ const Admin = (() => {
     };
   }
   // 编辑表单初值：商品对象 → 表单字段（表单不含库存）
+  // 批发价必须原样带出来（E-P0-4）：弹窗读 d.wholesalePrice 回填，漏了这个字段
+  // 编辑框永远空白，一保存就把批发价写成 0，批发客户直接按零售价买。
   function draftFrom(p) {
     const x = p || {};
     return {
       code: x.code || '', name: x.name || '', brand: x.brand || '', spec: x.spec || '',
       category: x.category || DEFAULT_CATEGORY, unit: x.unit || DEFAULT_UNIT, img: x.img || '',
       costPrice: x.costPrice || 0, salePrice: x.salePrice || 0, refPrice: x.refPrice || 0,
+      wholesalePrice: x.wholesalePrice || 0,
       isWholesale: !!(x.isWholesale || x.wholesale)
     };
   }
@@ -674,6 +677,62 @@ const Admin = (() => {
       }
     });
     return out;
+  }
+
+  /* ---------------- 数据来源 / 示例商品 / 营业额口径 / 新订单（第 27 轮） ----------------
+   * 这一组都是纯函数或纯状态，不碰 DOM，页面与 Node 测试共用同一套判断。
+   * 背景（E-P0-1 / E-P0-3 / E-P0-7）：后台以前分不清「后端连上了但真的没有数据」
+   * 与「压根没连过后端」，于是空响应被静默换成本地演示值；营业额也把没收到的钱算进来了。
+   */
+
+  // 示例（种子）商品识别：后端本轮若给商品加 is_demo / SEED_DEMO 标识，这里就能认出来。
+  // 三种写法都兼容（布尔 / 1 / 字符串 '1'），字段缺失一律当正式商品，避免误标。
+  function isDemoProduct(p) {
+    const x = p || {};
+    return !!(x.isDemo || x.is_demo || x.SEED_DEMO);
+  }
+  function demoCount(list) {
+    return (Array.isArray(list) ? list : []).filter(isDemoProduct).length;
+  }
+
+  // 今日营业额口径（E-P0-7）：本业务没有在线支付，**下单 ≠ 收款**，
+  // 所以「营业额」只算已完成（done）的实收；待备货 / 配送中 / 待自提另列「进行中金额」。
+  // 已取消订单两边都不算（与报表页 doneAmount / openAmount 同口径）。
+  function kpiOf(orders, now) {
+    const d = now ? new Date(now) : new Date();
+    const today = d.toDateString();
+    const todays = (Array.isArray(orders) ? orders : []).filter(o => new Date(o.createdAt).toDateString() === today);
+    const valid = todays.filter(o => o.status !== 'cancelled');
+    const done = valid.filter(o => o.status === 'done');
+    const open = valid.filter(o => o.status !== 'done');
+    const sum = arr => round2(arr.reduce((s, o) => s + (Number(o.total) || 0), 0));
+    return {
+      today: todays.length,               // 今日下单总数（含取消，页面脚注会说明）
+      valid: valid.length,                // 非取消单量
+      done: done.length,                  // 已完成单量
+      doneAmount: sum(done),              // 已完成金额 = 今日营业额（实收）
+      open: open.length,                  // 进行中单量（待备货 / 配送中 / 待自提）
+      openAmount: sum(open),              // 进行中金额（尚未收到）
+      cancelled: todays.length - valid.length
+    };
+  }
+
+  /* 新订单提醒（第 27 轮，轻量轮询用）：
+   * 订单镜像按时间倒序，新单一定排在最前，所以「最新下单时间」就是最省事的签名。
+   * 只比签名，命中后再按 id 找新单，避免整表 diff。                                */
+  function orderSig(orders) {
+    let max = 0;
+    (Array.isArray(orders) ? orders : []).forEach(o => {
+      const t = Number(o && o.createdAt) || 0;
+      if (t > max) max = t;
+    });
+    return String(max);
+  }
+  function newOrdersSince(orders, since, prevSig) {
+    const list = Array.isArray(orders) ? orders : [];
+    const t = Number(since) || 0;
+    const cut = prevSig == null ? '' : String(prevSig);
+    return list.filter(o => (Number(o && o.createdAt) || 0) > t && String(o.id) !== cut);
   }
 
   /* ---------------- 小票 / 配送单（任务池第 2 项） ----------------
@@ -933,6 +992,12 @@ const Admin = (() => {
     categories: categories,
     productStats: productStats,
     draftFrom: draftFrom,
+    round2: round2,
+    isDemoProduct: isDemoProduct,
+    demoCount: demoCount,
+    kpiOf: kpiOf,
+    orderSig: orderSig,
+    newOrdersSince: newOrdersSince,
     BULK_MODES: BULK_MODES,
     BULK_ROUNDS: BULK_ROUNDS,
     BULK_FIELDS: BULK_FIELDS,

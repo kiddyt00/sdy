@@ -14,7 +14,10 @@
   --ink: #0f172a;
   --ink-2: #334155;
   --muted: #64748b;
-  --faint: #94a3b8;
+  /* 第 27 轮（P1-8）：原来 #94a3b8 在白底只有 2.56:1、在 --bg 上 2.37:1，远低于 4.5:1。
+     调深到 #5f6b7d（白底 5.40:1 / --bg 上 4.99:1）。--faint 只用在本文件的浅色底文字上，
+     深色底（.sidebar）用的是写死的 #7c8ba1，不受影响。 */
+  --faint: #5f6b7d;
 
   --bg: #f4f6f8;
   --card: #ffffff;
@@ -64,7 +67,8 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
 .faint { color: var(--faint); }
 .mono { font-family: var(--mono); font-size: 12px; }
 .row { display: flex; align-items: center; gap: 10px; }
-.row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* 第 27 轮（P1-6）：420px 实测横向溢出 143px，根因是这行不换行把头部撑出屏幕 */
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .grow { flex: 1; }
 .mt { margin-top: 12px; }
 .mt-lg { margin-top: 20px; }
@@ -149,6 +153,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
   background: #fff; border: 1px solid var(--line);
   font-size: 13px; color: var(--ink-2); cursor: pointer; transition: .15s;
   white-space: nowrap;
+  font-family: inherit;   /* 第 27 轮（P1-9）：chip 改成真按钮后仍沿用页面字体 */
 }
 .chip:hover { border-color: #cfd6e0; }
 .chip.on { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 500; }
@@ -206,6 +211,10 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
   box-shadow: var(--sh-3); opacity: 0; pointer-events: none; transition: .2s;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* 第 27 轮（P0-1/P1-3）：下单反馈分色——绿色=真进店系统，黄色=离线未入库；
+   顾客扫一眼颜色就知道这单到底进没进店，不用读完整句话。 */
+.toast.ok { background: #15803d; }
+.toast.warn { background: #b45309; }
 
 /* 遮罩 / 抽屉 / 弹窗 */
 .mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .42); z-index: 90; opacity: 0; pointer-events: none; transition: .2s; }
@@ -253,7 +262,8 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
 }
 .shop-head .name { font-size: 17px; font-weight: 600; }
 .shop-head .sub { font-size: 12px; color: var(--muted); }
-.shop-tools { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+/* 第 27 轮（P1-6）：窄屏时搜索框 + 3 个按钮必须能换行，否则 #btnMyPrice / 地址簿会顶出屏幕 */
+.shop-tools { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .cart-btn {
   position: relative; display: inline-flex; align-items: center; gap: 6px;
   padding: 9px 16px; border-radius: var(--r-pill); border: 1px solid var(--line);
@@ -301,6 +311,15 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
 }
 .add:hover { background: var(--brand-dark); }
 
+/* 第 27 轮（P1-7）：移动端点按热区要 ≥44×44，视觉尺寸保持不变——
+   用一层透明 ::after 把可点范围撑到 44px。伪元素继承 pointer-events，
+   点在外扩出来的透明区等于点在按钮上。 */
+.add, .stepper button, .icon-btn, .chip { position: relative; }
+.add::after, .stepper button::after, .icon-btn::after, .chip::after {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 44px; height: 44px; transform: translate(-50%, -50%);
+}
+
 .cartbar {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 60;
   width: min(1040px, calc(100% - 32px));
@@ -318,8 +337,12 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
 .citem .cph .cimg { width: 100%; height: 100%; object-fit: cover; display: block; }
 .citem .cn { font-size: 13px; font-weight: 500; }
 .citem .cs { font-size: 12px; color: var(--faint); }
-.stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+/* 第 27 轮（P1-7）：overflow 从 hidden 改成 visible，好让两侧按钮的 44px 透明热区不被裁掉；
+   按钮自己补两侧圆角，hover 背景仍不会溢出圆角容器。 */
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: visible; }
 .stepper button { width: 28px; height: 28px; border: 0; background: #fff; cursor: pointer; font-size: 15px; color: var(--ink-2); }
+.stepper button:first-child { border-radius: 6px 0 0 6px; }
+.stepper button:last-child { border-radius: 0 6px 6px 0; }
 .stepper button:hover { background: var(--line-2); }
 .stepper .v { min-width: 34px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
 .deliv-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -420,4 +443,6 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
   .kpis { grid-template-columns: 1fr; }
   .page { padding: 16px 14px 40px; }
   .hero { flex-direction: column; align-items: flex-start; }
+  /* 第 27 轮（P1-6）：窄屏把搜索框独占一行，3 个工具按钮才放得下且不出横向滚动条 */
+  .shop-tools .search { flex: 1 1 100%; }
 }

@@ -11,6 +11,22 @@
 
   <van-skeleton wx:if="{{loading}}" title row="4" />
 
+  <!-- 第 27 轮 P0-2：失败给「重新加载」，只有请求成功且为空才说「还没有订单」 -->
+  <view class="errbox" wx:elif="{{loadErr}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{loadErr}}</view>
+    <view class="errsub">你的订单都在店里，只是这会儿没连上店里系统</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
+  <!-- 第 27 轮 P0-8：订单接口要带身份，没身份先在页面拦住并引导 -->
+  <view class="errbox" wx:elif="{{needIdentity}}">
+    <view class="errico">🔑</view>
+    <view class="errmsg">先登录或填收货手机号，才能看订单</view>
+    <view class="errsub">订单按手机号/微信归到你名下，没身份分不清是谁的</view>
+    <view class="errbtn" bindtap="reload">我已登录，重新加载</view>
+  </view>
+
   <van-empty wx:elif="{{empty}}" description="这里还没有订单">
     <van-button round type="primary" size="small" bind:click="goIndex">去逛逛</van-button>
   </van-empty>

@@ -212,6 +212,13 @@ func TestHealthzAndOptions(t *testing.T) {
 	}
 }
 
+// addrWithKey 是第 27 轮之后的地址响应形状：地址本体 + 一把 32 位 hex 钥匙（key）。
+// 拿列表/删除都必须带上它，否则服务端静默返回空（不给「知道手机号就能翻别人地址簿」留口子）。
+type addrWithKey struct {
+	store.Address
+	Key string `json:"key"`
+}
+
 // TestAddressHTTPFlow 收货地址簿 HTTP 层（D18）：增改查删 + 错误映射 + 默认地址轮换。
 func TestAddressHTTPFlow(t *testing.T) {
 	ts := newTestServer(t)
@@ -221,19 +228,19 @@ func TestAddressHTTPFlow(t *testing.T) {
 		t.Fatalf("缺手机号应 400，实际 %d %s", code, body)
 	}
 
-	// 新增第一条 → 自动默认
+	// 新增第一条 → 自动默认 + 下发钥匙
 	code, body := do(t, ts, http.MethodPost, "/api/addresses",
 		`{"phone":"13800000001","contact":"张三","address":"幸福路 1 号"}`)
 	if code != 200 || !strings.Contains(body, `"isDefault":true`) {
 		t.Fatalf("首条地址应 200 且默认，实际 %d %s", code, body)
 	}
-	var first store.Address
-	if err := json.Unmarshal([]byte(body), &first); err != nil || first.ID == 0 {
-		t.Fatalf("解析新增地址失败: %v (%s)", err, body)
+	var first addrWithKey
+	if err := json.Unmarshal([]byte(body), &first); err != nil || first.ID == 0 || first.Key == "" {
+		t.Fatalf("解析新增地址失败（或没下发 key）: %v (%s)", err, body)
 	}
 
-	// 列表里能看到
-	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001", "")
+	// 列表里能看到（带钥匙）
+	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001&key="+first.Key, "")
 	if code != 200 || !strings.Contains(body, `"total":1`) || !strings.Contains(body, "幸福路 1 号") {
 		t.Fatalf("地址列表应有 1 条，实际 %d %s", code, body)
 	}
@@ -244,9 +251,9 @@ func TestAddressHTTPFlow(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("新增第二条失败: %d %s", code, body)
 	}
-	var second store.Address
+	var second addrWithKey
 	_ = json.Unmarshal([]byte(body), &second)
-	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001", "")
+	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001&key="+first.Key, "")
 	var list struct {
 		Items []store.Address `json:"items"`
 	}
@@ -269,26 +276,26 @@ func TestAddressHTTPFlow(t *testing.T) {
 	if code, body := do(t, ts, http.MethodDelete, "/api/addresses/", ""); code != 400 || !strings.Contains(body, "缺少地址编号") {
 		t.Fatalf("缺编号应 400，实际 %d %s", code, body)
 	}
-	if code, body := do(t, ts, http.MethodDelete, "/api/addresses/abc?phone=13800000001", ""); code != 400 || !strings.Contains(body, "编号不合法") {
+	if code, body := do(t, ts, http.MethodDelete, "/api/addresses/abc?phone=13800000001&key="+first.Key, ""); code != 400 || !strings.Contains(body, "编号不合法") {
 		t.Fatalf("编号不合法应 400，实际 %d %s", code, body)
 	}
-	if code, body := do(t, ts, http.MethodPut, "/api/addresses/"+itoa(first.ID)+"?phone=13800000001", ""); code != 405 {
+	if code, body := do(t, ts, http.MethodPut, "/api/addresses/"+itoa(first.ID)+"?phone=13800000001&key="+first.Key, ""); code != 405 {
 		t.Fatalf("PUT 应 405，实际 %d %s", code, body)
 	}
 
 	// 删掉默认地址 → 剩下的一条顶为默认
-	code, body = do(t, ts, http.MethodDelete, "/api/addresses/"+itoa(second.ID)+"?phone=13800000001", "")
+	code, body = do(t, ts, http.MethodDelete, "/api/addresses/"+itoa(second.ID)+"?phone=13800000001&key="+second.Key, "")
 	if code != 200 || !strings.Contains(body, `"ok":true`) {
 		t.Fatalf("删除应 200，实际 %d %s", code, body)
 	}
-	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001", "")
+	code, body = do(t, ts, http.MethodGet, "/api/addresses?phone=13800000001&key="+first.Key, "")
 	_ = json.Unmarshal([]byte(body), &list)
 	if len(list.Items) != 1 || list.Items[0].ID != first.ID || !list.Items[0].IsDefault {
 		t.Fatalf("删掉默认后剩下的一条应变默认，实际 %+v", list.Items)
 	}
 
 	// 重复删除 → 404；缺手机号 → 400
-	if code, _ := do(t, ts, http.MethodDelete, "/api/addresses/"+itoa(second.ID)+"?phone=13800000001", ""); code != 404 {
+	if code, _ := do(t, ts, http.MethodDelete, "/api/addresses/"+itoa(second.ID)+"?phone=13800000001&key="+second.Key, ""); code != 404 {
 		t.Fatalf("重复删除应 404，实际 %d", code)
 	}
 	if code, _ := do(t, ts, http.MethodDelete, "/api/addresses/"+itoa(first.ID), ""); code != 400 {

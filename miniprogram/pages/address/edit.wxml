@@ -1,9 +1,18 @@
 <view class="epage">
-  <van-empty wx:if="{{!loggedIn}}" description="登录并绑定手机号后才能存地址">
+  <!-- 第 27 轮 P0-2：加载失败给错误卡 + 「重新加载」，不冒充「地址不存在」 -->
+  <view class="errbox" wx:if="{{loadErr}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{loadErr}}</view>
+    <view class="errsub">这条地址还存着，只是这会儿没连上店里系统</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
+  <van-empty wx:elif="{{!loggedIn}}" description="登录并绑定手机号后才能存地址">
     <van-button round type="primary" size="small" bind:click="goMine">去登录</van-button>
   </van-empty>
 
   <block wx:else>
+    <view class="ehint" wx:if="{{err}}">{{err}}，返回上一页重新选一条吧。</view>
     <view class="ecard">
       <van-field
         value="{{contact}}"

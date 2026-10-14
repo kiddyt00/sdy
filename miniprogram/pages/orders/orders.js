@@ -2,12 +2,15 @@
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
 const rules = require('../../utils/rules.js')
+const ui = require('../common/ui.js')
 
 Page({
   data: {
     online: false,
     orders: [],
     loading: true,
+    loadErr: '',
+    needIdentity: false,
     tabs: rules.STATUS_TABS,
     status: '',
     activeTab: 0,
@@ -42,21 +45,34 @@ Page({
   },
 
   refresh() {
+    this.setData({ loading: true, loadErr: '', needIdentity: false })
     return getApp()
       .refreshStatus()
       .then((st) => {
         this.setData({ online: st.online })
+        // 第 27 轮 P0-8：订单接口必须带身份（openid 或下单手机号）。
+        // 页面先在本地拦住并引导登录/填手机号，不能让顾客看到后端那句「缺少身份」。
+        if (st.online && !ui.hasIdentity()) {
+          this.setData({ loading: false, needIdentity: true, orders: [], empty: false })
+          return null
+        }
         return api.listOrders(this.data.status)
       })
       .then((list) => {
+        if (list === null) return []
         this.setData({ orders: list, loading: false, empty: list.length === 0 })
         return list
       })
       .catch((e) => {
-        this.setData({ loading: false, empty: true })
-        this.toast(e.message)
+        // 第 27 轮 P0-2：请求失败 ≠ 没有订单，给错误卡 + 「重新加载」
+        this.setData({ loading: false, empty: false, orders: [], loadErr: ui.errText(e) })
         return []
       })
+  },
+
+  // 错误卡 / 身份引导卡上的「重新加载」：真正重新发请求
+  reload() {
+    return this.refresh()
   },
 
   onTab(e) {
@@ -82,6 +98,7 @@ Page({
     const id = e.currentTarget.dataset.id
     return this.confirm('取消订单', '确定取消这一单吗？').then((yes) => {
       if (!yes) return null
+      if (!this.ensureIdentity()) return null
       return api
         .cancelOrder(id)
         .then(() => {
@@ -89,7 +106,7 @@ Page({
           return this.refresh()
         })
         .catch((err) => {
-          this.toast(err.message)
+          this.toast(ui.errText(err))
           return null
         })
     })
@@ -98,6 +115,7 @@ Page({
   // 确认收货（配送中 / 待自提 → 已完成）
   onAdvance(e) {
     const id = e.currentTarget.dataset.id
+    if (!this.ensureIdentity()) return Promise.resolve(null)
     return api
       .advanceOrder(id, 'done')
       .then(() => {
@@ -105,9 +123,20 @@ Page({
         return this.refresh()
       })
       .catch((err) => {
-        this.toast(err.message)
+        this.toast(ui.errText(err))
         return null
       })
+  },
+
+  // 第 27 轮 P0-8：取消 / 确认收货都要带身份（openid 或手机号），
+  // 没身份先在页面拦住并引导，不要打到后端再吃那句「缺少身份」
+  ensureIdentity() {
+    if (this.data.online && !ui.hasIdentity()) {
+      this.setData({ needIdentity: true })
+      this.toast('先登录或填收货手机号')
+      return false
+    }
+    return true
   },
 
   // 确认框（返回 Promise<boolean>，便于测试与复用）

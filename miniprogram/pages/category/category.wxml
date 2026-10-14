@@ -23,6 +23,15 @@
 
     <scroll-view class="cmain" scroll-y>
       <van-skeleton wx:if="{{loading}}" title row="4" />
+
+      <!-- 第 27 轮 P0-1：失败 ≠ 「这个分类还没上架商品」，给错误卡 + 「重新加载」 -->
+      <view class="errbox" wx:elif="{{loadErr}}">
+        <view class="errico">📡</view>
+        <view class="errmsg">{{loadErr}}</view>
+        <view class="errsub">货还在，只是这会儿没连上店里系统</view>
+        <view class="errbtn" bindtap="reload">重新加载</view>
+      </view>
+
       <van-empty wx:elif="{{empty}}" description="这个分类还没上架商品" />
       <block wx:else>
         <view class="crow" wx:for="{{products}}" wx:key="code" data-code="{{item.code}}" bindtap="goDetail">
@@ -33,6 +42,10 @@
           <view class="cinfo">
             <view class="cname">{{item.name}}</view>
             <view class="cspec">{{item.spec || item.brand || '—'}}</view>
+            <!-- 第 27 轮 P0-9：低库存阈值来自服务端（页面 data.lowStock ← api.lowStock()） -->
+            <view class="sstock {{item.stock <= 0 ? 'out' : (item.stock <= lowStock ? 'low' : '')}}">
+              {{item.stock <= 0 ? '暂时缺货' : (item.stock <= lowStock ? '仅剩 ' + item.stock + ' 件' : '库存 ' + item.stock)}}
+            </view>
             <view class="cfoot">
               <view class="cprice"><text class="csym">¥</text>{{tools.fix2(item.price)}}</view>
               <view

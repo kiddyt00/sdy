@@ -15,6 +15,10 @@
       />
       <van-icon wx:if="{{keyword}}" name="clear" size="32rpx" color="#c4c7cc" catchtap="onClear" />
     </view>
+    <view class="scart" bindtap="goCart">
+      <van-icon name="cart-o" size="38rpx" color="#4b5563" />
+      <text class="scart-n" wx:if="{{cartCount > 0}}">{{cartCount}}</text>
+    </view>
     <view class="scancel" bindtap="goIndex">取消</view>
   </view>
 
@@ -39,6 +43,14 @@
 
   <van-skeleton wx:elif="{{loading}}" title row="3" />
 
+  <!-- 第 27 轮 P0-1：搜索失败 ≠ 「没找到这件商品」，给错误卡 + 「重新加载」 -->
+  <view class="errbox" wx:elif="{{loadErr}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{loadErr}}</view>
+    <view class="errsub">店里系统没连上，你的搜索词还在，点下面再试一次</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
   <van-empty wx:elif="{{empty}}" description="没找到这件商品" />
 
   <view class="slist" wx:else>
@@ -52,8 +64,17 @@
         <view class="gbody">
           <view class="gname">{{item.name}}</view>
           <view class="gspec">{{item.spec || item.brand || '—'}}</view>
+          <!-- 第 27 轮 P0-7：结果里直接加购；库存状态用服务端阈值（api.lowStock()）判 -->
+          <view class="sstock {{item.stock <= 0 ? 'out' : (item.stock <= lowStock ? 'low' : '')}}">
+            {{item.stock <= 0 ? '暂时缺货' : (item.stock <= lowStock ? '仅剩 ' + item.stock + ' 件' : '库存 ' + item.stock)}}
+          </view>
           <view class="gfoot">
             <view class="gprice"><text class="gsym">¥</text>{{tools.fix2(item.price)}}</view>
+            <view
+              class="gadd {{item.stock <= 0 ? 'dis' : ''}}"
+              data-code="{{item.code}}"
+              catchtap="onAdd"
+            >{{item.stock <= 0 ? '缺货' : '＋'}}</view>
           </view>
         </view>
       </view>

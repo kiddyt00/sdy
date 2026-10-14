@@ -14,8 +14,8 @@
 | `web/assets/demo/*.svg` | 5 张仓库自带演示商品图（可口可乐/青岛啤酒/红牛/五粮春/旺旺雪饼，~610B/张，渐变底 + 白字 SVG），随静态目录部署，**不依赖外网图床** |
 | `web/mall.js` | 领域逻辑（427 行，全局 `Mall`）：商品、购物车、订单（**单号保证不重复**）、配送规则、**收货地址簿**、**上下架过滤（`isOnSale` / `listOnSale`）**、**我的手机号与等级（`getMyPhone` / `setMyPhone` / `getMyTier`，localStorage `mall_my_phone`）与有效价 `priceOf(p)`**、localStorage 读写 |
 | `web/mall-admin.js` | 后台逻辑（819 行，全局 `Admin`）：库存流水/入库/盘点、**商品档案 CRUD 与校验（含商品图、批发价、编辑不改库存与上下架）**、**批量改价 / 批量改分类 / 批量改批发标记（`bulkPlan` / `applyBulkPlan` / `applyBulkField`）**、配送员派单、**顾客档案与等级聚合（`getCustomers` / `refreshCustomers` / `setTier` / `TIERS`）**、**小票模型（`buildReceipt`）与门店抬头**、**销售报表与日报模型（`buildReport` / `reportText`）** |
-| `web/pricing.js` | 价格与配送费规则（99 行，全局 `Pricing`）：价格防护、运费计算、**顾客等级（`normalizeTier` / `validTier` / `tierLabel` / `isWholesaleTier`）与有效价 `effectivePrice(tier, salePrice, wholesalePrice)`** |
-| `web/sdy-api.js` | 后端连通层（496 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示；**`setOnSale(codes, on)` 批量上下架**、**`setMyPhone(phone)` / `listCustomers()` / `setCustomerTier(phone, name, tier)`，`sync()` 自动带上「我的手机号」按等级取价（D24）**、**库存审计与门店三件套（D25）：`changeStock(code, kind, qty, reason, by)`（写后端审计流水并把 `entry` 镜像回本地）、`listStockLog(limit)`、`listCouriers()` / `saveCourier(name, phone, remove)`、`getSettings()` / `saveSettings(s)`、`setCustomerNote(phone, name, tags, note)`（离线时全部返回 `null`、不发请求）** |
+| `web/pricing.js` | 价格与配送费规则（107 行，全局 `Pricing`；**第 27 轮起是 Go 真源的薄适配层**）：价格防护、`normalizeDeliveryType(type)`（只有 `pickup` 算自提，未知一律按 `delivery`）、先 `round2` 再比门槛、`minFree<=0` 永不包邮、**顾客等级（`normalizeTier` / `validTier` / `tierLabel` / `isWholesaleTier`）与有效价 `effectivePrice(tier, salePrice, wholesalePrice)`** |
+| `web/sdy-api.js` | 后端连通层（594 行，全局 `SdyApi`）：唯一数据通道；在线走 HTTP，离线降级本地演示；**第 27 轮：请求超时 2000 → 5000ms、`credentials:'same-origin'`、管理端请求显式带 `X-Admin: 1`（`reqHeaders`，安全边界仍是 Cookie）、失败文案改人话（「连不上店里，请检查网络后重试 [技术原因：…]」）、地址簿能力钥匙落 `sdy_addr_key`、`sync(phone, {all})` 的 `ordersAll` 口径（**顾客页绝不传 `all`**）、`notifyMallMode()` 把在线状态同步给 `Mall.setServerConnected`、下单带 `clientToken`**；另有 **`setOnSale(codes, on)` 批量上下架**、**`setMyPhone(phone)` / `listCustomers()` / `setCustomerTier(phone, name, tier)`，`sync()` 自动带上「我的手机号」按等级取价（D24）**、**库存审计与门店三件套（D25）：`changeStock(code, kind, qty, reason, by)`（写后端审计流水并把 `entry` 镜像回本地）、`listStockLog(limit)`、`listCouriers()` / `saveCourier(name, phone, remove)`、`getSettings()` / `saveSettings(s)`、`setCustomerNote(phone, name, tags, note)`（离线时全部返回 `null`、不发请求）** |
 | `web/test-*.js` | 6 套测试（见下），纯 Node 运行，无需浏览器 |
 
 页面之间只靠相对路径互链（`index.html` ↔ `admin.html`，管理端系统页再链到 `../barcode-demo/`、`../sync-demo/`）。
@@ -73,22 +73,24 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 
 ```bash
 cd /home/kiddyt00/GolandProjects/sdy
-node web/test-mall.js          # 109 项
-node web/test-pricing.js       # 42 项
-node web/test-admin.js         # 206 项
-node web/test-sdy-api.js       # 117 项
-node web/test-page-boot.js     # 212 项
+node web/test-mall.js          # 111 项（第 27 轮实测）
+node web/test-pricing.js       # 46 项
+node web/test-admin.js         # 259 项
+node web/test-sdy-api.js       # 141 项
+node web/test-page-boot.js     # 246 项
 node web/test-integration.js   # 50 项（需后端在线）
 ```
 
+> 第 27 轮起也可以用一条命令跑三端全量：`bash deploy/verify-all.sh`（它自起临时后端与假微信，Web 五套 + 小程序三套 + Go 单测 + CDP 一起过，最后打 17 行汇总表）。
+
 | 测试 | 实测结果 | 覆盖什么 | 需要后端 |
 | --- | --- | --- | --- |
-| `web/test-mall.js` | 通过 109 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机、**同一毫秒连下两单单号不重复**、**收货地址簿（默认地址语义、按手机号隔离、删默认顶替）**、**上下架过滤（`isOnSale` / `listOnSale` / 加购与下单拦截、缺字段视为上架）**、**立即购买临时单（`setBuyNow`/`peekBuyNow`/`clearBuyNow`：只结算这一件、不污染真购物车、下单后自动退出、手动动购物车即退出）**、**订单状态文案 `statusHint()` 与小程序 `miniprogram/utils/rules.js` 逐字一致** | 否 |
-| `web/test-pricing.js` | 通过 42 项 / 失败 0 项 | 配送费规则、价格防线、批发与无参考价豁免、**顾客等级与有效价（`effectivePrice` / `normalizeTier` / `validTier` / `isWholesaleTier` / `tierLabel`，与 Go 侧 `TestEffectivePrice` 同一组用例，D24）** | 否 |
-| `web/test-admin.js` | 通过 206 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额）、**商品档案归一化/校验/价格防线/三档删除约束**、**小票模型与门店抬头**、**销售报表六档区间/聚合/环比/日报文本**、**批量改价计划（各状态/顶格/汇总）、批量应用（保库存·写流水·未变跳过·单条失败不中断）、批量改字段校验**、**商品图去空格与空串回落、编辑不改上下架/库存、批量改分类不动图片与上下架（D23）**、**落库审计（D25：`kind`/`type` 双写、`recordStockEntry` 按 `id` 幂等且把库存对齐 `after`、`saveCourier` 四条约束、只登记备注的顾客也进档案、`window.Admin` 必须显式暴露）** | 否 |
-| `web/test-sdy-api.js` | 通过 117 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品、**地址簿在线/离线双路径（写成功自动重拉、失败不污染镜像）**、**`setOnSale` 在线/离线双路径**、**我的价格与顾客等级（离线 `Mall.priceOf` 按等级算价、在线 `sync()` 带 `?phone=` 且服务端下发价优先、`setMyPhone` / `listCustomers` / `setCustomerTier`，D24）**、**库存审计 / 配送员 / 门店抬头 / 顾客备注（D25：六类接口的在线请求体与回执、离线一律 `null` 不发请求、没注入 `cfg.admin` 时退回 `window.Admin` 做本地镜像）** | 否（注入假 fetch） |
-| `web/test-page-boot.js` | 通过 212 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体**、**批量面板勾选·全选·预览·在线与离线应用·清空**、**小票写入打印区与批量分页（不真打印）**、**结算页地址带出与地址簿弹窗全流程**、**销售报表切页/区间切换/柱状图/复制与打印**、**商品图渲染与回退 emoji、下架商品顾客端拦截、管理端缩略图/图片字段/单个与批量上下架/分类改名合并（D23）**、**「我的价格」弹窗与批发价划线/购物车「批发价」标、管理端批发价字段（高于零售价被拦）、顾客登记与改等级（D24）**、**开机拉取后端镜像（配送员名单 / 门店抬头 / 审计流水，标题带「（后端审计）」）、入库与改数走服务端回执并回刷本地库存、盘点同值不发请求、保存配送员与门店抬头落库、顾客备注（D25）** | 否 |
-| `web/test-integration.js` | 50 项（需后端在线；探测不到会自动跳过并 `exit 0`） | 真 fetch → 真后端：下单扣库存、运费、状态流转、非法流转 409、取消回补、比价巡检、**按顾客等级取价（`setCustomerTier` 后下单，服务端算价、前端传价不参与；改回等级只影响新单）**、**库存审计三笔（入库/改数/盘点前后值自洽、本地镜像对齐、非法改数被拒、流水倒序与 500 上限）、配送员增删、门店抬头读写与还原、顾客备注落库不动等级（D25）** | **是** |
+| `web/test-mall.js` | 通过 111 项 / 失败 0 项 | 商品读写、购物车加/改/删、库存上限、下单扣库存、取消回补、状态机、**同一毫秒连下两单单号不重复**、**收货地址簿（默认地址语义、按手机号隔离、删默认顶替）**、**上下架过滤（`isOnSale` / `listOnSale` / 加购与下单拦截、缺字段视为上架）**、**立即购买临时单（`setBuyNow`/`peekBuyNow`/`clearBuyNow`：只结算这一件、不污染真购物车、下单后自动退出、手动动购物车即退出）**、**订单状态文案 `statusHint()` 与小程序 `miniprogram/utils/rules.js` 逐字一致**、**第 27 轮：`setServerConnected` 后空库不再用本地演示商品顶替（`loadCatalog` 返回空）、`setSettings` 生效的配送费 / 低库存阈值 / 起送价 `minOrderBlock`（还差 X 元起送）、未知配送方式按 delivery** | 否 |
+| `web/test-pricing.js` | 通过 46 项 / 失败 0 项 | 配送费规则、价格防线、批发与无参考价豁免、**顾客等级与有效价（`effectivePrice` / `normalizeTier` / `validTier` / `isWholesaleTier` / `tierLabel`，与 Go 侧 `TestEffectivePrice` 同一组用例，D24）**、**第 27 轮：`normalizeDeliveryType`（未知按 delivery、不再抛错）、先 round2 再比门槛（29.99→3 / 29.995→0 / 30.00→0）、`minFree<=0` 永不包邮** | 否 |
+| `web/test-admin.js` | 通过 259 项 / 失败 0 项 | 库存流水、入库/盘点校验、派单、顾客聚合（已取消订单不计营业额）、**商品档案归一化/校验/价格防线/三档删除约束**、**小票模型与门店抬头**、**销售报表六档区间/聚合/环比/日报文本**、**批量改价计划（各状态/顶格/汇总）、批量应用（保库存·写流水·未变跳过·单条失败不中断）、批量改字段校验**、**商品图去空格与空串回落、编辑不改上下架/库存、批量改分类不动图片与上下架（D23）**、**落库审计（D25）**、**第 27 轮：派单失败不再提示成功、批量改价不清零批发价、空响应不再沿用本地演示值、今日营业额不含未完成订单、新单提醒签名去重（轮询不刷屏）** | 否 |
+| `web/test-sdy-api.js` | 通过 141 项 / 失败 0 项 | 地址优先级、超时、错误文案、在线/离线两套动作分流、删除商品、**地址簿在线/离线双路径（写成功自动重拉、失败不污染镜像）**、**`setOnSale` 在线/离线双路径**、**我的价格与顾客等级（D24）**、**库存审计 / 配送员 / 门店抬头 / 顾客备注（D25）**、**第 27 轮：顾客页没手机号时**干脆不问订单接口**（灰度模式下问了会被服务端当管理员、拿回全店订单）、管理端 `sync(null,{all:true})` 仍拉全店订单且请求头带 `X-Admin: 1`、`credentials:'same-origin'`、地址钥匙 `sdy_addr_key` 的存取与随请求下发、超时 5000ms、失败文案含「连不上店里」与技术原因、真错误照抛（页面要能显示错误态）** | 否（注入假 fetch） |
+| `web/test-page-boot.js` | 通过 246 项 / 失败 0 项 | 假 DOM 下页面脚本能加载、`Mall`/`Admin` 全局不冲突、**商品档案页切页/弹窗/在线写入请求体**、**批量面板勾选·全选·预览·在线与离线应用·清空**、**小票写入打印区与批量分页（不真打印）**、**结算页地址带出与地址簿弹窗全流程**、**销售报表切页/区间切换/柱状图/复制与打印**、**商品图渲染与回退 emoji、下架商品顾客端拦截、管理端缩略图/图片字段/单个与批量上下架/分类改名合并（D23）**、**「我的价格」弹窗与批发价划线/购物车「批发价」标、管理端批发价字段（高于零售价被拦）、顾客登记与改等级（D24）**、**开机拉取后端镜像（配送员名单 / 门店抬头 / 审计流水，标题带「（后端审计）」）、入库与改数走服务端回执并回刷本地库存、盘点同值不发请求、保存配送员与门店抬头落库、顾客备注（D25）**、**第 27 轮：顾客页四态（加载/错误卡带「重新加载」/空态/正常）、离线时下单按钮禁用 + 常驻降级提示、低库存角标用服务端下发阈值** | 否 |
+| `web/test-integration.js` | 50 项（需后端在线；探测不到会自动跳过并 `exit 0`） | 真 fetch → 真后端：下单扣库存、运费、状态流转、非法流转 409、取消回补、比价巡检、**按顾客等级取价（D24）**、**库存审计三笔 / 配送员增删 / 门店抬头读写与还原 / 顾客备注落库不动等级（D25）** | **是** |
 
 联调测试的地址取 `SDY_API_BASE`（不设则默认 `http://127.0.0.1:8093`）：
 
@@ -107,6 +109,7 @@ SDY_API_BASE=http://127.0.0.1:8093 node web/test-integration.js
 **数据与真源**
 
 - **D12 单一真源**：页面不直连数据库、不持有任何密钥，全部请求走 `web/sdy-api.js`。服务端是规则与账目的唯一真源；服务端报错（如 409）**原样呈现给用户**，前端不自己改写结论。
+- **D33 身份与正确性（第 27 轮，三端同一条契约）**：① **顾客页绝不冒充管理端** —— `SdyApi.sync(phone, opts)` 只有显式传 `{all:true}`（管理后台）才把 `ordersAll` 置真，之后请求才带 `X-Admin: 1`；**顾客页一旦在灰度模式下不带手机号去要订单，服务端会把请求当管理员、回全店订单（含别人姓名地址）**，所以 `web/index.html` 侧没有手机号时**干脆一个订单请求都不发**（`sync` 返回 `needIdentity: true`，页面显示空态/引导填手机号，而不是错误态）。② **`X-Admin` 不是安全边界**：谁都能加这个头，真正的边界是管理端 Cookie；`req` 加 `credentials:'same-origin'` 才把 Cookie 带上，`X-Admin` 只用于把「同一浏览器里的管理后台」和「顾客页」区分开（服务端 `adminMarked(r)`）。③ **管理端 `sync` 不带手机号**：带了服务端就按手机号过滤，老板只看得到一个顾客的单——同源 `localStorage` 是共享的，老板自己也在顾客页下过单，「残留手机号」是真会发生的。④ **超时 5000ms**（第 27 轮从 2000ms 放宽，弱网下少一次无谓失败）与**人话错误文案**：`无法连接后端（…）：连不上店里，请检查网络后重试 [技术原因：请求超时]` —— 前半句给顾客，方括号里给排查的人。⑤ **地址簿能力钥匙**：`localStorage.sdy_addr_key` 是「自己这册地址簿」的钥匙（32 位 hex，首次保存地址时服务端下发），读写删都带上；**没钥匙时列表为空是「还没存过地址」而不是错误**。⑥ **运营参数真源在服务端**：`sync()` 顺带 `GET /api/settings` 并 `Mall.setSettings()`（配送费 / 免运费门槛 / 低库存阈值 / 起送价），`Mall.loadCatalog()` 在已连上后端（`setServerConnected(true)`）时空库**不再用本地演示商品顶替**；下单带 `clientToken`（同一次结算重试只落一张单）。
 - **在线/离线双模式**：`server` 模式下所有业务动作走后端接口（下单、流转、取消、改库存、建档、比价、条码解析）；`local` 模式下同一批动作落到 `Mall`/`Admin` 的本地实现。**同一套页面代码，两种模式都能用**。
 - `server` 模式下前端只做展示与镜像：`SdyApi.sync()` 拉 `/api/products` 与 `/api/orders` 写回本地镜像，界面上看到的库存数字与后端一致。
 

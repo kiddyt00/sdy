@@ -1,0 +1,37 @@
+/* 顾客端页面四态共用样式（第 27 轮 P0-2）
+   口径：请求失败 ≠ 没有数据。失败要成一张能重试的卡片，只有「请求成功且结果为空」才准说「没有…」。
+   5 个顾客页各自 @import 这一份，避免各写一套后漂移。品牌绿 #16a34a 与全站一致。 */
+.errbox {
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 44rpx 28rpx;
+  margin: 16rpx 0;
+  text-align: center;
+}
+.errbox .errico { font-size: 64rpx; line-height: 1; }
+.errbox .errmsg { font-size: 28rpx; color: #374151; margin-top: 16rpx; line-height: 1.6; }
+.errbox .errsub { font-size: 23rpx; color: #9ca3af; margin-top: 8rpx; }
+.errbox .errbtn {
+  display: inline-block;
+  margin-top: 26rpx;
+  min-width: 220rpx;
+  background: #16a34a;
+  color: #fff;
+  border-radius: 999rpx;
+  padding: 0 40rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+  font-size: 28rpx;
+}
+.errbox .errbtn:active { opacity: .85; }
+
+/* 加载态：给骨架垫一张白卡，避免「白屏闪一下」再出内容 */
+.statecard { background: #fff; border-radius: 20rpx; padding: 24rpx; margin-bottom: 12rpx; }
+
+/* 低库存 / 缺货角标（第 27 轮 P0-9）。阈值由服务端 settings 下发（api.lowStock()），
+   页面只标「仅剩 N 件」，不许自己写死 5。 */
+.gtag.low { background: rgba(217, 119, 6, .92); }
+.sstock { font-size: 22rpx; color: #6b7280; }
+.sstock.low { color: #d97706; font-weight: 600; }
+.sstock.out { color: #9ca3af; }
+

@@ -1,7 +1,10 @@
 /* =====================================================================
  * 价格规则服务（M2 规则与数据层）—— 纯逻辑模块，Node 可测、浏览器可载
  * 对应《开发计划》M2「价格规则」：
- *   - 配送费：自提免配送费；配送满 minFree 免、否则 deliveryFee（占位可配）
+ *   - 配送费：自提收 pickupFee；配送（含未知方式）满 minFree 免、否则 deliveryFee
+ *     第 27 轮起本文件是 Go 真源的**薄适配层**，口径逐条对齐服务端：
+ *       goods = round2(Σ price×qty) 先四舍五入再比门槛；minFree <= 0 表示不免运费；
+ *       未知配送方式按 delivery 处理（不再抛错）；未知顾客等级归 retail。
  *   - 比价防线：零售定价 ≤ 牵牛花参考价 × (1 - 5%)，防平台比价处罚；
  *     批发价不计入（excludeWholesale）
  * 说明：规则为纯函数 + 默认配置；后续 M4 后端化时可直接复用同一份逻辑。
@@ -18,13 +21,18 @@ const Pricing = (() => {
     excludeWholesale: true // 批发价不计入比价防线
   };
 
-  // 配送费：type=pickup|delivery；cfg 可覆盖任意项
+  // 配送方式归一：只有明确的 pickup 算自提，其余（含 undefined / 老字段）一律按 delivery。
+  // 与 Go 真源一致——未知配送方式不再抛错，否则老前端一个字段缺失就整页下不了单。
+  function normalizeDeliveryType(type) { return type === 'pickup' ? 'pickup' : 'delivery'; }
+
+  // 配送费：type=pickup|delivery|未知；cfg 可覆盖任意项。
+  //   goods 先 round2 再比门槛：29.99 → 3 元、29.995 → round2 后 30.00 → 免、30.00 → 0 元；
+  //   minFree <= 0 表示这家店不免运费（不是「随便买都免」）。
   function deliveryFee(type, subtotal, cfg) {
     const c = Object.assign({}, DEFAULT_CONFIG, cfg || {});
-    const s = Math.round((subtotal || 0) * 100) / 100;
-    if (type === 'pickup') return c.pickupFee;
-    if (type === 'delivery') return s >= c.minFree ? 0 : c.deliveryFee;
-    throw new Error('未知配送方式');
+    const goods = round2(subtotal);
+    if (normalizeDeliveryType(type) === 'pickup') return c.pickupFee;
+    return (c.minFree > 0 && goods >= c.minFree) ? 0 : c.deliveryFee;
   }
 
   // 比价防线检查：product = {salePrice, refPrice?, isWholesale?, priceMode?}
@@ -90,7 +98,7 @@ const Pricing = (() => {
   }
 
   return {
-    DEFAULT_CONFIG, deliveryFee, checkRetailPrice, pricingCheck,
+    DEFAULT_CONFIG, deliveryFee, normalizeDeliveryType, checkRetailPrice, pricingCheck,
     TIER_RETAIL, TIER_WHOLESALE, TIER_VIP,
     round2, validTier, normalizeTier, isWholesaleTier, tierLabel, effectivePrice
   };

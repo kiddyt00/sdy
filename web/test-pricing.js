@@ -17,7 +17,12 @@ ok(Pricing.deliveryFee('pickup', 199.99) === 0, '自提 199.99 免配送费');
 ok(Pricing.deliveryFee('delivery', 29.99) === 3, '配送 29.99 → 3 元');
 ok(Pricing.deliveryFee('delivery', 30) === 0, '配送 30 → 免');
 ok(Pricing.deliveryFee('delivery', 55.5) === 0, '配送 55.5 → 免');
-throws(() => Pricing.deliveryFee('xxx', 10), '未知配送方式抛错');
+// 第 27 轮口径：未知配送方式按 delivery（不再抛错）；先 round2 再比门槛
+ok(Pricing.deliveryFee('xxx', 10) === 3, '未知配送方式按 delivery 收费：3 元');
+ok(Pricing.deliveryFee(undefined, 10) === 3, '缺少配送方式也按 delivery');
+ok(Pricing.deliveryFee('delivery', 29.995) === 0, '先 round2 再比门槛：29.995 → 30.00 → 免');
+ok(Pricing.deliveryFee('delivery', 100, { minFree: 0 }) === 3, 'minFree<=0 = 不免运费（照收 3 元）');
+ok(Pricing.deliveryFee('delivery', 100, { minFree: 0, deliveryFee: 5 }) === 5, 'minFree<=0 且配送费 5 → 收 5 元');
 
 // ============ ② 配送费（自定义配置） ============
 section('② 配送费（可配：满 50 免 / 5 元 / 自提 2 元）');

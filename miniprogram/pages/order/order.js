@@ -1,6 +1,7 @@
 // 订单详情页（第 24 轮新增）
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
+const ui = require('../common/ui.js')
 
 Page({
   data: {
@@ -8,6 +9,8 @@ Page({
     o: null,
     loading: true,
     err: '',
+    notFoundText: '',
+    needIdentity: false,
     online: false,
     cartCount: 0
   },
@@ -31,22 +34,35 @@ Page({
   load() {
     const id = this.data.id
     if (!id) {
-      this.setData({ loading: false, err: '缺少订单号' })
+      this.setData({ loading: false, err: '', notFoundText: '缺少订单号' })
       return Promise.resolve(null)
     }
-    this.setData({ loading: true, err: '' })
+    // 第 27 轮 P0-8：订单详情接口要带身份（openid 或手机号）。
+    // 先在页面拦住并引导，不要让顾客看到后端那句「缺少身份」。
+    if (this.data.online && !ui.hasIdentity()) {
+      this.setData({ loading: false, err: '', notFoundText: '', needIdentity: true, o: null })
+      return Promise.resolve(null)
+    }
+    this.setData({ loading: true, err: '', notFoundText: '', needIdentity: false })
     return api.getOrder(id).then((o) => {
       if (!o) {
-        this.setData({ loading: false, o: null, err: '订单不存在' })
+        // 请求成功但查无此单 —— 这才是真正的「没找到」
+        this.setData({ loading: false, o: null, notFoundText: '没找到这笔订单' })
         return null
       }
-      this.setData({ loading: false, o: o })
+      this.setData({ loading: false, o: o, notFoundText: '' })
       wx.setNavigationBarTitle({ title: '订单 ' + o.id })
       return o
     }, (e) => {
-      this.setData({ loading: false, o: null, err: (e && e.message) || '订单加载失败' })
+      // 第 27 轮 P0-2：请求失败用人话文案 + 给「重新加载」，不冒充「订单不存在」
+      this.setData({ loading: false, o: null, notFoundText: '', err: ui.errText(e) })
       return null
     })
+  },
+
+  // 错误卡上的「重新加载」：真正重新发请求
+  reload() {
+    return this.load()
   },
 
   refresh() {
@@ -64,6 +80,11 @@ Page({
   advance(to) {
     const o = this.data.o
     if (!o) return Promise.resolve(null)
+    // 第 27 轮 P0-8：取消订单要带身份，没身份先在页面拦住
+    if (to === 'cancelled' && this.data.online && !ui.hasIdentity()) {
+      this.setData({ needIdentity: true })
+      return Promise.resolve(null)
+    }
     const title = to === 'cancelled' ? '取消这笔订单？' : '确认已经收到货了？'
     const content = to === 'cancelled' ? '取消后库存会回补，这件商品重新上架。' : '确认后这笔订单就完成了。'
     return new Promise((resolve) => {
@@ -83,7 +104,7 @@ Page({
         wx.showToast({ title: to === 'cancelled' ? '已取消' : '已完成', icon: 'success' })
         return this.load()
       }, (err) => {
-        wx.showToast({ title: (err && err.message) || '操作失败', icon: 'none' })
+        wx.showToast({ title: ui.errText(err) || '操作失败', icon: 'none' })
         return null
       })
     })

@@ -1,11 +1,13 @@
 // 收货地址簿（第 24 轮新增）：从购物车「从地址簿选」进来时带 pick=1，点一条即回填
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
+const ui = require('../common/ui.js')
 
 Page({
   data: {
     list: [],
     loading: true,
+    loadErr: '',
     pick: false,
     loggedIn: false,
     empty: false,
@@ -32,18 +34,24 @@ Page({
   },
 
   load() {
-    this.setData({ loading: true })
+    this.setData({ loading: true, loadErr: '' })
     return api.listAddresses().then((list) => {
-      this.setData({ list: list, loading: false, empty: list.length === 0 })
+      this.setData({ list: list, loading: false, empty: list.length === 0, loadErr: '' })
       return list
-    }, () => {
-      this.setData({ list: [], loading: false, empty: true })
+    }, (e) => {
+      // 第 27 轮 P0-2：失败 ≠ 「还没有收货地址」，给错误卡 + 「重新加载」
+      this.setData({ list: [], loading: false, empty: false, loadErr: ui.errText(e) })
       return []
     })
   },
 
   refresh() {
     return this.load()
+  },
+
+  // 错误卡上的「重新加载」：连身份和在线状态一起重新确认
+  reload() {
+    return this.onShow()
   },
 
   onPick(e) {
@@ -81,7 +89,7 @@ Page({
       wx.showToast({ title: '已设为默认', icon: 'success' })
       return this.load()
     }, (err) => {
-      wx.showToast({ title: (err && err.message) || '设置失败', icon: 'none' })
+      wx.showToast({ title: ui.errText(err) || '设置失败', icon: 'none' })
       return null
     })
   },
@@ -106,7 +114,7 @@ Page({
         wx.showToast({ title: '已删除', icon: 'success' })
         return this.load()
       }, (err) => {
-        wx.showToast({ title: (err && err.message) || '删除失败', icon: 'none' })
+        wx.showToast({ title: ui.errText(err) || '删除失败', icon: 'none' })
         return null
       })
     })

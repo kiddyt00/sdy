@@ -1,3 +1,5 @@
+@import "../../styles/state.wxss";
+
 /* 搜索页（第 24 轮） */
 .spage { padding: 0 24rpx 40rpx; }
 
@@ -55,3 +57,26 @@
   margin: 20rpx 0 16rpx;
 }
 .slist { margin-top: 8rpx; }
+
+/* 第 27 轮 P0-7：搜索页也放一个购物车入口，让加购后的件数在搜索页就能看见 */
+.scart {
+  position: relative;
+  padding: 6rpx 0 6rpx 18rpx;
+  display: flex;
+  align-items: center;
+}
+.scart-n {
+  position: absolute;
+  top: -6rpx;
+  right: -10rpx;
+  min-width: 30rpx;
+  height: 30rpx;
+  line-height: 30rpx;
+  text-align: center;
+  border-radius: 999rpx;
+  background: #16a34a;
+  color: #fff;
+  font-size: 20rpx;
+  padding: 0 6rpx;
+}
+

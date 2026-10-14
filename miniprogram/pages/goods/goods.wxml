@@ -2,7 +2,15 @@
 <view class="gpage">
   <van-skeleton wx:if="{{loading}}" title row="8" />
 
-  <van-empty wx:elif="{{err}}" description="{{err}}">
+  <!-- 第 27 轮 P0-2：请求失败给错误卡 + 「重新加载」，不冒充「已下架」 -->
+  <view class="errbox" wx:elif="{{err}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{err}}</view>
+    <view class="errsub">这件货还在，只是这会儿没连上店里系统</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
+  <van-empty wx:elif="{{notFound}}" description="{{notFound}}">
     <van-button round type="primary" size="small" bind:click="goHome">回首页看看</van-button>
   </van-empty>
 
@@ -32,8 +40,9 @@
         <text wx:if="{{p.spec}}">{{p.spec}}</text>
         <text>{{p.category}}</text>
       </view>
+      <!-- 第 27 轮 P0-9：低库存阈值来自服务端（页面 data.lowStock ← api.lowStock()），不写死 -->
       <view class="pstock {{p.stock <= 0 ? 'zero' : ''}}">
-        {{p.stock > 0 ? '现货 ' + p.stock + p.unit : '暂时缺货，补货后再来'}}
+        {{p.stock <= 0 ? '暂时缺货，补货后再来' : (p.stock <= lowStock ? '仅剩 ' + p.stock + p.unit : '现货 ' + p.stock + p.unit)}}
       </view>
     </view>
 

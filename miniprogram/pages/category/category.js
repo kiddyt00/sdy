@@ -1,6 +1,7 @@
 // 分类页（第 24 轮新增）：左侧分类栏 + 右侧商品列表
 const api = require('../../utils/api.js')
 const store = require('../../utils/store.js')
+const ui = require('../common/ui.js')
 
 Page({
   data: {
@@ -11,10 +12,24 @@ Page({
     loading: true,
     online: false,
     empty: false,
-    cartCount: 0
+    loadErr: '',
+    cartCount: 0,
+    // 第 27 轮 P0-9：低库存阈值由服务端 settings 下发（api.lowStock 兜底 5）
+    lowStock: 5
+  },
+
+  onLoad() {
+    // 第 27 轮 P0-2：分类页原来是个「角标漏同步」的入口——
+    // 在首页 / 详情页加购后切回来，这里的计数还是旧的。改成订阅 store 广播。
+    this._off = store.subscribe(() => this.syncCart())
+  },
+
+  onUnload() {
+    if (this._off) this._off()
   },
 
   onShow() {
+    this.setData({ lowStock: api.lowStock() })
     this.syncCart()
     return api.probe().then((st) => {
       this.setData({ online: !!st.online })
@@ -29,7 +44,7 @@ Page({
 
   // 商品只拉一次（全量在售），分类和筛选都在本地做：切分类不再打网络
   load() {
-    this.setData({ loading: true })
+    this.setData({ loading: true, loadErr: '' })
     return api.listProducts('', '').then((list) => {
       this._all = list || []
       return api.listCategories().catch(() => null).then((cs) => {
@@ -37,15 +52,21 @@ Page({
         let cat = this.data.cat
         if (!cats.some((c) => c.name === cat)) cat = cats.length ? cats[0].name : ''
         const idx = Math.max(0, cats.map((c) => c.name).indexOf(cat))
-        this.setData({ cats: cats, cat: cat, catIndex: idx })
+        this.setData({ cats: cats, cat: cat, catIndex: idx, loadErr: '' })
         this.applyProducts(cat)
         return cats
       })
-    }, () => {
+    }, (e) => {
+      // 第 27 轮 P0-1：失败 ≠ 「这个分类还没上架商品」，给错误卡 + 「重新加载」
       this._all = []
-      this.setData({ cats: [], cat: '', products: [], loading: false, empty: true })
+      this.setData({ cats: [], cat: '', products: [], loading: false, empty: false, loadErr: ui.errText(e) })
       return []
     })
+  },
+
+  // 错误卡上的「重新加载」：真正重新发请求
+  reload() {
+    return this.load()
   },
 
   // 分类接口不通时，按商品自身的 category 现场归类（口径与后端一致：空 → 未分类）
@@ -85,6 +106,12 @@ Page({
     if (!p) return null
     if (p.stock <= 0) {
       wx.showToast({ title: '这件暂时没货', icon: 'none' })
+      return null
+    }
+    // 第 27 轮 P0-6：数量上限 = 该商品库存
+    const have = store.cartStock(p.code)
+    if (have + 1 > p.stock) {
+      wx.showToast({ title: '最多只能买 ' + p.stock + (p.unit || '件'), icon: 'none' })
       return null
     }
     store.addToCart(p, 1)

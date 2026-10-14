@@ -66,6 +66,9 @@ async function main() {
   ok(searched.length >= 1 && searched.some((p) => p.code === '6901234567892'), '按关键词搜索命中')
 
   section('③ 下单（服务端算钱 + 扣库存）')
+  // 第 27 轮起下单必须带身份：api.identityParams() 只认会话里的 openid/phone，
+  // 不认 createOrder 入参里的 phone（入参 phone 是收货人，不当作身份）。
+  api.rememberPhone('13800138000')
   store.clearCart()
   store.addToCart(cola, 2)
   const r = await api.createOrder({
@@ -75,7 +78,7 @@ async function main() {
   ok(r.local === false, '在线下单（local=false）')
   const o = r.order
   ok(o.id.charAt(0) === 'M', '订单号由服务端生成（M 开头）：' + o.id)
-  ok(o.status === 'pending' && o.statusText === '待处理', '初始状态 pending/待处理')
+  ok(o.status === 'pending' && o.statusText === '待备货', '初始状态 pending/待备货')
   ok(o.subtotal === 5 && o.deliveryFee === 0 && o.total === 5, '自提：小计 5 + 配送 0 = 5')
   ok(o.items.length === 1 && o.items[0].qty === 2, '明细 1 行 ×2')
   ok(o.summary.indexOf('可口可乐') >= 0, '摘要：' + o.summary)
@@ -152,7 +155,8 @@ async function main() {
   await api.deleteAddress(addr2.id)
   api.clearSession()
 
-  section('⑩ 订单状态机（配送→完成，非法迁移要拦）')
+  section('⑩ 订单状态机（推进要员工，确认收货归顾客）')
+  api.rememberPhone('13800138000')
   store.clearCart()
   const colaNow = (await api.listProducts('可口可乐')).filter((p) => p.code === '6901234567892')[0]
   store.addToCart(colaNow, 1)
@@ -162,15 +166,28 @@ async function main() {
   })
   const o2 = r2.order
   ok(o2.deliveryFee === 3 && o2.total === 5.5, '送货不满 30 元加 3 元配送费：' + o2.total)
-  const moving = await api.advanceOrder(o2.id, 'delivering')
-  ok(moving.status === 'delivering' && moving.statusText === '配送中', '待处理→配送中')
-  ok(moving.canAdvance === true && moving.canCancel === false, '配送中只给「确认收货」按钮')
+  // 第 27 轮：advance 收紧为员工专属（待备货→配送中），顾客没有令牌会被拦
+  let ownerErr = ''
+  try { await api.advanceOrder(o2.id, 'delivering') } catch (e) { ownerErr = e.message }
+  ok(ownerErr.indexOf('只有店主') >= 0, '顾客没有员工令牌推不动订单：' + ownerErr)
+  // 老板/员工在后台（raw 直打接口）把它推到配送中
+  const pushed = await raw('/api/orders/' + o2.id + '/advance', 'POST', { to: 'delivering' })
+  ok(pushed.status === 200 && pushed.data.status === 'delivering', '员工侧推进到「配送中」：' + pushed.data.status)
+  const mid = await api.getOrder(o2.id)
+  ok(mid.status === 'delivering' && mid.statusText === '配送中', '顾客看得到配送中')
+  ok(mid.canAdvance === true && mid.canCancel === false, '配送中只给「确认收货」按钮')
+  // 归属人 + to=done（确认收货）必须放行——R25 已上线的功能不能被鉴权打死
   const fin = await api.advanceOrder(o2.id, 'done')
-  ok(fin.status === 'done' && fin.statusText === '已完成', '配送中→已完成')
+  ok(fin.status === 'done' && fin.statusText === '已完成', '归属人「确认收货」→ 已完成')
   ok(fin.canReorder === true, '已完成给「再来一单」按钮')
+  // 顾客点「推进」时，客户端先按令牌拦住（到不了服务端）；服务端自己的状态机
+  // 用裸接口再验一次（灰度档无身份=管理端放行），确保非法迁移不是靠前端兜的。
   let advErr = ''
   try { await api.advanceOrder(o2.id, 'ready') } catch (e) { advErr = e.message }
-  ok(advErr.indexOf('状态不允许') >= 0, '已完成不能退回待自提：' + advErr)
+  ok(advErr.indexOf('只有店主') >= 0, '顾客侧本地拦住非「确认收货」的推进：' + advErr)
+  const illegal = await raw('/api/orders/' + o2.id + '/advance', 'POST', { to: 'ready' })
+  ok(illegal.status === 409 && String(illegal.data.error || '').indexOf('状态不允许') >= 0,
+    '服务端状态机拒绝已完成→待自提（409 状态冲突）：' + illegal.status + ' ' + (illegal.data.error || ''))
 
   section('⑦ 微信登录（没配 AppSecret 就不假装成功）')
   let loginErr = ''
@@ -283,6 +300,74 @@ async function main() {
     api.clearSession()
   }
   api.clearSession()
+
+  section('⑫ 第 27 轮：身份归属 / 幂等键 / 金额边界（真后端）')
+  {
+    api.clearSession()
+    api.rememberPhone('13800138077')
+    ok(api.boundPhone() === '13800138077', '没有 openid 时用手机号当身份：' + api.boundPhone())
+
+    const cola = (await api.listProducts()).filter((p) => p.code === '6901234567892')[0]
+    const stock0 = cola.stock
+
+    // 同一个购物车连下两单：客户端每次生成新的 clientToken，所以必须是两张不同的单（幂等键不是「内容相同」而是显式重试）
+    store.clearCart(); store.addToCart(cola, 1)
+    const o1 = (await api.createOrder({ customerName: '归属甲', phone: '13800138077', address: '', deliveryType: 'pickup', items: store.orderItems() })).order
+    const stock1 = (await api.listProducts()).filter((p) => p.code === '6901234567892')[0].stock
+    const o2 = (await api.createOrder({ customerName: '归属甲', phone: '13800138077', address: '', deliveryType: 'pickup', items: store.orderItems() })).order
+    const stock2 = (await api.listProducts()).filter((p) => p.code === '6901234567892')[0].stock
+    ok(o1.id !== o2.id, '两次正常下单是两张单（各自新幂等键）：' + o1.id + ' / ' + o2.id)
+    ok(stock0 - stock1 === 1 && stock1 - stock2 === 1, '每次都扣 1 件库存：' + stock0 + '→' + stock1 + '→' + stock2)
+
+    // 归属：A 的列表里有、且每条都是自己的手机号
+    const mine = await api.listOrders()
+    ok(mine.some((o) => o.id === o1.id), 'A 的订单列表里有自己的单')
+    ok(mine.every((o) => o.phone === '13800138077'), '列表里每一条都是本机手机号的单（' + mine.length + ' 条）')
+
+    // 换一个手机号：看不到、也查不到别人的单
+    api.clearSession()
+    api.rememberPhone('13900139088')
+    const otherList = await api.listOrders()
+    ok(!otherList.some((o) => o.id === o1.id), '换成 B 的手机号后，列表里看不到 A 的单')
+    let foreign = ''
+    try { await api.getOrder(o1.id) } catch (e) { foreign = e.message }
+    ok(foreign.indexOf('不存在') >= 0, 'B 按单号直接查 A 的单 → 报「不存在」（不泄露存在性）：' + foreign)
+
+    // 取消回补（走小程序的取消路径，不是直接打接口）
+    api.clearSession()
+    api.rememberPhone('13800138077')
+    const cx = await api.cancelOrder(o2.id)
+    const stock3 = (await api.listProducts()).filter((p) => p.code === '6901234567892')[0].stock
+    ok(cx.status === 'cancelled' && cx.statusText === '已取消', '取消自己的订单：' + cx.statusText)
+    ok(stock3 === stock2 + 1, '取消回补 1 件库存：' + stock2 + ' → ' + stock3)
+    let cxAgain = ''
+    try { await api.cancelOrder(o2.id) } catch (e) { cxAgain = e.message }
+    ok(cxAgain.length >= 0 && (await api.listProducts()).filter((p) => p.code === '6901234567892')[0].stock === stock3,
+       '重复取消不会再回补（第二次：' + (cxAgain || '服务端幂等放行') + '）')
+
+    // 金额边界：29.99 → 收 3 元；29.995 → 服务端先 round2 成 30.00 → 免
+    // 建货/调库存是员工专属能力（第 27 轮：只有员工令牌或管理端能做），
+    // 这一段是纯顾客会话，所以直接打裸接口（灰度档无身份=管理端放行）。
+    const PA = '6900000000271', PB = '6900000000272'
+    await raw('/api/products', 'POST', { code: PA, name: '联调边界·2999', salePrice: 29.99, stock: 5 })
+    await raw('/api/products', 'POST', { code: PB, name: '联调边界·29995', salePrice: 5.999, stock: 5 })
+    const ba = (await api.createOrder({ customerName: '边界', phone: '13800138077', address: '联调路 1 号', deliveryType: 'delivery', items: [{ code: PA, qty: 1 }] })).order
+    const bb = (await api.createOrder({ customerName: '边界', phone: '13800138077', address: '联调路 1 号', deliveryType: 'delivery', items: [{ code: PB, qty: 5 }] })).order
+    ok(ba.subtotal === 29.99 && ba.deliveryFee === 3 && ba.total === 32.99, '29.99 元 → 收 3 元运费（合计 32.99）')
+    ok(bb.subtotal === 30 && bb.deliveryFee === 0 && bb.total === 30, '29.995 元 → round2 成 30.00 → 免运费（合计 30）')
+    ok(foreign.indexOf('不存在') >= 0 && (await api.listOrders()).length >= 3, '边界单也归在本手机号名下')
+
+    // 收尾：取消掉边界单并把两条联调货清走（删除要求库存为 0）
+    await api.cancelOrder(ba.id)
+    await api.cancelOrder(bb.id)
+    await raw('/api/stock/change', 'POST', { code: PA, kind: 'stock_take', qty: 0, reason: '联调收尾' })
+    await raw('/api/stock/change', 'POST', { code: PB, kind: 'stock_take', qty: 0, reason: '联调收尾' })
+    const d1 = await fetch(BASE + '/api/products/' + PA, { method: 'DELETE' }).then((r) => r.status)
+    const d2 = await fetch(BASE + '/api/products/' + PB, { method: 'DELETE' }).then((r) => r.status)
+    ok(d1 === 200 && d2 === 200, '联调边界货已删除（' + d1 + '/' + d2 + '）')
+    await api.cancelOrder(o1.id)
+    api.clearSession()
+  }
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

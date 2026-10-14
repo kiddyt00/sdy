@@ -50,7 +50,10 @@ ok(Mall.calcDeliveryFee('pickup', 99.99) === 0, '自提 99.99 免配送费');
 ok(Mall.calcDeliveryFee('delivery', 29.99) === 3, '配送 29.99 < 30 → 3 元');
 ok(Mall.calcDeliveryFee('delivery', 30) === 0, '配送 30 → 免');
 ok(Mall.calcDeliveryFee('delivery', 55.5) === 0, '配送 55.5 → 免');
-throws(() => Mall.calcDeliveryFee('xxx', 10), '未知配送方式抛错');
+// 第 27 轮口径：未知配送方式不再抛错，一律按 delivery 处理（与 pricing.js / Go 真源一致）
+ok(Mall.calcDeliveryFee('xxx', 10) === 3, '未知配送方式按 delivery 收费：3 元');
+ok(Mall.calcDeliveryFee(undefined, 10) === 3 && Mall.calcDeliveryFee('', 10) === 3, '未填/空配送方式也按 delivery');
+ok(Mall.calcDeliveryFee('delivery', 29.995) === 0, '先 round2 再比门槛：29.995 → 30.00 → 免');
 
 // ============ ③ 下单：校验 → 扣减 → 生成订单 ============
 section('③ 下单扣库存与校验');

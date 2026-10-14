@@ -1,5 +1,6 @@
 // 编辑 / 新增收货地址（第 24 轮新增）
 const api = require('../../utils/api.js')
+const ui = require('../common/ui.js')
 
 Page({
   data: {
@@ -11,7 +12,8 @@ Page({
     saving: false,
     loggedIn: true,
     loading: false,
-    err: ''
+    err: '',
+    loadErr: ''
   },
 
   onLoad(q) {
@@ -33,7 +35,7 @@ Page({
   },
 
   load() {
-    this.setData({ loading: true, err: '' })
+    this.setData({ loading: true, err: '', loadErr: '' })
     return api.listAddresses().then((list) => {
       const hit = (list || []).filter((a) => String(a.id) === String(this.data.id))[0]
       if (!hit) {
@@ -48,9 +50,15 @@ Page({
       })
       return hit
     }, (e) => {
-      this.setData({ loading: false, err: (e && e.message) || '加载失败' })
+      // 第 27 轮 P0-2：加载失败用人话 + 给「重新加载」，不冒充「地址不存在」
+      this.setData({ loading: false, err: '', loadErr: ui.errText(e) })
       return null
     })
+  },
+
+  // 错误卡上的「重新加载」：真正重新发请求
+  reload() {
+    return this.load()
   },
 
   onContact(e) {
@@ -104,7 +112,7 @@ Page({
       return r
     }, (err) => {
       this.setData({ saving: false })
-      wx.showToast({ title: (err && err.message) || '保存失败', icon: 'none' })
+      wx.showToast({ title: ui.errText(err) || '保存失败', icon: 'none' })
       return null
     })
   },

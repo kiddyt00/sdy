@@ -2,7 +2,23 @@
 <view class="dpage">
   <van-skeleton wx:if="{{loading}}" title row="5" />
 
-  <van-empty wx:elif="{{err}}" description="{{err}}">
+  <!-- 第 27 轮 P0-8：没身份先在页面拦住并引导，不往后端打 -->
+  <view class="errbox" wx:elif="{{needIdentity}}">
+    <view class="errico">🔑</view>
+    <view class="errmsg">先登录或填收货手机号，才能看这笔订单</view>
+    <view class="errsub">订单按手机号/微信归到你名下，没身份分不清是谁的</view>
+    <view class="errbtn" bindtap="reload">我已登录，重新加载</view>
+  </view>
+
+  <!-- 第 27 轮 P0-2：请求失败给错误卡 + 「重新加载」，不冒充「订单不存在」 -->
+  <view class="errbox" wx:elif="{{err}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{err}}</view>
+    <view class="errsub">这笔订单还在店里，只是这会儿没连上店里系统</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
+  <van-empty wx:elif="{{notFoundText}}" description="{{notFoundText}}">
     <van-button round type="primary" size="small" bind:click="goIndex">回首页</van-button>
   </van-empty>
 

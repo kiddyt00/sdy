@@ -1,3 +1,5 @@
+@import "../../styles/state.wxss";
+
 /* 地址簿列表（第 24 轮） */
 .apage { padding: 0 24rpx 160rpx; }
 

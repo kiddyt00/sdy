@@ -21,31 +21,65 @@ func DefaultConfig() Config {
 }
 
 // Normalize 补齐零值，避免漏配导致规则失效。
+// 注意：MinFree 刻意**不**在这里兜底。第 27 轮起 `MinFree <= 0` 是明确语义
+// ——「永不包邮」（门槛 0 元意味着任何金额都达不到，所以永远收配送费）。
+// 以前把 0 强制改回默认 30，导致老板在管理端配「0 元门槛」时服务端反而收钱，
+// 三端口径对不上。是否包邮只由 MinFree 一个值决定，缺省 30 由 DefaultConfig 给。
 func (c Config) Normalize() Config {
 	d := DefaultConfig()
 	if c.MaxRetailRatio <= 0 {
 		c.MaxRetailRatio = d.MaxRetailRatio
 	}
-	if c.MinFree <= 0 {
-		c.MinFree = d.MinFree
-	}
 	return c
 }
 
 // DeliveryFee 计算运费：自提取 PickupFee；配送满 MinFree 免运费，否则 DeliveryFee。
+// 比较前先把小计 round2，与前端 web/pricing.js、miniprogram/utils/rules.js 同口径——
+// 否则 29.995 这类边界会「页面显示免运费、服务端实收 3 元」（第 27 轮修的钱错）。
+// 未知配送方式按 delivery 处理（以前直接 400，前端传脏值时顾客端会白屏/静默 0 元）。
 func DeliveryFee(kind string, subtotal float64, cfg Config) (float64, error) {
 	cfg = cfg.Normalize()
+	if kind != "pickup" {
+		kind = "delivery"
+	}
+	s := Round2(subtotal)
 	switch kind {
 	case "pickup":
 		return cfg.PickupFee, nil
-	case "delivery":
-		if subtotal >= cfg.MinFree {
+	default:
+		// MinFree <= 0＝「不免运费」：注意不能写成 s >= cfg.MinFree——那样门槛 0 会让
+		// 任何金额都免运费，正好把语义搞反。必须显式要求门槛为正。
+		if cfg.MinFree > 0 && s >= cfg.MinFree {
 			return 0, nil
 		}
 		return cfg.DeliveryFee, nil
-	default:
-		return 0, fmt.Errorf("未知配送方式：%s", kind)
 	}
+}
+
+// 订单状态中文文案（第 27 轮收敛为服务端唯一真源）：前端不再各自硬编码一份，
+// 显示时读响应里的 statusText。这样改文案只改这一处。
+const (
+	StatusPending    = "pending"
+	StatusDelivering = "delivering"
+	StatusReady      = "ready"
+	StatusDone       = "done"
+	StatusCancelled  = "cancelled"
+)
+
+var statusLabels = map[string]string{
+	StatusPending:    "待备货",
+	StatusDelivering: "配送中",
+	StatusReady:      "待取货",
+	StatusDone:       "已完成",
+	StatusCancelled:  "已取消",
+}
+
+// StatusText 订单状态的中文文案；未知状态原样返回（不吞掉脏值，便于排查）。
+func StatusText(status string) string {
+	if s, ok := statusLabels[status]; ok {
+		return s
+	}
+	return status
 }
 
 // Result 比价检查结果。
@@ -66,7 +100,7 @@ func CheckRetailPrice(salePrice, refPrice float64, wholesale bool, cfg Config) R
 	if refPrice <= 0 {
 		return Result{OK: true, Skip: "no_ref"}
 	}
-	capPrice := round2(refPrice * cfg.MaxRetailRatio)
+	capPrice := Round2(refPrice * cfg.MaxRetailRatio)
 	if salePrice > capPrice {
 		return Result{
 			OK: false, Cap: capPrice,
@@ -91,12 +125,13 @@ func ValidTier(t string) bool {
 	return t == "" || t == TierRetail || t == TierWholesale || t == TierVIP
 }
 
-// NormalizeTier 把空串归一成零售，避免各处各写一遍判定。
+// NormalizeTier 把空串与**未知等级**都归一成零售，避免库里的脏值（如 'foo'）透出到
+// 响应里让前端 label 查不到文案。写路径 ValidTier 仍会拒绝非法值，这里兜的是读路径。
 func NormalizeTier(t string) string {
-	if t == "" {
-		return TierRetail
+	if t == TierWholesale || t == TierVIP {
+		return t
 	}
-	return t
+	return TierRetail
 }
 
 // IsWholesaleTier 非零售等级（批发 / 白名单）：取批发价，且不参与零售比价防线。
@@ -108,9 +143,25 @@ func IsWholesaleTier(t string) bool {
 // 服务端与前端调同一个函数语义（web/pricing.js 的 effectivePrice），保证页面显示与订单入库同价。
 func EffectivePrice(tier string, salePrice, wholesalePrice float64) float64 {
 	if IsWholesaleTier(tier) && wholesalePrice > 0 {
-		return round2(wholesalePrice)
+		return Round2(wholesalePrice)
 	}
-	return round2(salePrice)
+	return Round2(salePrice)
+}
+
+// Round2 取两位小数（与 JS Math.round(v*100)/100 同口径）。
+// 导出给 HTTP 层与 store 层共用，避免各处再抄一份取整实现（第 27 轮单一真源）。
+func Round2(v float64) float64 { return math.Floor(v*100+0.5) / 100 }
+
+// MinOrderGap 起送价差额：goods 未达 minOrder 时返回还差多少（已 round2），
+// 达标或 minOrder<=0（不限起送）时返回 0。返回 0 即「可以下单」。
+func MinOrderGap(goods, minOrder float64) float64 {
+	if minOrder <= 0 {
+		return 0
+	}
+	if goods >= minOrder {
+		return 0
+	}
+	return Round2(minOrder - goods)
 }
 
 // Item 参与巡检的商品。

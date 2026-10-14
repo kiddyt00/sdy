@@ -37,28 +37,64 @@ function getCart() {
   const list = sget(CART_KEY, [])
   return Array.isArray(list) ? list : []
 }
+// 购物车落盘 + 角标同步 + 通知订阅页面（第 27 轮 P0-1：唯一真源）
 function saveCart(list) {
   sset(CART_KEY, list)
   syncTabBadge()
+  emit()
   return list
 }
 
 // tabBar 购物车角标（0 件就摘掉角标）
+// 第 27 轮（P0-1）：角标是购物车的**唯一真源**，所有页面都通过 store 触发同步，
+// 不再各页各写一份。首帧可能早于 tabBar 就绪，失败重试两次再放弃。
 function syncTabBadge() {
   if (typeof wx === 'undefined' || !wx || typeof wx.setTabBarBadge !== 'function') return
   const n = cartCount()
-  try {
-    if (n > 0) wx.setTabBarBadge({ index: CART_TAB_INDEX, text: n > 99 ? '99+' : String(n) })
-    else wx.removeTabBarBadge({ index: CART_TAB_INDEX })
-  } catch (e) { /* 不在 tabBar 页面时可能失败，忽略 */ }
+  const text = n > 0 ? (n > 99 ? '99+' : String(n)) : ''
+  let left = 3
+  const push = () => {
+    try {
+      if (text) wx.setTabBarBadge({ index: CART_TAB_INDEX, text: text })
+      else wx.removeTabBarBadge({ index: CART_TAB_INDEX })
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+  const tick = () => {
+    if (push()) return
+    left -= 1
+    if (left > 0 && typeof setTimeout === 'function') setTimeout(tick, 60)
+  }
+  tick()
+}
+
+// 购物车变更订阅：页面只订阅「购物车变了」这件事，不再手写 syncCart 副本（第 27 轮 P0-1）
+const subscribers = []
+function subscribe(fn) {
+  if (typeof fn !== 'function') return function () {}
+  subscribers.push(fn)
+  return function () {
+    const i = subscribers.indexOf(fn)
+    if (i >= 0) subscribers.splice(i, 1)
+  }
+}
+function emit() {
+  subscribers.slice().forEach((fn) => {
+    try { fn() } catch (e) { /* 单个页面出错不影响其它页面 */ }
+  })
 }
 
 function addToCart(p, qty) {
   const n = num(qty) || 1
   const list = getCart()
+  const stock = num(p.stock)
   const hit = list.filter((it) => it.code === p.code)[0]
   if (hit) {
     hit.qty = num(hit.qty) + n
+    // 库存以最新一次加购拿到的为准（第 27 轮：购物车数量上限 = 该商品库存）
+    hit.stock = stock
     if (hit.checked === undefined) hit.checked = true
   } else {
     list.push({
@@ -70,11 +106,18 @@ function addToCart(p, qty) {
       img: p.img || '',
       price: num(p.salePrice !== undefined ? p.salePrice : p.price),
       qty: n,
+      stock: stock,
       checked: true
     })
   }
   saveCart(list)
   return list
+}
+
+// 该商品在购物车里的库存上限（缺失时返回 0 = 未知，页面据此不限制）
+function cartStock(code) {
+  const hit = getCart().filter((it) => it.code === code)[0]
+  return hit ? num(hit.stock) : 0
 }
 
 function setQty(code, qty) {
@@ -97,6 +140,18 @@ function setPrice(code, price) {
   hit.price = num(price)
   return saveCart(list)
 }
+
+// 刷新一条购物车明细的服务端状态（第 27 轮：失效商品分组用）
+// stock = 服务端库存；valid=false 表示已下架/已删除/库存为 0，结算时必须排除
+function setLineMeta(code, meta) {
+  const list = getCart()
+  const hit = list.filter((it) => it.code === code)[0]
+  if (!hit) return list
+  const m = meta || {}
+  if (m.stock !== undefined) hit.stock = num(m.stock)
+  if (m.valid !== undefined) hit.valid = !!m.valid
+  return saveCart(list)
+}
 function clearCart() {
   return saveCart([])
 }
@@ -109,8 +164,12 @@ function cartCount() {
 function isChecked(it) {
   return it.checked === undefined ? true : !!it.checked
 }
+// 第 27 轮：已下架 / 已删除 / 库存为 0 的行不参与结算与合计（页面单独分组展示）
+function isValid(it) {
+  return it.valid !== false
+}
 function checkedItems() {
-  return getCart().filter(isChecked)
+  return getCart().filter((it) => isValid(it) && isChecked(it))
 }
 function setChecked(code, v) {
   const list = getCart()
@@ -119,15 +178,24 @@ function setChecked(code, v) {
   hit.checked = !!v
   return saveCart(list)
 }
+function setCheckedCodes(codes, v) {
+  const set = {}
+  ;(codes || []).forEach((c) => { set[c] = 1 })
+  const list = getCart().map((it) => {
+    if (set[it.code]) it.checked = !!v
+    return it
+  })
+  return saveCart(list)
+}
 function setAllChecked(v) {
   const list = getCart().map((it) => {
-    it.checked = !!v
+    if (isValid(it)) it.checked = !!v
     return it
   })
   return saveCart(list)
 }
 function allChecked() {
-  const list = getCart()
+  const list = getCart().filter(isValid)
   return list.length > 0 && list.every(isChecked)
 }
 // 合计只算勾选项（下单也只提交勾选项）
@@ -194,18 +262,23 @@ module.exports = {
   addToCart: addToCart,
   setQty: setQty,
   setPrice: setPrice,
+  setLineMeta: setLineMeta,
   removeFromCart: removeFromCart,
   clearCart: clearCart,
   cartCount: cartCount,
+  cartStock: cartStock,
   cartAmount: cartAmount,
   cartCheckedCount: cartCheckedCount,
   isChecked: isChecked,
+  isValid: isValid,
   setChecked: setChecked,
+  setCheckedCodes: setCheckedCodes,
   setAllChecked: setAllChecked,
   allChecked: allChecked,
   checkedLines: checkedLines,
   orderItems: orderItems,
   syncTabBadge: syncTabBadge,
+  subscribe: subscribe,
   setBuyNow: setBuyNow,
   takeBuyNow: takeBuyNow,
   setPickedAddress: setPickedAddress,

@@ -47,12 +47,16 @@ const SERVER_ORDERS = [
 ];
 
 function serverRoutes(extra) {
-  return [
+  // 自定义路由放在最前：mkFetch 取第一个匹配，通用兜底只负责「没被覆盖的部分」。
+  return (extra || []).concat([
     { method: 'GET', path: '/healthz', body: { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true } },
+    // 运营参数（第 27 轮起 sync 会拉一次）：服务端是真源，页面的本地默认值只兜底
+    { method: 'GET', re: /^\/api\/settings(\?|$)/, body: { name: '家庭超市', phone: '', address: '', footer: '', lowStock: 5, minOrder: 0, deliveryFee: 3, minFree: 30 } },
     // 商品：带 ?phone= 时服务端会按顾客等级算好 price（D24），这里统一用正则匹配
     { method: 'GET', re: /^\/api\/products(\?|$)/, body: { items: SERVER_PRODUCTS, total: 2, tier: 'retail' } },
-    { method: 'GET', path: '/api/orders', body: { items: SERVER_ORDERS, total: 1 } }
-  ].concat(extra || []);
+    // 订单：第 27 轮起顾客必须带 ?phone=，服务端只回他自己的单
+    { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: SERVER_ORDERS, total: 1 } }
+  ]);
 }
 
 function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalog(); }
@@ -82,6 +86,8 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
   section('② 探测成功 → 用后端数据覆盖本地镜像');
   fresh();
   {
+    // 第 27 轮身份收敛：顾客页没有手机号就不会去问订单接口，这一节要订单镜像，先记住手机号。
+    Mall.setMyPhone('13800000000');
     const f = mkFetch(serverRoutes());
     const st = await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
     ok(st.online === true && st.mode === 'server', 'mode=server');
@@ -110,16 +116,22 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     const f = mkFetch([
       { method: 'GET', path: '/healthz', body: { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true } },
       { method: 'GET', re: /^\/api\/products(\?|$)/, body: { items: SERVER_PRODUCTS, total: 2, tier: 'retail' } },
-      { method: 'GET', path: '/api/orders', body: () => ({ items: orders, total: orders.length }) },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: () => ({ items: orders, total: orders.length }) },
       { method: 'POST', path: '/api/orders', status: 201, body: (c) => {
           const o = { id: 'M999', customerName: c.body.customerName, phone: c.body.phone, address: c.body.address || '', deliveryType: c.body.deliveryType, subtotal: 4.3, deliveryFee: 3, total: 7.3, status: 'pending', items: [{ code: '6901234567892', name: '可口可乐', price: 2.5, qty: 1 }, { code: '6902083881234', name: '农夫山泉', price: 1.8, qty: 1 }], createdAt: '2026-10-10T09:00:00Z' };
           orders = [o].concat(orders);
           return o;
         } },
-      { method: 'POST', re: /^\/api\/orders\/[^/]+\/advance$/, body: (c) => {
+      { method: 'POST', re: /^\/api\/orders\/[^/]+\/advance(\?|$)/, body: (c) => {
           const id = c.path.split('/')[3];
           const to = c.body.to;
           orders = orders.map(o => o.id === id ? Object.assign({}, o, { status: to }) : o);
+          return orders.find(o => o.id === id) || {};
+        } },
+      // 第 27 轮：取消走独立端点（服务端按归属校验 + 事务内回补库存 + 写回补流水）
+      { method: 'POST', re: /^\/api\/orders\/[^/]+\/cancel(\?|$)/, body: (c) => {
+          const id = c.path.split('/')[3];
+          orders = orders.map(o => o.id === id ? Object.assign({}, o, { status: 'cancelled' }) : o);
           return orders.find(o => o.id === id) || {};
         } },
       { method: 'POST', path: '/api/products/stock', body: { code: '6901234567892', stock: 90 } },
@@ -136,18 +148,22 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     ok(!!post, '下单请求已发出');
     ok(post.body.customerName === '王五' && post.body.phone === '137' && post.body.deliveryType === 'delivery', '请求体字段名与后端一致（customerName/phone/deliveryType）');
     ok(post.body.items.length === 2 && post.body.items[0].code === '6901234567892' && post.body.items[0].qty === 1, 'items 只传 code/qty（价格由服务端定）');
+    ok(typeof post.body.clientToken === 'string' && post.body.clientToken.length > 8, '下单带幂等键 clientToken（超时重试不会重复落单）');
     ok(o.id === 'M999' && o.total === 7.3, '返回后端订单（含运费 3 元）');
     ok(Mall.cartSummary().count === 0, '下单后购物车清空');
     ok(Mall.getOrders().some(x => x.id === 'M999'), '镜像里能查到新订单');
 
     await SdyApi.advanceOrder('M999', 'delivering');
-    const adv = f.calls.find(c => c.method === 'POST' && /advance$/.test(c.path));
+    const adv = f.calls.find(c => c.method === 'POST' && /advance/.test(c.path));
     ok(adv && adv.body.to === 'delivering', '状态流转 POST /advance {to}');
+    ok(adv && /\?phone=137/.test(adv.path), 'advance 带归属手机号（服务端才能判断这单是不是我的）');
 
-    const cancelCalls0 = f.calls.filter(c => c.method === 'POST' && /advance$/.test(c.path)).length;
+    const cancelCalls = f.calls.filter(c => c.method === 'POST' && /cancel/.test(c.path));
     await SdyApi.cancelOrder('M999');
-    const cancelCalls = f.calls.filter(c => c.method === 'POST' && /advance$/.test(c.path));
-    ok(cancelCalls.length === cancelCalls0 + 1 && cancelCalls[cancelCalls.length - 1].body.to === 'cancelled', '取消订单 = 流转到 cancelled（服务端负责回补库存）');
+    const cancelCalls2 = f.calls.filter(c => c.method === 'POST' && /cancel/.test(c.path));
+    ok(cancelCalls2.length === cancelCalls.length + 1, '取消订单打的是独立端点 /cancel（不再借道 advance）');
+    ok(/^\/api\/orders\/M999\/cancel\?phone=137$/.test(cancelCalls2[cancelCalls2.length - 1].path), '取消请求 = POST /api/orders/{id}/cancel?phone=（服务端负责回补库存与流水）');
+    ok(cancelCalls2[cancelCalls2.length - 1].body.to === 'cancelled', '取消请求体仍是 {to:"cancelled"}（兼容服务端状态机）');
 
     await SdyApi.setStock('6901234567892', 90);
     const stk = f.calls.find(c => c.path === '/api/products/stock');
@@ -229,40 +245,47 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     ok(msg === '收货人不能为空', '离线：本地校验文案与后端一致（' + msg + '）');
   }
   {
+    // 第 27 轮：地址簿有钥匙（key）——只凭手机号就能读写别人的收货地址是越权，
+    // 服务端首次发一把钥匙，客户端存本机（sdy_addr_key）并在后续读写时带上。
+    const ADDR_KEY = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
     const f = mkFetch(serverRoutes([
-      { method: 'GET', path: '/api/addresses?phone=13800000001', body: { total: 1, items: [
+      { method: 'GET', re: /^\/api\/addresses(\?|$)/, body: { total: 1, key: ADDR_KEY, items: [
         { id: 11, phone: '13800000001', contact: '王阿姨', address: '幸福路1号 3单元 501', isDefault: true, createdAt: '2026-10-11T02:00:00Z', updatedAt: '2026-10-11T02:00:00Z' }
       ] } },
-      { method: 'POST', path: '/api/addresses', body: function (c) {
-        return { id: 12, phone: c.body.phone, contact: c.body.contact, address: c.body.address, isDefault: false, createdAt: '2026-10-11T03:00:00Z', updatedAt: '2026-10-11T03:00:00Z' };
+      { method: 'POST', re: /^\/api\/addresses(\?|$)/, body: function (c) {
+        return { id: 12, key: ADDR_KEY, phone: c.body.phone, contact: c.body.contact, address: c.body.address, isDefault: false, createdAt: '2026-10-11T03:00:00Z', updatedAt: '2026-10-11T03:00:00Z' };
       } },
-      { method: 'DELETE', path: '/api/addresses/11?phone=13800000001', body: { ok: true, id: 11 } }
+      { method: 'DELETE', re: /^\/api\/addresses\/11(\?|$)/, body: { ok: true, id: 11 } }
     ]));
     await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
     const items = await SdyApi.listAddresses('13800000001');
     ok(items.length === 1 && items[0].isDefault === true, '在线：GET /api/addresses 取后端地址');
     ok(Mall.listAddresses('13800000001')[0].contact === '王阿姨', '在线：整册镜像回本地（离线仍能一键带出）');
     ok(Mall.listAddresses('13800000001')[0].phone === '13800000001', '在线：镜像条目回填 phone');
+    const gets0 = f.calls.filter(c => c.method === 'GET' && /^\/api\/addresses/.test(c.path));
+    ok(gets0.length === 1 && !/key=/.test(gets0[0].path), '首次按手机号取册子不带钥匙（服务端此时才发钥匙）');
     const saved = await SdyApi.saveAddress({ phone: '13800000001', contact: '王叔叔', address: '幸福路2号 1单元 101' });
     ok(saved && saved.id === 12, '在线：POST /api/addresses 透出后端返回');
-    const post = f.calls.filter(c => c.method === 'POST' && c.path === '/api/addresses')[0];
+    const post = f.calls.filter(c => c.method === 'POST' && /^\/api\/addresses/.test(c.path))[0];
     ok(!!post && post.body.id === 0 && post.body.isDefault === false, '在线：POST body 只送 id/phone/contact/address/isDefault');
     ok(!!post && post.body.phone === '13800000001' && post.body.address === '幸福路2号 1单元 101', '在线：POST body 带手机号与地址');
-    const gets = f.calls.filter(c => c.path === '/api/addresses?phone=13800000001');
+    ok(!!post && post.path.indexOf('?key=' + ADDR_KEY) === '/api/addresses'.length, '在线：拿到钥匙后写入带上 ?key=（没有钥匙就动不了别人的地址簿）');
+    const gets = f.calls.filter(c => c.method === 'GET' && /^\/api\/addresses/.test(c.path));
     ok(gets.length === 2, '在线：写成功后自动重拉一次镜像');
+    ok(/[?&]key=/.test(gets[1].path), '在线：重拉镜像也带上钥匙（&key=）');
     await SdyApi.deleteAddress('13800000001', 11);
     const del = f.calls.filter(c => c.method === 'DELETE')[0];
-    ok(!!del && del.path === '/api/addresses/11?phone=13800000001', '在线：DELETE /api/addresses/{id}?phone=');
+    ok(!!del && del.path === '/api/addresses/11?phone=13800000001&key=' + ADDR_KEY, '在线：DELETE /api/addresses/{id}?phone=&key=');
   }
   {
     const f = mkFetch(serverRoutes([
-      { method: 'POST', path: '/api/addresses', status: 400, body: { error: '送货地址不能为空' } }
+      { method: 'POST', re: /^\/api\/addresses(\?|$)/, status: 400, body: { error: '送货地址不能为空' } }
     ]));
     await SdyApi.boot({ base: 'http://127.0.0.1:8093', fetchImpl: f, mall: Mall, timeoutMs: 50 });
     let msg = '';
     try { await SdyApi.saveAddress({ phone: '13800000001', contact: '甲', address: '乙' }); } catch (e) { msg = e.message; }
     ok(msg.indexOf('送货地址不能为空') >= 0, '在线：后端 400 原文透出（' + msg + '）');
-    ok(f.calls.filter(c => c.path === '/api/addresses?phone=13800000001').length === 0, '在线：写入失败不再重拉镜像');
+    ok(f.calls.filter(c => c.method === 'GET' && /^\/api\/addresses/.test(c.path)).length === 0, '在线：写入失败不再重拉镜像');
   }
   /* ============ ⑦ 批量上下架（D23） ============ */
   section('⑦ 批量上下架 setOnSale（任务池⑥ / D23）');
@@ -291,7 +314,7 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     const f = mkFetch([
       { method: 'GET', path: '/healthz', body: { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true } },
       { method: 'GET', path: '/api/products', body: () => ({ items: items, total: items.length }) },
-      { method: 'GET', path: '/api/orders', body: { items: [], total: 0 } },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: [], total: 0 } },
       { method: 'POST', path: '/api/products/onsale', body: (c) => {
           const hit = p => c.body.codes.indexOf(p.code) >= 0;
           const changed = items.filter(p => hit(p) && p.onSale !== c.body.onSale).map(p => p.code);
@@ -366,7 +389,7 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
           }));
           return { items: list, total: list.length, tier: whole ? 'wholesale' : 'retail' };
         } },
-      { method: 'GET', path: '/api/orders', body: { items: [], total: 0 } },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: [], total: 0 } },
       { method: 'GET', path: '/api/customers', body: { total: 1, items: [
         { phone: '13800001111', name: '王老板', tier: 'wholesale', tags: '', note: '' }
       ] } },
@@ -478,6 +501,104 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     const np = f.calls.filter(c => c.method === 'POST' && c.path === '/api/customers/note')[0];
     ok(!!np && np.body.tags === '熟客' && np.body.note === '常买整箱水', 'POST /api/customers/note 请求体正确');
     ok(cn && cn.tags === '熟客' && cn.tier === 'retail', '透出后端保存的顾客档案（等级不受影响）');
+  }
+
+  section('■ 第 27 轮 P0-4：连上后端后空商品库绝不重播种');
+  {
+    // 在线 + 空库：必须如实返回 0 件。以前 setServerConnected 只有定义没有调用点，
+    // Mall 永远以为「没连上后端」，于是空库会被 6 条演示商品顶上（顾客照着假货下单）。
+    Mall._resetForTest();
+    global.fetch = mkFetch([{ method: 'GET', path: '/healthz', body: { ok: true } }]);
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', mall: Mall });
+    await SdyApi.probe();
+    ok(SdyApi.on() === true, '探测成功 → 在线模式');
+    ok(Mall.isServerConnected() === true, 'probe 会把「已连上后端」告诉 Mall（这道闸门以前从没合上）');
+    ok(Mall.loadCatalog().length === 0, '连上后端且店里一件商品都没有 → 如实 0 件，不拿演示商品顶替');
+
+    // 离线：仍然允许本地演示商品（门店断网时 Web 商城还能演示）
+    Mall._resetForTest();
+    global.fetch = mkFetch([{ method: 'GET', path: '/healthz', throw: 'Failed to fetch' }]);
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', mall: Mall });
+    await SdyApi.probe();
+    ok(SdyApi.on() === false, '探测失败 → 离线降级');
+    ok(Mall.isServerConnected() === false, '离线时把闸门交回 Mall');
+    ok(Mall.loadCatalog().length === 6, '从没连上过后端 → 6 条本地演示商品兜底（离线可用）');
+  }
+
+  section('■ 第 27 轮：同步契约（服务端运营参数 + 订单按身份过滤）');
+  {
+    // ① sync 要把服务端下发的配送费/门槛/低库存阈值应用到本地规则（否则页面按旧默认值算钱）。
+    //    用与本地默认不同的值，才能证明「确实是服务端说了算」。
+    Mall._resetForTest();
+    // 注意：自定义 /api/settings 路由必须排在 serverRoutes 之前（mkFetch 取第一个匹配），
+    // 否则通用路由先命中，测的还是默认值。
+    const f = mkFetch([
+      { method: 'GET', re: /^\/api\/settings(\?|$)/, body: { name: '啥都有快送', phone: '', address: '', footer: '', lowStock: 7, minOrder: 8, deliveryFee: 4.5, minFree: 39 } },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: [], total: 0 } }
+    ].concat(serverRoutes()));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', mall: Mall });
+    global.fetch = f;
+    await SdyApi.probe();
+    SdyApi.setMyPhone('13800138000');
+    await SdyApi.sync();
+    ok(Mall.lowStock() === 7, 'sync 应用服务端 lowStock（不是前端写死的 5）');
+    ok(Mall.minOrder() === 8, 'sync 应用服务端 minOrder（起送价）');
+    ok(Mall.calcDeliveryFee('delivery', 10) === 4.5, 'sync 应用端 deliveryFee（10 元不满 39 → 4.5 元）');
+    ok(Mall.calcDeliveryFee('delivery', 39) === 0, 'sync 应用服务端 minFree（满 39 免运费）');
+    const oGet = f.calls.filter(c => c.method === 'GET' && /^\/api\/orders/.test(c.path))[0];
+    ok(!!oGet && oGet.path === '/api/orders?phone=13800138000', 'sync 拉订单必须带手机号（服务端据此只回我的单）');
+
+    // ② 没有身份时服务端 400「缺少身份」：这不是错误，是「本来就看不到订单」，
+    //     sync 必须安静地把订单镜像清空并给出 needIdentity，而不是把页面炸成错误态。
+    const f2 = mkFetch([
+      { method: 'GET', path: '/healthz', body: { ok: true } },
+      { method: 'GET', re: /^\/api\/products(\?|$)/, body: { items: SERVER_PRODUCTS, total: 2, tier: 'retail' } },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, status: 400, body: { error: '缺少身份：顾客请带 openid/phone，员工请带 X-Staff-Token' } }
+    ]);
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', mall: Mall });
+    global.fetch = f2;
+    await SdyApi.probe();
+    let threw = '';
+    let res = null;
+    try { res = await SdyApi.sync(''); } catch (e) { threw = e.message || String(e); }
+    ok(threw === '', '缺身份不是错误：sync 不抛（' + (threw || '没抛') + '）');
+    ok(!!res && res.needIdentity === true, 'sync 返回 needIdentity=true 供页面给引导文案');
+    ok(Mall.getOrders().length === 0, '缺身份时订单镜像清空（不残留上次登录的旧单）');
+    ok(f2.calls.filter(c => /^\/api\/orders/.test(c.path)).length === 0,
+      '顾客页没有手机号时干脆不问订单接口（灰度模式下问了会被服务端当管理员，回全店订单）');
+
+    // ②b 管理端（all:true）照旧拉全店订单：这条保护不能误伤老板的后台。
+    const f2b = mkFetch([
+      { method: 'GET', path: '/healthz', body: { ok: true } },
+      { method: 'GET', re: /^\/api\/products(\?|$)/, body: { items: SERVER_PRODUCTS, total: 2, tier: 'retail' } },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: SERVER_ORDERS, total: 1 } }
+    ]);
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', mall: Mall });
+    global.fetch = f2b;
+    await SdyApi.probe();
+    const resAll = await SdyApi.sync(null, { all: true });
+    const oAll = f2b.calls.filter(c => /^\/api\/orders/.test(c.path))[0];
+    ok(!!oAll && oAll.path === '/api/orders' && !!resAll && resAll.orders.length === SERVER_ORDERS.length,
+      '管理端 sync(null,{all:true}) 仍然拉全店订单');
+
+    // ③ 真异常（断网 / 500）仍然要抛出来给页面显示错误态，别吞掉。
+    const f3 = mkFetch([
+      { method: 'GET', path: '/healthz', body: { ok: true } },
+      { method: 'GET', re: /^\/api\/products(\?|$)/, body: { items: SERVER_PRODUCTS, total: 2, tier: 'retail' } },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, status: 500, body: { error: '数据库开小差了' } }
+    ]);
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', mall: Mall });
+    global.fetch = f3;
+    await SdyApi.probe();
+    let msg3 = '';
+    try { await SdyApi.sync('13800138000'); } catch (e) { msg3 = e.message || String(e); }
+    ok(msg3.indexOf('数据库开小差了') >= 0, '真错误照抛（页面要能显示错误态）：' + msg3);
   }
 
   console.log('\n========================================');

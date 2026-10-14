@@ -18,12 +18,33 @@
 const SdyApi = (() => {
 
   const LS_BASE_KEY = 'sdy_api_base';
-  const DEFAULTS = { timeoutMs: 2000, base: '', fetchImpl: null, mall: null, admin: null };
+  const LS_ADDR_KEY = 'sdy_addr_key';   // 地址簿身份钥匙：首次保存地址时服务端下发 32 位 hex，存本地
+  const DEFAULTS = { timeoutMs: 5000, base: '', fetchImpl: null, mall: null, admin: null };
 
   let cfg = Object.assign({}, DEFAULTS);
-  let mode_ = 'local';          // 'server' | 'local'
+  let mode_ = 'local';      // 'server' | 'local'
+  let ordersAll = false;    // 订单镜像口径：false=只拉自己的（顾客页）/ true=全店（管理后台）
   let lastError = '';
   let health_ = null;
+
+  // Node 测试没有 localStorage：key/镜像这类小数据用内存兜底（与 mall.js 同法）
+  const mem = {};
+  function lsGet(k) {
+    if (typeof localStorage !== 'undefined') { try { const v = localStorage.getItem(k); if (v != null) return v; } catch (e) { /* 忽略 */ } }
+    return (k in mem) ? mem[k] : null;
+  }
+  function lsSet(k, v) {
+    const s = String(v);
+    mem[k] = s;
+    if (typeof localStorage !== 'undefined') { try { localStorage.setItem(k, s); } catch (e) { /* 忽略 */ } }
+  }
+  function lsDel(k) {
+    delete mem[k];
+    if (typeof localStorage !== 'undefined') { try { localStorage.removeItem(k); } catch (e) { /* 忽略 */ } }
+  }
+  // 地址簿钥匙（第 27 轮契约）：没有钥匙就当成「还没存过地址」，不发请求、不报错。
+  function addrKey() { return lsGet(LS_ADDR_KEY) || ''; }
+  function setAddrKey(k) { if (k) lsSet(LS_ADDR_KEY, k); return addrKey(); }
 
   // ---------------- 依赖注入（Node 测试用） ----------------
   function configure(opts) {
@@ -42,6 +63,15 @@ const SdyApi = (() => {
     const m = resolveMall();
     if (!m) throw new Error('SdyApi 找不到 Mall 模块（请先引入 mall.js）');
     return m;
+  }
+  // 第 27 轮 P0-4：把「连没连上后端」同步给 Mall。
+  // Mall.loadCatalog 只在「从没连上过后端」时才允许用本地演示商品顶替；
+  // 之前 setServerConnected 只有定义、没有任何调用点，等于这道闸门从没合上过。
+  function notifyMallMode() {
+    try {
+      const m = resolveMall();
+      if (m && typeof m.setServerConnected === 'function') m.setServerConnected(mode_ === 'server');
+    } catch (e) { /* 测试环境下没有 Mall 时忽略 */ }
   }
   // resolveAdmin：库存流水的本地镜像由管理端模块负责（Node 测试可用 cfg.admin 注入桩）。
   function resolveAdmin() {
@@ -73,6 +103,15 @@ const SdyApi = (() => {
   }
   function url(path) { return base() + path; }
 
+  // 请求头：管理端（ordersAll=true）额外声明 X-Admin: 1（服务端 identity.go adminMarked）。
+  // 这一条不是安全边界，Cookie 才是；它只用来把管理后台和顾客页在同一个浏览器里分开。
+  function reqHeaders(body) {
+    const h = {};
+    if (body != null) h['Content-Type'] = 'application/json';
+    if (ordersAll) h['X-Admin'] = '1';
+    return (h['Content-Type'] || h['X-Admin']) ? h : undefined;
+  }
+
   // ---------------- HTTP ----------------
   async function req(method, path, body) {
     const f = fetchImpl();
@@ -83,12 +122,18 @@ const SdyApi = (() => {
     try {
       res = await f(url(path), {
         method: method,
-        headers: body == null ? undefined : { 'Content-Type': 'application/json' },
+        // 第 27 轮管理端鉴权通道：管理后台靠 Cookie 认人（sdy_admin），同源部署下必须带上它。
+        credentials: 'same-origin',
+        // 管理后台要显式声明身份（第 27 轮 identity.go adminMarked）：管理员 Cookie 与顾客页
+        // 共用同一个浏览器，服务端不能「带了 Cookie 就当管理员」，否则老板逛顾客页会看到全店订单。
+        headers: reqHeaders(body),
         body: body == null ? undefined : JSON.stringify(body),
         signal: ctrl ? ctrl.signal : undefined
       });
     } catch (e) {
-      throw new Error('无法连接后端（' + (base() || '同源') + '）：' + (e && e.message ? e.message : e));
+      // 人话在前、技术原因在后：顾客只看懂前半句，排查的人看后半句
+      const why = (e && e.name === 'AbortError') ? '请求超时' : ((e && e.message) ? e.message : String(e));
+      throw new Error('无法连接后端（' + (base() || '同源') + '）：连不上店里，请检查网络后重试 [技术原因：' + why + ']');
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -114,6 +159,7 @@ const SdyApi = (() => {
       mode_ = 'local';
       lastError = e && e.message ? e.message : String(e);
     }
+    notifyMallMode();
     return health_;
   }
 
@@ -122,7 +168,7 @@ const SdyApi = (() => {
     if (opts) configure(opts);
     await probe();
     if (mode_ === 'server') {
-      try { await sync(); } catch (e) { lastError = e.message; }
+      try { await sync(null, opts); } catch (e) { lastError = e.message; }
     }
     return status();
   }
@@ -199,18 +245,50 @@ const SdyApi = (() => {
 
   // ---------------- 镜像：后端 → localStorage（页面原有渲染无需改动） ----------------
   // phone 缺省时用本地记住的「我的手机号」——带上它，服务端才会按顾客等级下发有效价（D24）。
-  async function sync(phone) {
+  //
+  // opts.all=true 表示「这是管理后台，我就是要全店订单」。**顾客页面绝不能传它**：
+  // 第 27 轮身份收敛后，服务端只在完全没有身份时才把请求当管理员放行（灰度默认），
+  // 顾客页若不带手机号去要订单列表，就会在灰度模式下拿回全店订单（含别人姓名地址）。
+  async function sync(phone, opts) {
     if (mode_ !== 'server') return null;
+    // 订单可见范围只在显式传 opts 时改变：传过一次 {all:true}（管理后台）之后，内部
+    // 那些「写操作后顺手刷镜像」的 sync() 也沿用 all，免得后台改完商品就把订单清空。
+    if (opts && typeof opts.all === 'boolean') ordersAll = opts.all;
+    const all = ordersAll;
     const m = M();
-    const p = (phone == null) ? (m.getMyPhone ? m.getMyPhone() : '') : String(phone || '').trim();
-    const pr = await req('GET', '/api/products' + (p ? '?phone=' + encodeURIComponent(p) : ''));
+    const raw = (phone == null) ? (m.getMyPhone ? m.getMyPhone() : '') : String(phone || '').trim();
+    // 管理端（all）请求订单时**不能**带手机号：带了服务端就按手机号过滤，老板只看得到一个顾客的单。
+    // 同源 localStorage 是共享的，老板自己也在顾客页下过单，所以这个「残留手机号」是真会发生的。
+    const p = all ? '' : raw;
+    // 运营参数（配送费 / 免运费门槛 / 低库存阈值 / 起送价）：服务端是真源。
+    // 第 27 轮以前前端只用自己那份默认值，Go 与页面在 29.995 这种边界上会算出不同的钱。
+    try {
+      const cfgS = await req('GET', '/api/settings');
+      if (cfgS && m.setSettings) m.setSettings(cfgS);
+    } catch (e) { /* 设置拉不到不影响商品与订单 */ }
+    const pr = await req('GET', '/api/products' + (raw ? '?phone=' + encodeURIComponent(raw) : ''));
     const products = (pr && pr.items ? pr.items : []).map(fromServerProduct);
     m.saveCatalog(products);
-    if (p && m.setMyPhone) m.setMyPhone(p, (pr && pr.tier) || '');
-    const or = await req('GET', '/api/orders');
-    const orders = (or && or.items ? or.items : []).map(o => fromServerOrder(o, products));
-    m._save(m.KEYS.orders, orders);
-    return { products: products, orders: orders, tier: (pr && pr.tier) || '' };
+    if (raw && m.setMyPhone) m.setMyPhone(raw, (pr && pr.tier) || '');
+    // 订单列表（第 27 轮身份收敛）：顾客必须带手机号，服务端只回他自己的单；
+    // 管理后台（opts.all）没有手机号也照拉，靠管理员放行拿全店单。
+    let orders = [];
+    if (!p && !all) {
+      // 顾客页 + 不知道自己的手机号 = 没有任何身份，干脆不问（灰度模式下问 = 拿回全店订单）
+      m._save(m.KEYS.orders, []);
+      return { products: products, orders: [], tier: (pr && pr.tier) || '', needIdentity: true };
+    }
+    try {
+      const or = await req('GET', '/api/orders' + (p ? '?phone=' + encodeURIComponent(p) : ''));
+      orders = (or && or.items ? or.items : []).map(o => fromServerOrder(o, products));
+      m._save(m.KEYS.orders, orders);
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      if (msg.indexOf('缺少身份') < 0) throw e;   // 真异常（断网 / 500）交给页面显示错误态
+      m._save(m.KEYS.orders, []);                // 「没身份」= 本来就不该看到任何订单，不是错误
+      return { products: products, orders: [], tier: (pr && pr.tier) || '', needIdentity: true };
+    }
+    return { products: products, orders: orders, tier: (pr && pr.tier) || '', needIdentity: false };
   }
 
   function mirroredOrder(id) {
@@ -229,25 +307,37 @@ const SdyApi = (() => {
       phone: c.phone,
       address: c.address || '',
       deliveryType: opts && opts.deliveryType,
-      items: sum.lines.map(l => ({ code: l.code, qty: l.qty }))
+      items: sum.lines.map(l => ({ code: l.code, qty: l.qty })),
+      // 幂等键（第 27 轮）：超时重试 / 用户连点同一个结算只落一张单，库存只扣一次。
+      // 必须由发起方生成：服务端拿它去重，自己再造一个就失去意义。
+      clientToken: (opts && opts.clientToken) || ('W' + Date.now() + Math.floor(Math.random() * 1000))
     });
     if (c.phone && m.setMyPhone) m.setMyPhone(c.phone);   // 记住手机号：下次同步就按我的等级取价（D24）
-    await sync();
+    // 订单已经落库了：镜像刷新失败（断网）不该让顾客看到「下单失败」而重复下单
+    try { await sync(); } catch (e) { /* 忽略：以服务端返回的单号为准 */ }
     m.clearCart();
     return o && o.id ? (mirroredOrder(o.id) || o) : o;
   }
 
   async function advanceOrder(id, to) {
     if (mode_ !== 'server') return M().advanceOrder(id, to);
-    const o = await req('POST', '/api/orders/' + encodeURIComponent(id) + '/advance', { to: to });
-    await sync();
+    const m = M();
+    // 第 27 轮 advance 收敛为「员工推进」；顾客只保留「确认收货」（to=done）靠手机号证明归属
+    const p = m.getMyPhone ? m.getMyPhone() : '';
+    const o = await req('POST', '/api/orders/' + encodeURIComponent(id) + '/advance' + (p ? '?phone=' + encodeURIComponent(p) : ''), { to: to });
+    try { await sync(); } catch (e) { /* 同上：状态已改，镜像慢一拍不算失败 */ }
     return o && o.id ? (mirroredOrder(o.id) || o) : o;
   }
 
-  // 取消：服务端会把库存回补（状态机只允许「待备货」取消）
+  // 取消：第 27 轮起走独立的 /cancel —— 服务端按归属校验（不是我的单给 404），
+  // 并在事务里回补库存、写 stock_log 回补流水；以前复用 /advance 是借道，语义与审计都不对。
   async function cancelOrder(id) {
     if (mode_ !== 'server') return M().cancelOrder(id);
-    return advanceOrder(id, 'cancelled');
+    const m = M();
+    const p = m.getMyPhone ? m.getMyPhone() : '';
+    const res = await req('POST', '/api/orders/' + encodeURIComponent(id) + '/cancel' + (p ? '?phone=' + encodeURIComponent(p) : ''), { to: 'cancelled' });
+    try { await sync(); } catch (e) { /* 同上 */ }
+    return res;
   }
 
   async function setStock(code, stock) {
@@ -261,7 +351,7 @@ const SdyApi = (() => {
       return p;
     }
     const p = await req('POST', '/api/products/stock', { code: code, stock: stock });
-    await sync();
+    try { await sync(); } catch (e) { /* 改库存已成功，镜像刷新失败不该报错 */ }
     return p;
   }
 
@@ -276,7 +366,7 @@ const SdyApi = (() => {
       return next;
     }
     const saved = await req('POST', '/api/products', p);
-    await sync();
+    try { await sync(); } catch (e) { /* 保存已成功，镜像刷新失败不该报错 */ }
     return saved;
   }
 
@@ -403,8 +493,12 @@ const SdyApi = (() => {
   async function listAddresses(phone) {
     const m = M();
     if (mode_ !== 'server') return m.listAddresses(phone);
-    const res = await req('GET', '/api/addresses?phone=' + encodeURIComponent(phone));
+    // 第 27 轮起地址簿有了钥匙（key）：只凭手机号就能读写别人的地址是越权。
+    // 拿到册子时顺手把这把钥匙记在本机，后续的增删查都带上它。
+    const k = addrKey();
+    const res = await req('GET', '/api/addresses?phone=' + encodeURIComponent(phone) + (k ? '&key=' + encodeURIComponent(k) : ''));
     const items = (res && res.items ? res.items : []);
+    if (res && res.key) setAddrKey(res.key);
     try { m._saveAddresses(phone, items); } catch (e) {}
     return items;
   }
@@ -417,10 +511,12 @@ const SdyApi = (() => {
   async function saveAddress(a) {
     const m = M();
     if (mode_ !== 'server') return m.saveAddress(a);
-    const saved = await req('POST', '/api/addresses', {
+    const k = addrKey();
+    const saved = await req('POST', '/api/addresses' + (k ? '?key=' + encodeURIComponent(k) : ''), {
       id: Number(a.id) || 0, phone: a.phone, contact: a.contact,
       address: a.address, isDefault: !!a.isDefault
     });
+    if (saved && saved.key) setAddrKey(saved.key);    // 服务端首次为这个手机号发钥匙
     await listAddresses(a.phone).catch(() => null);   // 重新拉一遍，镜像与后端一致
     return saved;
   }
@@ -428,7 +524,8 @@ const SdyApi = (() => {
   async function deleteAddress(phone, id) {
     const m = M();
     if (mode_ !== 'server') return m.deleteAddress(phone, id);
-    const res = await req('DELETE', '/api/addresses/' + encodeURIComponent(id) + '?phone=' + encodeURIComponent(phone));
+    const k = addrKey();
+    const res = await req('DELETE', '/api/addresses/' + encodeURIComponent(id) + '?phone=' + encodeURIComponent(phone) + (k ? '&key=' + encodeURIComponent(k) : ''));
     await listAddresses(phone).catch(() => null);
     return res;
   }
@@ -448,6 +545,7 @@ const SdyApi = (() => {
     mode_ = 'local';
     lastError = '';
     health_ = null;
+    notifyMallMode();
   }
 
   return {
