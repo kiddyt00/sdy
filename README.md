@@ -56,7 +56,7 @@ sdy/
 ├── docs/                   # 迭代路线图-第27~31轮.md（六路审计现状诊断 + 路线图 + 契约表 + 验收清单）；支付与配送-方案与验收.md（支付轮 §1 已上线、§2 第三方配送**已作废**）；批发订货-产品说明.md（**2026-10-15 新定型**，给老板看、零技术词）
 ├── 小程序开发引导.html      # 小程序上线引导（配置项、回传清单、常见坑）
 ├── docker-compose.yml      # 蓝绿 api-a(8093) / api-b(8094)
-├── *.py                    # 腾讯文档工具链：pull / convert_html / push / set_permission
+├── convert_html.py         # 历史工具（老板指定保留）：HTML → docx + md，给人读的版本导出用
 ├── 开发计划.html            # 路线图与里程碑状态（唯一「计划」入口）
 ├── 细节讨论记录.html        # 决策台账 D1–D34 + 逐轮记录
 └── 独立小程序商城可行性分析与架构方案.html   # 架构与实现现状（可行性、成本、设计）
@@ -177,15 +177,10 @@ export CGO_ENABLED=0 GOFLAGS=-mod=mod
 | [`sync-demo/README.md`](sync-demo/README.md) | 牵牛花 CSV 对账 |
 | [`.agent_rules.md`](.agent_rules.md) | 协作与工程规则（含页面验收、进程/端口卫生） |
 
-三份 HTML 与腾讯在线文档同步，**每次改动都要走完整流水线**（顺序不可颠倒，否则会覆盖对方在线修改）：
+三份 HTML **只在仓库内维护**（2026-10-15 起）：腾讯文档 pull/push 流程已取消（用户 m15454；`.agent_rules.md` 文首说明），改完直接 commit + push 即可，不再需要拉取比对、转换或推送。
 
-```bash
-.venv/bin/python3 pull_tencent_docs.py --stem 开发计划         # 1 先拉取比对
-#   …编辑本地 HTML…（若在线有他人修改，先合并再编辑）
-.venv/bin/python3 convert_html.py 开发计划.html                # 2 转 docx/md
-.venv/bin/python3 push_tencent_docs.py 开发计划.docx           # 3 推送（每次生成新链接）
-.venv/bin/python3 set_tencent_permission.py --last 开发计划    # 4 设为公开可编辑
-```
+> 历史工具已移到 **`archive/local-tools/`**（`pull_tencent_docs.py` / `push_tencent_docs.py` / `set_tencent_permission.py` / `sync_docs_lib.py`；仍在仓库里可查，只是不在根目录，见 `archive/README.md`）。
+> 根目录保留 `convert_html.py`：它能把 HTML 转成 docx/md（**注意方向是 HTML → docx + md**，依赖 `.venv` 里的 `lxml` / `python-docx`，用法 `.venv/bin/python3 convert_html.py <输入.html>`）。
 
 ## 协作约定（家里 / 公司两地开发）
 
