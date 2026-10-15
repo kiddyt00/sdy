@@ -57,3 +57,31 @@ private.wx*.key
 .private.wx*.key
 apiclient_*.pem
 apiclient_*.p12
+
+# ===== 微信支付（支付轮）：平台证书、假支付测试密钥、服务器私放目录，全部不入库 =====
+platform_cert*.pem
+*platform_cert*.pem
+wxpay_*_priv.pem
+wxpay_*_pub.pem
+private/
+secrets/
+*.pem.bak
+# 微信商户平台直接下载的文件名（老板可能原样拖进仓库根目录，别让它们进来）
+pub_key*.pem
+wechatpay_*.pem
+*.p12
+# .env 备份（deploy/pay-setup.sh 会生成 .env.bak.<时间戳>）
+.env.bak*
+.env.*.bak*
+
+# 微信支付密钥的常见裸文件名（商户平台下载后可能被顺手放进仓库根目录）
+# 注意：apiv3_key.txt 曾**没被任何规则命中**（第 22 轮 AppSecret 少前导点的同类坑），
+# 凡「值是密钥本身」的文本文件都必须在这里显式列出，改完用
+# `git check-ignore -v <真实文件名>` 复验（规则 23⑥）。
+apiv3*.txt
+*apiv3*.txt
+*api_v3*.txt
+wxpay*.txt
+
+# ===== 压缩包（微信支付接入资料等，里面是商户私钥/APIv3 密钥，绝不入库）=====
+*.zip

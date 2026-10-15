@@ -23,7 +23,11 @@ const state = {
   lastError: '',
   cloudConfigured: false,
   circuitOpen: false,
-  cloudFails: 0
+  cloudFails: 0,
+  // 第 31 轮（payEnabled）：微信支付是否开通，来自 GET /api/settings 的派生字段。
+  // 默认 false = 未开通：拿不到配置（请求失败 / 字段缺失 / 不是布尔）一律按未开通算 ——
+  // 与 Web mall.js 的 payOn 同一口径：宁可少催一次款，也不能把付不了款的单挂成「待付款」。
+  payEnabled: false
 }
 
 // ---------- 本地存储（wx 可能不存在：便于 Node 单测） ----------
@@ -81,7 +85,12 @@ function request(method, path, data, header) {
           return
         }
         const msg = (d && (d.error || d.msg)) || ('HTTP ' + (res && res.statusCode))
-        reject(new Error(msg))
+        // 第 29 轮：页面要按 HTTP 码分岔（支付未配置是 503），错误对象上必须带得住状态码，
+        // 只靠 message 文本去猜太脆。
+        const err = new Error(msg)
+        err.statusCode = (res && res.statusCode) || 0
+        err.body = d
+        reject(err)
       },
       fail(err) {
         const m = (err && (err.errMsg || err.msg)) || '请求失败'
@@ -105,6 +114,9 @@ function probe() {
     (e) => {
       state.online = false
       state.lastError = e.message
+      // 连不上后端 = 拿不到 payEnabled：按未开通算（契约：取不到配置一律按未开通）。
+      // 未开通时 pending 退回第 28 轮「待备货」，不会凭空冒出一个没人能付的「待付款」。
+      state.payEnabled = false
       return status()
     }
   )
@@ -654,7 +666,31 @@ function mapOrder(o) {
   }))
   const status = o.status || 'pending'
   const dt = o.deliveryType === 'delivery' ? 'delivery' : 'pickup'
-  const acts = rules.orderActions(status)
+  // 第 29 轮：paid 是 status 之外的第二个维度（不新增 status 值）。
+  // 老后端 / 离线本地单压根没有 paid 字段 —— 记成 paidKnown:false，交给 rules 按
+  // 第 27 轮口径当「已付款」，否则历史订单会被集体误判成「待付款」。
+  // 注意：本地订单是「映射后的对象」存盘、读出来还会再映射一次，所以输入里已经带了
+  // paidKnown 就认它，不能把「没下发过」二次解读成「明确未付款」。
+  const paidKnown = o.paidKnown !== undefined ? !!o.paidKnown : (o.paid !== undefined && o.paid !== null && o.paid !== '')
+  const paid = paidKnown && (o.paid === true || o.paid === 1 || o.paid === '1' || o.paid === 'true')
+  const payExpireAt = num(o.payExpireAt)
+  const payView = {
+    status: status,
+    deliveryType: dt,
+    paid: paidKnown ? paid : undefined,
+    paidKnown: paidKnown,
+    payExpireAt: payExpireAt,
+    // 第 31 轮（payEnabled）：订单对象里带上「支付开没开通」，rules.orderLabel/orderActions
+    // 据此决定 pending 是「待付款」还是「待备货」。本地单存的是映射后对象，已经带了就认它
+    // （和 paidKnown 同一个幂等套路），否则取内存缓存里的（取不到 = 未开通）。
+    payEnabled: (o.payEnabled !== undefined ? o.payEnabled === true : payEnabled())
+  }
+  const acts = rules.orderActions(payView)
+  // 退款提示：只认「已取消 + refundState」，认不出来的状态一律空串（页面对空串不渲染）
+  const refundView = { status: status, refundState: o.refundState, refundId: o.refundId }
+  const refundText = rules.refundText(refundView)
+  const refundTone = refundText ? rules.refundTone(refundView) : ''
+  const refundNo = refundText ? rules.refundNo(refundView) : ''
   return {
     id: String(o.id || ''),
     customerName: o.customerName || '',
@@ -670,11 +706,30 @@ function mapOrder(o) {
     totalText: num(o.total).toFixed(2),
     feeText: num(o.deliveryFee).toFixed(2),
     status: status,
-    statusText: rules.statusLabel(status),
+    statusText: rules.orderLabel(payView),
     actions: acts,
     canCancel: acts.indexOf('cancel') >= 0,
     canAdvance: acts.indexOf('advance') >= 0,
     canReorder: acts.indexOf('reorder') >= 0,
+    canPay: acts.indexOf('pay') >= 0,
+    // ---- 第 29 轮支付态（paid 统一成布尔；没下发过就 false 但 paidKnown:false 兜着）----
+    paid: paid,
+    paidKnown: paidKnown,
+    // 第 31 轮：这一单所在店铺的在线支付开没开通（页面据此决定显不显示收银台入口）
+    payEnabled: payView.payEnabled,
+    paidAt: o.paidAt || '',
+    paidText: paid ? '已微信支付' : '',
+    transactionId: o.transactionId || '',
+    payExpireAt: payExpireAt,
+    payExpired: rules.payExpired(payView),
+    payLeftText: rules.payLeftText(payView),
+    payHint: rules.payHint(payView),
+    // ---- 第 29 轮退款态：形状与文案都取自 rules（唯一真源），页面不许自己判 refundState ----
+    refundId: o.refundId || '',
+    refundState: o.refundState || '',
+    refundText: refundText,
+    refundTone: refundTone,
+    refundNo: refundNo,
     hint: rules.statusHint({ status: status, deliveryType: dt }),
     items: items,
     count: items.reduce((s, it) => s + it.qty, 0),
@@ -791,6 +846,90 @@ function cancelOrder(id) {
     .then((d) => (d && d.id ? mapOrder(d) : mapOrder(Object.assign({}, d, { status: 'cancelled' }))))
 }
 
+// ---------- 微信支付（第 29 轮 / 0.9.0，顾客侧收银台） ----------
+// 契约（docs/支付与配送-方案与验收.md §1.5，服务端口径已冻结）：
+//   POST /api/pay/prepay  {orderId} → {outTradeNo, amountFen, payParams{...}, expireAt}
+//                         未配置支付 → 503 {error:'微信支付未配置…'}
+//   GET  /api/pay/status?orderId=M… → {paid, status, transactionId, refundState, expireAt}
+// 两个接口都带顾客身份（第 27 轮口径：openid 优先，否则手机号）；归属校验在服务端（403/404）。
+// 金额一律是服务端下发的**整数分**，前端只做展示换算，绝不自己算钱。
+const NO_PAY_CONFIG = '店里还没开通在线支付，请联系店家'
+
+// 未配置支付：给错误对象打上可识别标记，页面据此显示人话而不是「HTTP 503」
+function noPayConfigError(e) {
+  const err = new Error((e && e.message) || NO_PAY_CONFIG)
+  err.noPayConfig = true
+  err.statusCode = 503
+  return err
+}
+
+// 下单成功后去收银台：拿 wx.requestPayment 需要的那一包参数
+function prepay(orderId) {
+  const id = String(orderId || '').trim()
+  if (!id) return Promise.reject(new Error('缺少订单号'))
+  const ident = identityParams()
+  if (!ident.qs) return Promise.reject(new Error(NO_IDENTITY))
+  return request('POST', '/api/pay/prepay?' + ident.qs, { orderId: id }, authHeader()).then((d) => {
+    const fen = num(d && d.amountFen)
+    return {
+      outTradeNo: String((d && d.outTradeNo) || id),
+      amountFen: fen,
+      amountText: rules.fenText(fen),
+      payParams: (d && d.payParams) || {},
+      expireAt: num(d && d.expireAt)
+    }
+  }, (e) => {
+    if (e && e.statusCode === 503) throw noPayConfigError(e)
+    throw e
+  })
+}
+
+// 查支付态：收银台每次进入先问一次，已经付过就不再拉起收银台
+function payStatus(orderId) {
+  const id = String(orderId || '').trim()
+  if (!id) return Promise.reject(new Error('缺少订单号'))
+  const ident = identityParams()
+  if (!ident.qs) return Promise.reject(new Error(NO_IDENTITY))
+  return request('GET', '/api/pay/status?orderId=' + encodeURIComponent(id) + '&' + ident.qs, null, authHeader()).then((d) => {
+    const v = d || {}
+    return {
+      paid: v.paid === true || v.paid === 1 || v.paid === '1' || v.paid === 'true',
+      status: String(v.status || ''),
+      transactionId: String(v.transactionId || ''),
+      refundState: String(v.refundState || ''),
+      expireAt: num(v.expireAt)
+    }
+  })
+}
+
+// 拉起微信收银台。fail 的 errMsg 必须翻译成人话：
+// 「requestPayment:fail cancel」→「你取消了支付」，其它原文透出（便于对账时看到真实原因）。
+function requestPayment(payParams) {
+  return new Promise((resolve, reject) => {
+    if (typeof wx === 'undefined' || !wx || typeof wx.requestPayment !== 'function') {
+      reject(new Error('当前环境不支持微信支付'))
+      return
+    }
+    const p = payParams || {}
+    wx.requestPayment({
+      timeStamp: String(p.timeStamp || ''),
+      nonceStr: String(p.nonceStr || ''),
+      package: String(p.package || ''),
+      signType: p.signType || 'RSA',
+      paySign: String(p.paySign || ''),
+      success: () => resolve({ ok: true }),
+      fail: (err) => {
+        const raw = String((err && (err.errMsg || err.msg)) || '').trim()
+        const cancelled = /cancel/i.test(raw)
+        const e = new Error(cancelled ? '你取消了支付' : (raw || '支付失败'))
+        e.cancelled = cancelled
+        e.errMsg = raw
+        reject(e)
+      }
+    })
+  })
+}
+
 // ---------- 店铺信息（我的页 / 公告）：与 Web 端同一份 /api/settings ----------
 const LS_SETTINGS_KEY = 'sdy_mp_settings'
 const LOW_STOCK_FALLBACK = 5 // 接口没给时的兜底；页面不再各写一份硬编码 5
@@ -804,13 +943,31 @@ function lowStock() {
   const n = Number(s.lowStock)
   return isFinite(n) && n > 0 ? n : LOW_STOCK_FALLBACK
 }
+// 第 31 轮（payEnabled）：把 /api/settings 的派生字段收进内存缓存（订单映射要用它）。
+// **只有显式 true 才算开通**（服务端下发的是 JSON bool，别做 'true'/1 那种自作聪明的兼容）；
+// 字段缺失 / 不是布尔 → 未开通。
+function applySettings(s) {
+  const v = (s && typeof s === 'object') ? s : null
+  if (v) sset(LS_SETTINGS_KEY, v)
+  state.payEnabled = !!(v && v.payEnabled === true)
+  return state.payEnabled
+}
+// 在线支付是否已开通（页面/WXML 都读这一个入口；rules 侧读订单对象上的 payEnabled）
+function payEnabled() {
+  return state.payEnabled === true
+}
 function getSettings() {
   if (!state.online) {
+    // 离线演示：连不上后端就付不了款 —— payEnabled 不从这里复活（probe 失败时已归零），
+    // 其余配置照旧用缓存，DEMO 行为与第 28 轮一致。
     return Promise.resolve(cachedSettings() || { name: config.STORE_NAME, phone: '', address: '', footer: '' })
   }
+  // 每次问配置都先退回「未开通」，只有服务端这次明确说 true 才算开通 ——
+  // 「取不到配置一律按未开通」这条口径就落在这一行上。
+  state.payEnabled = false
   return request('GET', '/api/settings').then((s) => {
     const v = s && typeof s === 'object' ? s : {}
-    sset(LS_SETTINGS_KEY, v)
+    applySettings(v)
     return v
   })
 }
@@ -939,8 +1096,15 @@ module.exports = {
   getOrder: getOrder,
   cancelOrder: cancelOrder,
   advanceOrder: advanceOrder,
+  // 微信支付收银台（第 29 轮 / 0.9.0）
+  prepay: prepay,
+  payStatus: payStatus,
+  requestPayment: requestPayment,
+  NO_PAY_CONFIG: NO_PAY_CONFIG,
   getSettings: getSettings,
   cachedSettings: cachedSettings,
+  payEnabled: payEnabled,
+  applySettings: applySettings,
   lowStock: lowStock,
   LOW_STOCK_FALLBACK: LOW_STOCK_FALLBACK,
   listAddresses: listAddresses,

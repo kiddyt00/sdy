@@ -32,6 +32,44 @@ const Admin = (() => {
   };
   const DEFAULT_COURIERS = ['老张', '小李', '阿强', '小美']; // 4 人配送雏形
 
+  // ---------------- 支付显示口径（支付轮） ----------------
+  // 文案真源在 mall.js（顾客端与管理端共用一套，绝不在这里另写一份）：
+  //   orderLabel     : pending+未付款 → 待付款；pending+已付款 → 待备货；其余按第 27 轮
+  //   payBadgeHTML   : 未付款 / 已付款+时间 / 退款处理中 / 退款失败，请联系店家（红）/ 已退款
+  // 这里只做「同一套函数的转发 + 本地判定辅助」，Admin.orderLabel / Admin.payBadgeHTML 可用，
+  // 页面仍然直接用 Mall.orderLabel / Mall.payBadgeHTML（index.html 里 Mall 是全局）。
+  // 支付轮（payEnabled）：微信支付**没开通**时「待付款」根本没人能付，
+  // pending 一律「待备货」（第 28 轮语义），否则老板的备货队列恒空、店铺停摆。
+  function payEnabled() {
+    if (MallCore.payEnabled) return MallCore.payEnabled() === true;
+    return false;   // 取不到 = 未开通
+  }
+  function orderLabel(o) {
+    if (MallCore.orderLabel) return MallCore.orderLabel(o);
+    if (!o) return '';
+    if (o.status === 'pending') return (isPaid(o) || !payEnabled()) ? '待备货' : '待付款';
+    return (MallCore.STATUS_META[o.status] || {}).label || String(o.status || '');
+  }
+  function payBadgeHTML(o) {
+    if (MallCore.payBadgeHTML) return MallCore.payBadgeHTML(o);
+    return '';
+  }
+
+  // ---------------- 待备货队列（支付轮红线） ----------------
+  // 开通在线支付时：只返回「已付款且还是 pending」的单 —— 未付款单绝不能混进备货队列。
+  // 未开通在线支付时：没有「已付款」这回事，pending 全进队列（第 28 轮语义），否则队列恒空。
+  // 排序与后端订单列表一致（createdAt 倒序，最新在前）；createdAt 缺失当 0，不抛错。
+  function prepQueue(orders) {
+    const mustPay = payEnabled();
+    return (Array.isArray(orders) ? orders : [])
+      .filter(o => o && o.status === 'pending' && (isPaid(o) || !mustPay))
+      .slice()
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  }
+
+  // 支付判定：服务端回 bool，老数据 / 假数据可能是 0/1，统一收口。
+  function isPaid(o) { return !!(o && (o.paid === true || o.paid === 1 || o.paid === '1')); }
+
   // ---------------- 配送员 ----------------
   function getCouriers() {
     const c = MallCore._load(KEYS.couriers, null);
@@ -701,10 +739,27 @@ const Admin = (() => {
   function kpiOf(orders, now) {
     const d = now ? new Date(now) : new Date();
     const today = d.toDateString();
-    const todays = (Array.isArray(orders) ? orders : []).filter(o => new Date(o.createdAt).toDateString() === today);
+    const all = Array.isArray(orders) ? orders : [];
+    const todays = all.filter(o => new Date(o.createdAt).toDateString() === today);
     const valid = todays.filter(o => o.status !== 'cancelled');
     const done = valid.filter(o => o.status === 'done');
     const open = valid.filter(o => o.status !== 'done');
+    // 支付轮（支付）：对账口径只加不改 —— doneAmount 仍是「今日营业额 = 只算已完成」。
+    //   paidAmount = 今日已收款：**按付款时间 paidAt 归日**，不是按创建时间。
+    //     理由（老板的钱，必须准）：昨晚 23:50 下单、今天 00:05 付款的单，微信商户账单算今天的钱；
+    //     若按 createdAt 归日，这个数永远跟账单对不上。已取消的已付款单要退钱，两边都不算。
+    //     取不到 paidAt 的老单 / 现金标记单退回 createdAt；paidAt 解析不出来也退回 createdAt（不丢、不报错）。
+    //   toCollect  = 今日待收款：**按创建时间 createdAt 归日**——「今天该收的钱」是按单算的。
+    //     未开通在线支付时为 0：没人能付，挂个「待收款」只会让老板天天看见一笔收不回来的钱
+    //     （卡片不删，脚注说明原因）。开通时才算。
+    //     ⚠️ paidAmount 按付款时间、toCollect 按创建时间，这两个口径故意不同，别再统一改回去。
+    const paidDayKey = o => {
+      let t = (o && o.paidAt) ? new Date(o.paidAt) : null;
+      if (!t || isNaN(t.getTime())) t = new Date((o && o.createdAt) != null ? o.createdAt : NaN);
+      return isNaN(t.getTime()) ? '' : t.toDateString();
+    };
+    const paidList = all.filter(o => isPaid(o) && o.status !== 'cancelled' && paidDayKey(o) === today);
+    const toCollectList = valid.filter(o => !isPaid(o));
     const sum = arr => round2(arr.reduce((s, o) => s + (Number(o.total) || 0), 0));
     return {
       today: todays.length,               // 今日下单总数（含取消，页面脚注会说明）
@@ -713,6 +768,8 @@ const Admin = (() => {
       doneAmount: sum(done),              // 已完成金额 = 今日营业额（实收）
       open: open.length,                  // 进行中单量（待备货 / 配送中 / 待自提）
       openAmount: sum(open),              // 进行中金额（尚未收到）
+      paidAmount: sum(paidList),          // 今日已收款（微信）：按 paidAt 归日、paid 且未取消的合计，元
+      toCollect: payEnabled() ? toCollectList.length : 0,   // 今日待收款单量（按 createdAt 归日；未开通支付时恒 0）
       cancelled: todays.length - valid.length
     };
   }
@@ -924,13 +981,16 @@ const Admin = (() => {
     const st = (i.status == null ? '' : String(i.status)).trim();
     if (st && st !== 'all') out.status = st;
     if (i.type && i.type !== 'all') out.type = i.type;
+    // 支付轮（支付）：paid 只有 '0'/'1' 才进 query；''/'all' 视为不筛（= 全部支付状态）。
+    const pd = (i.paid == null ? '' : String(i.paid)).trim();
+    if (pd === '0' || pd === '1') out.paid = pd;
     const dr = orderDateRange(i.date, i.from, i.to, i.now);
     Object.keys(dr).forEach(k => { const v = dr[k]; if (v != null && v !== '') out[k] = v; });
     return out;
   }
   function hasOrderFilter(f) {
     const x = f || {};
-    return !!(x.q || x.status || x.date || x.from || x.to || x.type);
+    return !!(x.q || x.status || x.date || x.from || x.to || x.type || x.paid === '0' || x.paid === '1');
   }
   // 本地兜底：后端筛选已生效时它是幂等重算；后端未就绪时页面照样能筛，绝不假装筛过
   function filterOrders(list, input) {
@@ -944,6 +1004,9 @@ const Admin = (() => {
     const hiD = day0 || parseDay(i.to);
     const hi = hiD ? dayEnd(hiD) : null;
     const type = i.type && i.type !== 'all' ? i.type : null;
+    // 支付轮（支付）：'0' = 只看未付款，'1' = 只看已付款；''/'all' 不筛
+    const pd = (i.paid == null ? '' : String(i.paid)).trim();
+    const wantPaid = (pd === '0') ? false : ((pd === '1') ? true : null);
     return (Array.isArray(list) ? list : []).filter(o => {
       if (!o) return false;
       const c = o.customer || {};
@@ -953,6 +1016,7 @@ const Admin = (() => {
       }
       if (want && want.indexOf(o.status) < 0) return false;
       if (type && o.deliveryType !== type) return false;
+      if (wantPaid !== null && isPaid(o) !== wantPaid) return false;
       if (lo || hi) {
         const t = new Date(o.createdAt).getTime();
         if (isNaN(t)) return false;
@@ -1109,6 +1173,12 @@ const Admin = (() => {
     isDemoProduct: isDemoProduct,
     demoCount: demoCount,
     kpiOf: kpiOf,
+    // 支付轮（支付）：显示口径转发 + 待备货队列（开通支付时只列已付款单）
+    orderLabel: orderLabel,
+    payBadgeHTML: payBadgeHTML,
+    prepQueue: prepQueue,
+    // 支付轮（payEnabled）：在线支付是否开通（false = 未开通，队列/文案退回第 28 轮语义）
+    payEnabled: payEnabled,
     orderSig: orderSig,
     newOrdersSince: newOrdersSince,
     BULK_MODES: BULK_MODES,

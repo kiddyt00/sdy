@@ -28,12 +28,16 @@ if [ ! -f .env ]; then
   cp .env.example .env
 fi
 
-mkdir -p data web
+mkdir -p data web secrets
 # 容器内以 uid 10001(app) 运行：
 #   data 必须是 10001 可写，否则 SQLite 报「unable to open database file: out of memory (14)」
 #   web  必须对 others 可读（本地仓库常见 600 权限），否则容器读不到静态文件 → 403 / 目录列表
+#   secrets 只读挂进容器（/app/secrets），同样必须 10001 可读，否则支付初始化读不到私钥
 chown -R 10001:10001 data 2>/dev/null || true
 chmod -R a+rX web 2>/dev/null || true
+chown -R 10001:10001 secrets 2>/dev/null || true
+find secrets -maxdepth 1 -name '*.pem' -exec chmod 600 {} + 2>/dev/null || true
+chmod 700 secrets 2>/dev/null || true
 echo "🔨 构建并启动容器..."
 docker compose up -d --build
 
@@ -58,9 +62,22 @@ echo "从本机同步代码到服务器时请带权限参数（否则容器读�
 echo "  rsync -az --chmod=D755,F644 --exclude .git --exclude .venv --exclude .tools \\"
 echo "        --exclude .preview --exclude '.env' --exclude '*.docx' \\"
 echo "        --exclude 'cert.txt' --exclude '*.wx*.key' --exclude '.wx_secret.env' \\"
+echo "        --exclude 'secrets' --exclude '*.zip' \\"
 echo "        ./ root@<服务器>:/root/sdy/"
-echo "  # 上面三条 --exclude 是微信凭证：AppSecret / 代码上传密钥绝不上服务器工作区，"
+echo "  # 上面几条 --exclude 是微信凭证：AppSecret / 代码上传密钥 / 微信支付商户私钥绝不上服务器工作区，"
 echo "  # 需要 AppSecret 时只手工写进服务器 /root/sdy/.env（不进仓库、不进 rsync 源）。"
+echo ""
+echo "微信支付上线（拿到商户号/密钥后，在服务器上做，一次性）："
+echo "  mkdir -p /root/sdy/secrets && cd /root/sdy/secrets"
+echo "  # 放入微信商户平台下载的 apiclient_key.pem 与平台证书 wechatpay_platform_cert.pem"
+echo "  chown 10001:10001 *.pem && chmod 600 *.pem && chmod 700 /root/sdy/secrets"
+echo "  # /root/sdy/.env 填 7 项：WXPAY_MCHID / WXPAY_SERIAL_NO / WXPAY_API_V3_KEY /"
+echo "  #   WXPAY_PRIVATE_KEY_PATH=/app/secrets/apiclient_key.pem /"
+echo "  #   WXPAY_PLATFORM_CERT_PATH=/app/secrets/wechatpay_platform_cert.pem /"
+echo "  #   WXPAY_NOTIFY_URL=https://mall.shadouyou.cloud/api/pay/notify（WXPAY_API_BASE 留空用正式域名）"
+echo "  bash deploy/pay-check.sh            # 体检：序列号 40 位 / APIv3 密钥 32 字节 / pem 权限 / 容器内路径 / 开通与否（只读，不重启）"
+echo "  ./deploy/rolling-update.sh          # 七项缺任一 = 支付关闭，下单照旧，不会有半开状态"
+echo "  curl -s http://127.0.0.1:8093/healthz   # 起来后到小程序下单实测一笔最小金额"
 echo ""
 echo "⛔ 千万不要加 --delete / --delete-excluded："
 echo "   服务器上的 data/sdy.db（真数据）与 .env 都不在仓库里，加了就会被同步删掉，"

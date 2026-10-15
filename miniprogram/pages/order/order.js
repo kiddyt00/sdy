@@ -12,7 +12,9 @@ Page({
     notFoundText: '',
     needIdentity: false,
     online: false,
-    cartCount: 0
+    cartCount: 0,
+    payOpen: false, // 第 29 轮：支付单号默认折叠，对账时再展开
+    refundOpen: false // 第 29 轮：退款单号同理
   },
 
   onLoad(q) {
@@ -44,7 +46,9 @@ Page({
       return Promise.resolve(null)
     }
     this.setData({ loading: true, err: '', notFoundText: '', needIdentity: false })
-    return api.getOrder(id).then((o) => {
+    // 第 31 轮（payEnabled）：先同步店铺配置再取单 —— 「待付款 / 待备货」与「去支付」入口
+    // 都取决于支付开没开通；拿不到配置按未开通算（退回第 28 轮语义）。
+    return api.getSettings().catch(() => null).then(() => api.getOrder(id)).then((o) => {
       if (!o) {
         // 请求成功但查无此单 —— 这才是真正的「没找到」
         this.setData({ loading: false, o: null, notFoundText: '没找到这笔订单' })
@@ -136,6 +140,26 @@ Page({
     const o = this.data.o
     if (!o) return null
     wx.setClipboardData({ data: String(o.id) })
+    return null
+  },
+
+  // 第 29 轮：未付款单的「去支付」→ 收银台
+  goPay() {
+    const o = this.data.o
+    if (!o) return null
+    wx.navigateTo({ url: '/pages/pay/pay?orderId=' + encodeURIComponent(o.id) })
+    return null
+  },
+
+  // 支付单号折叠开关（对账时才展开，平时不占地方）
+  togglePay() {
+    this.setData({ payOpen: !this.data.payOpen })
+    return null
+  },
+
+  // 第 29 轮：退款单号单独一个折叠开关（退款单和支付单不一定同时存在）
+  toggleRefund() {
+    this.setData({ refundOpen: !this.data.refundOpen })
     return null
   },
 

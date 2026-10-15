@@ -152,12 +152,24 @@
                （不限日期，昨天的单今天没做完也得显示），脚注写清楚，避免看起来自相矛盾。 -->
           <div class="k-label">当前待处理<span style="margin-left:auto">⏰</span></div>
           <div class="k-value" id="kpiPending">0</div>
-          <div class="k-foot" id="kpiPendingSub">不限日期 · 待备货</div>
+          <div class="k-foot" id="kpiPendingSub">不限日期 · 仅已付款待备货</div>
         </div>
         <div class="kpi">
           <div class="k-label">今日营业额<span style="margin-left:auto">💰</span></div>
           <div class="k-value" id="kpiRevenue">¥0.00</div>
           <div class="k-foot" id="kpiRevenueSub">只算已完成（下单≠收款）</div>
+        </div>
+        <div class="kpi">
+          <!-- 支付轮（支付）：与「今日营业额」并列但口径不同——营业额只算已完成，
+               已收款算的是「钱到账了」（含还在备货的单），已取消的已付款单要退钱，不算收款。 -->
+          <div class="k-label">今日已收款（微信）<span style="margin-left:auto">💳</span></div>
+          <div class="k-value" id="kpiPaidAmount">¥0.00</div>
+          <div class="k-foot" id="kpiPaidSub">按付款时间统计 · 今日已付款且未取消（含退款处理中）</div>
+        </div>
+        <div class="kpi">
+          <div class="k-label">待收款<span style="margin-left:auto">⏳</span></div>
+          <div class="k-value" id="kpiToCollect">0</div>
+          <div class="k-foot" id="kpiToCollectSub">按订单时间统计 · 今日未付款的单</div>
         </div>
         <div class="kpi">
           <div class="k-label">进行中金额<span style="margin-left:auto">⏳</span></div>
@@ -263,11 +275,8 @@
             </div>
             <label class="bl">状态<select class="sel" id="ofStatus" onchange="applyOrderFilter()">
               <option value="all">全部</option>
-              <option value="pending">待备货</option>
-              <option value="delivering">配送中</option>
-              <option value="ready">待取货</option>
-              <option value="done">已完成</option>
-              <option value="cancelled">已取消</option>
+              <!-- 支付轮（支付）：pending 的显示名要跟支付状态走（未付款→待付款），
+                   这几项由 renderOfStatusOptions() 用 Mall.orderLabel 填，绝不在这里再抄一份文案。 -->
             </select></label>
             <label class="bl">日期<select class="sel" id="ofDate" onchange="applyOrderFilter()">
               <option value="today">今天</option>
@@ -280,6 +289,11 @@
               <span class="muted">~</span>
               <input class="input input-sm" id="ofTo" type="date" onchange="applyOrderFilter()">
             </span>
+            <label class="bl">支付状态<select class="sel" id="ofPaid" onchange="applyOrderFilter()">
+              <option value="all">全部</option>
+              <option value="0">待付款</option>
+              <option value="1">已付款</option>
+            </select></label>
             <label class="bl">配送方式<select class="sel" id="ofType" onchange="applyOrderFilter()">
               <option value="all">全部</option>
               <option value="pickup">自提</option>
@@ -577,6 +591,19 @@ function toastErr(msg, ms) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.className = 'toast'; }, ms || 4600);
 }
+// 支付轮（支付）：退款状态的中文名（与契约的 refundState 取值一一对应，不新增取值）。
+// 退款三态字面以小程序侧为准，三端逐字一致（改这里就要同步 mall.js 的 payBadgeHTML 与小程序）。
+const REFUND_LABELS = { '': '未退款', processing: '退款处理中', success: '已退款', fail: '退款失败，请联系店家' };
+function refundLabel(state) {
+  const k = state == null ? '' : String(state);
+  return REFUND_LABELS[k] || k;
+}
+// 支付轮（payEnabled）：未开通在线支付时「已付款」这个前置条件根本不存在，
+// 脚注不能还写「仅已付款待备货」，待收款也不该挂着一笔永远收不回来的钱。
+function prepSub(prefix) { return prefix + (Mall.payEnabled() ? '仅已付款待备货' : '仅待备货'); }
+function toCollectSub() {
+  return Mall.payEnabled() ? '按订单时间统计 · 今日未付款的单' : '未开通在线支付 · 不计待收款';
+}
 function closeAll() { $('mask').className = 'mask'; $('sidebar').className = 'sidebar'; closeProductDlg(); }
 function toggleSide() { const s = $('sidebar'); s.className = s.className.indexOf('open') >= 0 ? 'sidebar' : 'sidebar open'; }
 function online() { return SdyApi.on(); }
@@ -608,11 +635,15 @@ function kpi() {
     today: t.today,
     valid: t.valid,
     cancelled: t.cancelled,
-    pending: orders.filter(o => o.status === 'pending').length,
+    // 支付轮（支付）：待备货队列只算已付款单（老板红线：未付款单不许混进备货队列）
+    pending: Admin.prepQueue(orders).length,
     revenue: t.doneAmount,          // 今日营业额 = 已完成（实收）
     doneCount: t.done,
     openAmount: t.openAmount,       // 进行中金额（还没收到的钱）
     openCount: t.open,
+    // 支付轮（支付）：对账两张卡（口径见 Admin.kpiOf 的 paidAmount / toCollect 注释）
+    paidAmount: t.paidAmount,        // 今日已收款（微信）= 今日已付款且未取消的合计
+    toCollect: t.toCollect,          // 今日待收款单量（未付款）
     low: Mall.loadCatalog().filter(p => p.stock <= Admin.LOW_STOCK).length,
     cust: Admin.getCustomers().length
   };
@@ -623,11 +654,17 @@ function renderDash() {
   $('kpiOrdersSub').textContent = k.cancelled > 0 ? ('含全部状态 · 已取消 ' + k.cancelled + ' 单') : '含全部状态';
   $('kpiPending').textContent = String(k.pending);
   // 强调「不限日期」：这张卡是待办，不是今日口径（营业额/订单数才是今日）
-  $('kpiPendingSub').textContent = '不限日期 · 仅待备货';
+  $('kpiPendingSub').textContent = prepSub('不限日期 · ');
   $('kpiRevenue').textContent = yuan(k.revenue);
   $('kpiRevenueSub').textContent = '只算已完成 ' + k.doneCount + ' 单（下单≠收款）';
   $('kpiOpenAmount').textContent = yuan(k.openAmount);
   $('kpiOpenSub').textContent = '进行中 ' + k.openCount + ' 单 · 待收款';
+  // 支付轮（支付）：已收款 / 待收款。**「今日营业额」的卡片与脚注一个字都没动**（上面那两行）。
+  // 口径差别要在卡面上说清：已收款按「付款时间」归日（才好跟微信商户账单对），待收款按「下单时间」。
+  $('kpiPaidAmount').textContent = yuan(k.paidAmount);
+  $('kpiPaidSub').textContent = '按付款时间统计 · 今日已付款且未取消（含退款处理中）';
+  $('kpiToCollect').textContent = String(k.toCollect);
+  $('kpiToCollectSub').textContent = toCollectSub();
   $('kpiLow').textContent = String(k.low);
   $('kpiLowSub').textContent = '库存 ≤ ' + Admin.LOW_STOCK + ' 的商品';
   $('kpiCust').textContent = String(k.cust);
@@ -636,10 +673,12 @@ function renderDash() {
   // 「最近订单」必须真按时间倒序（第 27 轮收口）：镜像按插入序返回，直接 slice 拿到的
   // 可能是旧单，老板看到的「最近」就是假的。复制一份再排，避免就地改动 Mall 的数组。
   const recent = Mall.getOrders().slice().sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)).slice(0, 6);
-  $('dashOrders').innerHTML = recent.length ? '<div class="table-wrap"><table class="table"><thead><tr><th>订单号</th><th>顾客</th><th>内容</th><th class="num">金额</th><th>状态</th></tr></thead><tbody>' +
+  $('dashOrders').innerHTML = recent.length ? '<div class="table-wrap"><table class="table"><thead><tr><th>订单号</th><th>顾客</th><th>内容</th><th class="num">金额</th><th>状态</th><th>支付</th></tr></thead><tbody>' +
     recent.map(o => { const v = Mall.orderView(o); return '<tr><td class="mono">' + esc(o.id) + '</td><td>' + esc(o.customer.name) + '</td>' +
       '<td>' + o.items.map(i => esc(i.name) + '×' + i.qty).join('、') + '</td>' +
-      '<td class="num">' + yuan(o.total) + '</td><td><span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></td></tr>'; }).join('') +
+      '<td class="num">' + yuan(o.total) + '</td><td><span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></td>' +
+      // 支付轮（支付）：最近订单也要一眼看见退款处理中/退款失败
+      '<td>' + Mall.payBadgeHTML(o) + '</td></tr>'; }).join('') +
     '</tbody></table></div>' : '<div class="empty"><span class="big">🧾</span>今天还没有订单</div>';
 
   const lowList = Mall.loadCatalog().filter(p => p.stock <= Admin.LOW_STOCK);
@@ -742,9 +781,16 @@ function printReport() {
 /* ---------------- 订单 ---------------- */
 // 状态快捷片（第 28 轮保留）：与上方「状态」下拉是同一件事的两条入口。
 // 需要收窄成多个状态时（如「待备货+配送中」）用下拉，做法见 ofStatus 的 comma 支持。
-const FILTERS = [['全部', ''], ['待备货', 'pending'], ['配送中', 'delivering'], ['待自取', 'ready'], ['已完成', 'done'], ['已取消', 'cancelled']];
+// 支付轮（支付）：pending 现在既含「待付款」也含「待备货」，片子文案必须如实写两态，
+// 不能只写「待备货」——否则老板点进去会以为全是能备货的单。
+// 支付轮（payEnabled）：未开通在线支付时 pending 只有「待备货」一态，片子也退回一个词。
+// 写成函数而不是常量：设置是探测/同步之后才到的，常量会在脚本加载那一刻就把文案写死。
+function filtersList() {
+  const pay = Mall.payEnabled();
+  return [['全部', ''], [pay ? '待付款/待备货' : '待备货', 'pending'], ['配送中', 'delivering'], ['待自取', 'ready'], ['已完成', 'done'], ['已取消', 'cancelled']];
+}
 function renderFilters() {
-  $('filters').innerHTML = FILTERS.map(f =>
+  $('filters').innerHTML = filtersList().map(f =>
     '<div class="chip' + (curFilter === f[1] ? ' on' : '') + '" onclick="pickF(\'' + f[1] + '\')">' + f[0] + '</div>').join('');
 }
 function pickF(f) { curFilter = f; renderFilters(); applyOrderFilter(); }
@@ -770,19 +816,33 @@ function readOrderFilter() {
     date: v('ofDate') || 'today',
     from: v('ofFrom').trim(),
     to: v('ofTo').trim(),
-    type: v('ofType') || 'all'
+    type: v('ofType') || 'all',
+    // 支付轮（支付）：''/'all' = 全部支付状态；'0' = 待付款；'1' = 已付款
+    paid: v('ofPaid') || 'all'
   };
 }
 // 筛选条件 → 请求/导出用的查询串（纯函数在 Admin 里，页面只负责取 DOM 值）
 function orderFilterQuery() {
   return Admin.orderFilterQuery ? Admin.orderFilterQuery(orderFilter) : {};
 }
+// 状态下拉的显示名必须跟支付口径走（支付轮）：pending 既可能是「待付款」也可能是「待备货」，
+// 名字只有 Mall.orderLabel 一份真源，这里绝不另抄。值仍是契约里的 5 个 status 值（不新增 status）。
+function renderOfStatusOptions() {
+  const sel = $('ofStatus');
+  if (!sel) return;
+  const cur = sel.value || 'all';
+  const label = s => (Mall.orderLabel ? Mall.orderLabel({ status: s, paid: true }) : s);
+  sel.innerHTML = '<option value="all">全部</option>' +
+    Admin.ORDER_STATUSES.map(s => '<option value="' + s + '">' + esc(label(s)) + '</option>').join('');
+  sel.value = cur && (cur === 'all' || Admin.ORDER_STATUSES.indexOf(cur) >= 0) ? cur : 'all';
+}
 function bindOrderFilters() {
-  ['ofQ', 'ofStatus', 'ofDate', 'ofFrom', 'ofTo', 'ofType'].forEach(id => {
+  renderOfStatusOptions();
+  ['ofQ', 'ofStatus', 'ofDate', 'ofFrom', 'ofTo', 'ofType', 'ofPaid'].forEach(id => {
     const el = $(id);
     if (!el || el._ofBound) return;
     el._ofBound = 1;
-    // 事件绑在 JS 里而不是写死 onchange，测试可以逐字断言这 6 个控件都会触发刷新
+    // 事件绑在 JS 里而不是写死 onchange，测试可以逐字断言这 7 个控件都会触发刷新
     el.addEventListener('change', applyOrderFilter);
     el.addEventListener('input', applyOrderFilter);
   });
@@ -825,6 +885,8 @@ function fileHint(filter) {
   if (f.date) bits.push(f.date);
   if (f.from || f.to) bits.push((f.from || '') + '~' + (f.to || ''));
   if (f.type) bits.push(f.type);
+  // 支付轮（支付）：导出提示里也要如实体现支付状态（列表筛了导出没筛是不允许的）
+  if (f.paid === '1' || f.paid === '0') bits.push(f.paid === '1' ? '已付款' : '待付款');
   if (f.q) bits.push('关键词');
   return bits.length ? bits.join(' · ') : '全部订单';
 }
@@ -864,15 +926,28 @@ function renderOrders(rows) {
     } else if (o.status === 'ready') {
       acts.push('<button class="btn btn-xs btn-primary" onclick="adv(\'' + esc(o.id) + '\',\'done\')">确认完成</button>');
     }
+    // 支付轮（线下收款兜底：现金 / 未开通微信支付）——只在「没收到钱」时才提供。
+    // 已取消的单绝不给：取消＝这单不做了（若已付款，取消时服务端已发起退款），
+    // 再点「标记已收款」会把没进账的钱算进「今日已收款」，等于自己骗自己。
+    if (!Mall.isPaid(o) && o.status !== 'cancelled') acts.push('<button class="btn btn-xs" onclick="markPaidO(\'' + esc(o.id) + '\')">💵 标记已收款</button>');
+    // 发起退款：只对**已付款且还没取消**的单显示（已取消的单服务端已经发过退款了）
+    if (Mall.isPaid(o) && o.status !== 'cancelled') acts.push('<button class="btn btn-xs btn-danger" onclick="refundO(\'' + esc(o.id) + '\')">↩ 发起退款</button>');
     acts.push('<button class="btn btn-xs" onclick="printOrder(\'' + esc(o.id) + '\')">🖨 小票</button>');
+    // 支付明细（支付轮）：微信支付单号 / 退款号 / 退款状态 —— 退款过程必须在界面上看得见，不许静默
+    const payBits = [];
+    if (o.paidAt) payBits.push('到账 ' + when(o.paidAt));
+    if (o.transactionId) payBits.push('微信单号 ' + esc(o.transactionId));
+    if (o.refundId) payBits.push('退款号 ' + esc(o.refundId));
+    if (o.refundState) payBits.push('退款状态 ' + esc(refundLabel(o.refundState)));
     return '<div class="ocard">' +
-      '<div class="oh"><span class="oid">' + esc(o.id) + '</span><span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></div>' +
+      '<div class="oh"><span class="oid">' + esc(o.id) + '</span>' + Mall.payBadgeHTML(o) + '<span class="badge ' + v.statusCls + '">' + v.statusLabel + '</span></div>' +
       '<div class="items">' + o.items.map(i => '· ' + esc(i.name) + ' ×' + i.qty + '　' + yuan(i.price * i.qty)).join('<br>') + '</div>' +
       '<div class="muted" style="font-size:12px;margin-top:6px">' +
         '『' + (o.deliveryType === 'pickup' ? '到店自提' : '配送到家') + '』' + esc(o.customer.name) + ' ' + esc(o.customer.phone) +
         (o.customer.address ? ' · ' + esc(o.customer.address) : '') +
         (o.courier ? ' ｜🚚 ' + esc(o.courier) : '') + ' · ' + when(o.createdAt) +
       '</div>' +
+      (payBits.length ? '<div class="muted" style="font-size:12px;margin-top:4px">' + payBits.join(' · ') + '</div>' : '') +
       '<div class="of"><span class="amt">小计 ' + yuan(o.subtotal) + (o.deliveryFee ? ' ＋ 配送 ' + yuan(o.deliveryFee) : '') + ' ＝ <b>' + yuan(o.total) + '</b></span>' +
         '<span class="acts">' + acts.join('') + '</span>' +
       '</div></div>';
@@ -886,6 +961,7 @@ function renderOrderFooter(list) {
   if (f.q) bits.push('关键词「' + f.q + '」');
   if (f.status && f.status !== 'all') bits.push('状态 ' + f.status.split(',').join('/'));
   if (f.type && f.type !== 'all') bits.push(f.type === 'pickup' ? '自提' : '配送');
+  if (f.paid === '1' || f.paid === '0') bits.push(f.paid === '1' ? '已付款' : '待付款');
   const dlab = { today: '今天', '7d': '近 7 天', none: '全部时间', custom: '自定义' };
   bits.push('日期 ' + (f.date === 'custom' ? ((f.from || '…') + ' ~ ' + (f.to || '…')) : (dlab[f.date] || '今天')));
   $('orderFooter').textContent = '共 ' + list.length + ' 单（' + bits.join(' · ') + '）· 列表与 KPI 同口径';
@@ -897,18 +973,26 @@ function renderOrderKpis(rows) {
   if (!document.getElementById) return;
   const list = rows || Admin.filterOrders(Mall.getOrders(), orderFilter);
   const todayKey = Admin.dayKey(new Date());
-  const pending = list.filter(o => o.status === 'pending').length;
+  // 支付轮（支付）红线：待备货队列**只算已付款**的单。未付款单不能混进备货口径
+  // （否则老板会去备一份还没收钱的货）。口径只有 Admin.prepQueue 一份真源。
+  const pending = Admin.prepQueue(list).length;
   // 今日营业额只认「结果里今天且已完成」的单：筛选把今天排除掉时就是 0
   const todayDone = list.filter(o => o.status === 'done' && Admin.dayKey(o.createdAt) === todayKey);
   const amount = Admin.round2(todayDone.reduce((s, o) => s + (Number(o.total) || 0), 0));
   const past = list.filter(o => Admin.dayKey(o.createdAt) !== todayKey).length;
+  // 对账两张卡跟着筛选走，口径与总览页同一份（Admin.kpiOf）
+  const pay = Admin.kpiOf(list);
   if ($('kpiPending')) $('kpiPending').textContent = String(pending);
-  if ($('kpiPendingSub')) $('kpiPendingSub').textContent = orderAllTime ? '不限日期 · 仅待备货' : '当前筛选 · 仅待备货';
+  if ($('kpiPendingSub')) $('kpiPendingSub').textContent = prepSub(orderAllTime ? '不限日期 · ' : '当前筛选 · ');
   if ($('kpiOrders')) $('kpiOrders').textContent = String(list.length);
   if ($('kpiOrdersSub')) $('kpiOrdersSub').textContent = '当前筛选结果' + (past ? ' · 其中过往 ' + past + ' 单' : '');
   if ($('kpiRevenue')) $('kpiRevenue').textContent = yuan(amount);
   if ($('kpiRevenueSub')) $('kpiRevenueSub').textContent = '只算已完成 ' + todayDone.length + ' 单（下单≠收款）' +
     (list.length && !todayDone.length ? ' · 当前筛选内今天没有已完成的单' : '');
+  if ($('kpiPaidAmount')) $('kpiPaidAmount').textContent = yuan(pay.paidAmount);
+  if ($('kpiPaidSub')) $('kpiPaidSub').textContent = '按付款时间统计 · 今日已付款且未取消（含退款处理中）';
+  if ($('kpiToCollect')) $('kpiToCollect').textContent = String(pay.toCollect);
+  if ($('kpiToCollectSub')) $('kpiToCollectSub').textContent = toCollectSub();
 }
 // 配送员名单（任务池⑧ / D25）：在线时真源在后端 courier 表（增删带约束校验），
 // 保存时按「本地输入 vs 后端名单」求差集逐个调接口，再把后端名单拉回来做镜像；离线只改本地。
@@ -972,6 +1056,37 @@ async function cancelO(id) {
   catch (e) { toast(e.message, 3600); }
   renderAll();
 }
+/* ---------------- 支付：线下收款兜底 / 发起退款（支付轮） ----------------
+ * 两条都不可静默：失败一律走红 toast（toastErr），成功才 renderAll() 刷新界面。
+ * 「标记已收款」是给现金 / 未开通微信支付的兜底，二次确认里必须说清这一点，
+ * 免得老板以为点一下就等于微信到账了。
+ */
+async function markPaidO(id) {
+  const o = Mall.getOrders().filter(x => String(x.id) === String(id))[0] || {};
+  const who = (o.customer && o.customer.name) ? o.customer.name : '该顾客';
+  const amt = yuan(o.total);
+  if (!confirm('确认「' + who + '」的订单已收到款 ' + amt + '？\n\n这是**现金 / 未开通微信支付**的线下收款兜底，不会真的走微信收款。\n标记后该单才会进入「待备货」。')) return;
+  try {
+    await SdyApi.markPaid(id, '现金');
+    toast('已标记收款 ' + amt + '（线下备注：现金）');
+  } catch (e) {
+    return toastErr('标记收款失败：' + ((e && e.message) || '未知错误') + '（订单状态未变，可重试）', 5200);
+  }
+  renderAll();
+}
+async function refundO(id) {
+  const o = Mall.getOrders().filter(x => String(x.id) === String(id))[0] || {};
+  const who = (o.customer && o.customer.name) ? o.customer.name : '该顾客';
+  const amt = yuan(o.total);
+  if (!confirm('确认给「' + who + '」的订单发起退款 ' + amt + '？\n\n这会把订单改成「已取消」并由服务端自动发起退款；\n钱多久到账取决于微信，退款结果回来自动更新（退款处理中 / 已退款 / 退款失败，请联系店家）。')) return;
+  try {
+    await SdyApi.refundOrder(id, '老板发起退款');
+    toast('已发起退款 ' + amt + '，状态会随微信回调更新为「已退款」或「退款失败，请联系店家」');
+  } catch (e) {
+    return toastErr('发起退款失败：' + ((e && e.message) || '未知错误') + '（订单未取消，可重试）', 5200);
+  }
+  renderAll();
+}
 
 /* ---------------- 小票打印（任务池第 2 项） ---------------- */
 // 小票是订单的只读投影：只读订单 + 门店抬头，不动订单/库存/价格（D8 同源）
@@ -1012,8 +1127,9 @@ function printOrder(id) {
   openPrint('<div class="receipt" id="receipt">' + receiptHTML(Admin.buildReceipt(o, { store: Admin.getStoreInfo() })) + '</div>', '小票已生成，正在唤起打印…');
 }
 function printPending() {
-  const list = Mall.getOrders().filter(o => o.status === 'pending');
-  if (!list.length) return toast('没有待备货订单');
+  // 支付轮（支付）：批量打印的「待备货」只含已付款单——没收到钱的不该进备货流程
+  const list = Admin.prepQueue(Mall.getOrders());
+  if (!list.length) return toast('没有已付款的待备货订单');
   const store = Admin.getStoreInfo();
   openPrint(list.map((o, i) =>
     '<div class="receipt' + (i < list.length - 1 ? ' r-break' : '') + '"' + (i === 0 ? ' id="receipt"' : '') + '>' +

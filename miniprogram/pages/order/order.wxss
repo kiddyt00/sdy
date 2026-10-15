@@ -60,6 +60,11 @@
 .dk { color: #9ca3af; width: 150rpx; flex: none; }
 .dv { color: #374151; flex: 1; }
 .dv.strong { color: #dc2626; font-weight: 700; font-size: 30rpx; }
+/* 第 29 轮：退款态配色（蓝=处理中 / 灰=已退款 / 红=失败且醒目，fail 必须一眼看见）
+   与 web/mall.js:393-394 的 .st-info / .st-cancelled / .st-warn 同义 */
+.dv-info { color: #075985; }
+.dv-done { color: #6b7280; }
+.dv-warn { color: #b91c1c; font-weight: 700; }
 .dcopy {
   color: #16a34a;
   font-size: 22rpx;
@@ -77,7 +82,9 @@
 }
 .dbtn {
   font-size: 27rpx;
-  padding: 16rpx 34rpx;
+  /* 第 29 轮：按钮热区 ≥44px（88rpx = 20rpx*2 + 48rpx 行高） */
+  padding: 20rpx 34rpx;
+  line-height: 48rpx;
   border-radius: 999rpx;
   margin: 0 0 16rpx 16rpx;
 }

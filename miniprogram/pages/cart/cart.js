@@ -382,6 +382,12 @@ Page({
       : store.orderItems()
     if (!items.length) return this.warn('还没选商品')
 
+    // 第 29 轮：在线下单要进收银台，而支付认的是微信 openid —— 没登录先拦住，不发起下单。
+    // 离线（第 27 轮 P0-3）只能记在本机，保持原行为不受这条限制。
+    if (this.data.online && !(api.session() || {}).openid) {
+      return this.warn('请先用微信登录，下单后可直接支付')
+    }
+
     this.setData({ submitting: true })
     store.saveCustomer({ name: name, phone: phone, address: address })
     // 第 27 轮 P0-8：下单填的手机号就是这次请求的身份（D24/D31）。
@@ -418,6 +424,10 @@ Page({
                 confirmText: '知道了'
               })
             }
+          } else if (wx.redirectTo && r.order && r.order.id && api.payEnabled()) {
+            // 第 29 轮：在线下单成功直接进「收银台」付钱（离线不进这个分支）
+            // 第 31 轮：店里没开通在线支付就别把人送去一个付不了款的收银台，照旧去订单页
+            wx.redirectTo({ url: '/pages/pay/pay?orderId=' + encodeURIComponent(r.order.id) })
           } else if (wx.switchTab) {
             setTimeout(() => { try { wx.switchTab({ url: '/pages/orders/orders' }) } catch (e) { /* 忽略 */ } }, 600)
           }

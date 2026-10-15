@@ -28,6 +28,9 @@ const SdyApi = (() => {
   let cfg = Object.assign({}, DEFAULTS);
   let mode_ = 'local';      // 'server' | 'local'
   let ordersAll = false;    // 订单镜像口径：false=只拉自己的（顾客页）/ true=全店（管理后台）
+  // 支付轮（payEnabled）：/api/settings 的派生字段（微信支付是否配好）。**默认 false = 未开通**：
+  // 字段缺失 / 请求失败 / 不是布尔，全按未开通算——这正是服务端还没上这个字段时的线上真实状态。
+  let payEnabled_ = false;
   let lastError = '';
   let health_ = null;
 
@@ -243,7 +246,16 @@ const SdyApi = (() => {
       deliveryFee: o.deliveryFee,
       total: o.total,
       customer: { name: o.customerName, phone: o.phone, address: o.address || '' },
-      status: o.status
+      status: o.status,
+      // 支付轮（支付）：服务端新增的支付/退款字段必须原样透到镜像里——
+      // 管理端「支付」列、退款可见性、待备货队列全靠它们，少一个就会静默当「未付款」。
+      // 老服务端没有这些字段时按下线兜底（paid=0 / 时间 0 / 单号空），页面口径不受影响。
+      paid: o.paid === true || o.paid === 1 || o.paid === '1',
+      paidAt: ts(o.paidAt),
+      transactionId: o.transactionId || '',
+      payExpireAt: Number(o.payExpireAt) || 0,
+      refundId: o.refundId || '',
+      refundState: o.refundState || ''
     };
   }
 
@@ -253,7 +265,8 @@ const SdyApi = (() => {
   // 免得前端「悄悄改成综合」把问题藏起来。
   const SORTS = ['default', 'hot', 'price_asc', 'price_desc', 'stock_desc'];
   const PRODUCT_QUERY_ORDER = ['keyword', 'category', 'onSale', 'phone', 'sort', 'limit', 'offset'];
-  const ORDER_QUERY_ORDER = ['phone', 'q', 'status', 'date', 'from', 'to', 'type'];  // 7.5：新名字，绝不复用 phone 做筛选
+  // 支付轮（支付）：订单筛选多一个 paid=0|1。放在 type 之后，保持老参数顺序不变。
+  const ORDER_QUERY_ORDER = ['phone', 'q', 'status', 'date', 'from', 'to', 'type', 'paid'];  // 7.5：新名字，绝不复用 phone 做筛选
   const HOT_QUERY_ORDER = ['limit', 'phone'];
   const ALT_QUERY_ORDER = ['code', 'limit'];
 
@@ -274,8 +287,18 @@ const SdyApi = (() => {
     return parts.length ? '?' + parts.join('&') : '';
   }
   function productQuery(params) { return queryString(PRODUCT_QUERY_ORDER, params); }
-  // 订单筛选串只含 filter 的 6 个字段；phone 由身份通道单独拼，filter 里的 phone 会被无视
-  function orderFilterQuery(filter) { return queryString(ORDER_QUERY_ORDER.slice(1), filter); }
+  // 订单筛选串只含 filter 的 8 个字段；phone 由身份通道单独拼，filter 里的 phone 会被无视。
+  // 支付轮（支付）：paid 逐字进 query；''/'all'/null 视为不带（= 全部支付状态）。
+  // sync() 里逐字段取值时也复用它，保证「筛选串」与「真请求」两条管子口径完全一致。
+  function paidParam(v) {
+    if (v === '' || v === 'all' || v == null) return undefined;
+    return v;
+  }
+  function orderFilterQuery(filter) {
+    const f = Object.assign({}, filter || {});
+    f.paid = paidParam(f.paid);
+    return queryString(ORDER_QUERY_ORDER.slice(1), f);
+  }
 
   function num(v, dflt, max) {
     const n = Number(v);
@@ -375,12 +398,15 @@ const SdyApi = (() => {
     // Object.assign(filter, …)：filter 里就算混进 phone，也绝不可能顶掉身份通道的 phone。
     const filt = (opts && opts.filter) || {};
     const oq = queryString(ORDER_QUERY_ORDER, {
-      phone: p, q: filt.q, status: filt.status, date: filt.date, from: filt.from, to: filt.to, type: filt.type
+      phone: p, q: filt.q, status: filt.status, date: filt.date, from: filt.from, to: filt.to, type: filt.type,
+      paid: paidParam(filt.paid)
     });
     // 运营参数（配送费 / 免运费门槛 / 低库存阈值 / 起送价）：服务端是真源。
     // 第 27 轮以前前端只用自己那份默认值，Go 与页面在 29.995 这种边界上会算出不同的钱。
     try {
       const cfgS = await req('GET', '/api/settings');
+      // 严格认布尔真值：服务端下发 JSON bool，缺字段 / 字符串 'true' / 1 都按未开通。
+      payEnabled_ = (cfgS && cfgS.payEnabled === true);
       if (cfgS && m.setSettings) m.setSettings(cfgS);
     } catch (e) { /* 设置拉不到不影响商品与订单 */ }
     const pr = await req('GET', '/api/products' + (raw ? '?phone=' + encodeURIComponent(raw) : ''));
@@ -458,6 +484,53 @@ const SdyApi = (() => {
     const p = m.getMyPhone ? m.getMyPhone() : '';
     const res = await req('POST', '/api/orders/' + encodeURIComponent(id) + '/cancel' + (p ? '?phone=' + encodeURIComponent(p) : ''), { to: 'cancelled' });
     try { await sync(); } catch (e) { /* 同上 */ }
+    return res;
+  }
+
+  /* ---------------- 支付 / 退款 / 对账（支付轮契约，docs/支付与配送-方案与验收.md §1.5） ----------------
+   * 契约已冻结但服务端可能还没实现完：这四个动作全部沿用 req()（credentials:'same-origin' +
+   * 管理员/员工时带 X-Admin），请求形状按契约写死，不做本地假成功——后端没实现就会拿到 404/503，
+   * 页面照原样红字报出来，绝不能让老板以为收款成功了。
+   */
+
+  // 线下收款兜底（现金 / 未开通微信支付）：POST /api/orders/{id}/mark-paid，body 可带 {"note":"现金"}。
+  // 管理员/员工接口（adminGate）→ 必须带 X-Admin，靠 opts.all=true 打开。
+  async function markPaid(orderId, note) {
+    if (mode_ !== 'server') throw new Error('线下收款需要连上后端（本地演示不落库）');
+    ordersAll = true;   // 该接口是管理员/员工通道，不带上身份会 404/403
+    const body = {};
+    if (note != null && String(note).trim() !== '') body.note = String(note).trim();
+    const o = await req('POST', '/api/orders/' + encodeURIComponent(orderId) + '/mark-paid', body);
+    try { await sync(null, { all: true }); } catch (e) { /* 收款已成功，镜像慢一拍不算失败 */ }
+    return o && o.id ? (mirroredOrder(o.id) || o) : o;
+  }
+
+  // 微信下单（小程序收银台用）：POST /api/pay/prepay，body {"orderId":"M…"}。
+  // 200 → {outTradeNo, amountFen, payParams, expireAt}；未配置支付 → 503（原样抛给调用方）。
+  async function prepayOrder(orderId) {
+    if (mode_ !== 'server') throw new Error('线上支付需要连上后端（未配置微信支付时会回 503）');
+    return await req('POST', '/api/pay/prepay', { orderId: orderId });
+  }
+
+  // 支付状态查询（兜底查单）：GET /api/pay/status?orderId=M…，顾客侧按归属校验。
+  async function payStatus(orderId) {
+    if (mode_ !== 'server') {
+      const o = M().getOrders().find(x => x.id === orderId);
+      return { paid: !!(o && o.paid), status: (o && o.status) || '', transactionId: (o && o.transactionId) || '', refundState: (o && o.refundState) || '', expireAt: (o && o.payExpireAt) || 0 };
+    }
+    return await req('GET', '/api/pay/status?orderId=' + encodeURIComponent(orderId));
+  }
+
+  // 发起退款：**服务端目前没有独立的退款接口**（契约 §1.7：取消已付款订单时服务端自动发起退款，
+  // 退款结果由 /api/pay/refund-notify 回调更新）。所以这里如实调 POST /api/orders/{id}/cancel——
+  // 对已付款单它会顺带把 refundState 置为 processing；reason 服务端取「取消原因」，此处一并带上。
+  async function refundOrder(orderId, reason) {
+    if (mode_ !== 'server') throw new Error('退款需要连上后端（本地演示不落库）');
+    ordersAll = true;   // 后台柜台动作，走管理员通道
+    const body = { to: 'cancelled' };
+    if (reason != null && String(reason).trim() !== '') body.reason = String(reason).trim();
+    const res = await req('POST', '/api/orders/' + encodeURIComponent(orderId) + '/cancel', body);
+    try { await sync(null, { all: true }); } catch (e) { /* 退款已发起，镜像慢一拍不算失败 */ }
     return res;
   }
 
@@ -598,7 +671,16 @@ const SdyApi = (() => {
   }
   async function getSettings() {
     if (mode_ !== 'server') return null;
-    return req('GET', '/api/settings');
+    const s = await req('GET', '/api/settings');
+    payEnabled_ = (s && s.payEnabled === true);   // 顺手刷新支付开通状态缓存
+    return s;
+  }
+  // 在线支付是否已开通。真源是 /api/settings 的 payEnabled：sync / getSettings 拉到后同时写进
+  // Mall（显示口径真源）与这里的缓存。Mall 在时以 Mall 为准，免得两处缓存各说各话。
+  function payEnabled() {
+    const m = resolveMall();
+    if (m && typeof m.payEnabled === 'function') return m.payEnabled() === true;
+    return payEnabled_ === true;
   }
   async function saveSettings(s) {
     if (mode_ !== 'server') return null;
@@ -737,6 +819,7 @@ const SdyApi = (() => {
     mode_ = 'local';
     lastError = '';
     health_ = null;
+    payEnabled_ = false;   // 复位即「未开通」，与「取不到 = 未开通」同一口径
     notifyMallMode();
   }
 
@@ -754,6 +837,11 @@ const SdyApi = (() => {
     createOrder: createOrder,
     advanceOrder: advanceOrder,
     cancelOrder: cancelOrder,
+    // 支付轮（支付）：线下收款 / 微信下单 / 查单 / 发起退款
+    markPaid: markPaid,
+    prepayOrder: prepayOrder,
+    payStatus: payStatus,
+    refundOrder: refundOrder,
     setStock: setStock,
     upsertProduct: upsertProduct,
     updateProduct: updateProduct,
@@ -771,6 +859,8 @@ const SdyApi = (() => {
     saveCourier: saveCourier,
     getSettings: getSettings,
     saveSettings: saveSettings,
+    // 支付轮（payEnabled）：在线支付是否开通（false = 未开通，全站退回「待备货」语义）
+    payEnabled: payEnabled,
     listAddresses: listAddresses,
     defaultAddress: defaultAddress,
     saveAddress: saveAddress,

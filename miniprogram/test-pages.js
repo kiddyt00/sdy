@@ -62,6 +62,15 @@ function mkWx(routes) {
       if (o && o.success) o.success({ code: this._loginCode || 'CODE_PAGE' })
     },
     showModal: (o) => { if (o && o.success) o.success({ confirm: true }) },
+    // 第 29 轮：收银台。_payMode = 'ok' | 'cancel' | 'fail'；pays 记录每次拉起，用来断言「只拉一次」
+    pays: [],
+    requestPayment: function (o) {
+      this.pays.push({ timeStamp: (o && o.timeStamp) || '', package: (o && o.package) || '', paySign: (o && o.paySign) || '' })
+      const mode = this._payMode || 'ok'
+      if (mode === 'ok') { if (o && o.success) o.success({ errMsg: 'requestPayment:ok' }); return }
+      const errMsg = mode === 'cancel' ? 'requestPayment:fail cancel' : 'requestPayment:fail system error'
+      if (o && o.fail) o.fail({ errMsg: errMsg })
+    },
     request(opts) {
       const method = (opts.method || 'GET').toUpperCase()
       const full = String(opts.url).replace(/^https?:\/\/[^/]+/, '')
@@ -124,7 +133,7 @@ async function main() {
   /* ---------- ① 工程结构 ---------- */
   section('① 小程序工程结构')
   const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'app.json'), 'utf8'))
-  ok(appJson.pages.length === 15, 'app.json 声明 15 个页面（10 顾客 + 5 员工）')
+  ok(appJson.pages.length === 16, 'app.json 声明 16 个页面（11 顾客 + 5 员工）')
   ok(appJson.tabBar.list.length === 5, 'tabBar 5 个入口')
   let allOk = true
   appJson.pages.forEach((p) => {
@@ -1177,6 +1186,274 @@ async function main() {
   await p28g2.onLoad({ code: '6901234567892' })
   ok(p28g2.data.p.stock === 120 && p28g2.data.alts.length === 0, '有货时不显示同类推荐')
   ok(p28count('/api/products/alternatives') === 0, '有货时压根不发同类推荐请求')
+
+  /* ---------- ⑮ 第 29 轮：收银台（微信支付） ---------- */
+  section('⑮ 收银台（微信支付，第 29 轮 / 0.9.0）')
+  const payWxml = fs.readFileSync(path.join(ROOT, 'pages/pay/pay.wxml'), 'utf8')
+  const NOW = Math.floor(Date.now() / 1000)
+  const FUTURE = NOW + 900
+  const PAY_PARAMS = { timeStamp: '1791960000', nonceStr: 'N1', package: 'prepay_id=wx123', signType: 'RSA', paySign: 'SIG' }
+  const p29health = { method: 'GET', path: '/healthz', body: { ok: true, cloudConfigured: true, circuitOpen: false, cloudFails: 0 } }
+  const p29login = { method: 'POST', path: '/api/wx/login', body: { ok: true, openid: 'o_page_pay', bound: false, phone: '', nickname: '阿明', avatar: '', tier: 'retail' } }
+  const mkOrder = (over) => Object.assign({
+    id: 'M29', customerName: '张三', phone: '13800138000', deliveryType: 'pickup',
+    subtotal: 6, deliveryFee: 0, total: 6, status: 'pending', paid: false, payExpireAt: FUTURE,
+    items: [{ code: '6901234567892', name: '可口可乐', price: 3, qty: 2 }], createdAt: '2026-10-11T02:30:00Z'
+  }, over || {})
+  const p29pay = (expire, status) => ({
+    method: 'GET', path: '/api/pay/status',
+    body: { paid: false, status: status || 'pending', transactionId: '', refundState: '', expireAt: expire === undefined ? FUTURE : expire }
+  })
+  // 第 31 轮：pending 单显不显「待付款」还要看店铺有没有开通在线支付，
+  // 所以收银台/订单页的路由里必须有 GET /api/settings（这里=已开通）。
+  const p29settings = (on) => ({ method: 'GET', path: '/api/settings', body: { name: '家庭超市', phone: '13900000000', address: '福州市', lowStock: 2, payEnabled: on } })
+  const PAY_ROUTES = [
+    p29health, p29login, p29settings(true),
+    { method: 'GET', path: '/api/orders/M29', body: mkOrder() },
+    p29pay(),
+    { method: 'POST', path: '/api/pay/prepay', body: { outTradeNo: 'M29', amountFen: 600, payParams: PAY_PARAMS, expireAt: FUTURE } }
+  ]
+  const payCalls = (p) => global.wx._calls.filter((c) => c.path.split('?')[0] === p).length
+
+  // 页面存在 + 进入自动拉起一次
+  ok(exists('pages/pay/pay.js') && exists('pages/pay/pay.wxml') && exists('pages/pay/pay.json') && exists('pages/pay/pay.wxss'),
+    '收银台页面四件套齐全（pages/pay/pay）')
+  ok(appJson.pages.indexOf('pages/pay/pay') >= 0, 'app.json 的 pages 里有收银台')
+  global.wx = mkWx(PAY_ROUTES)
+  await api.wxLogin({ nickname: '阿明' }) // 支付要 openid
+  let pay = loadPage('pages/pay/pay.js')
+  pay.onLoad({ orderId: 'M29' })
+  await pay.onShow()
+  ok(global.wx.pays.length === 1, '进入收银台自动拉起一次微信支付：' + global.wx.pays.length)
+  ok(global.wx.pays[0].package === 'prepay_id=wx123' && global.wx.pays[0].paySign === 'SIG',
+    'prepay 下发的 payParams 原样交给 wx.requestPayment')
+  ok(pay.data.paid === true, 'wx 侧成功后页面切到「已支付」')
+  ok(pay.data.amountText === '¥6.00', '金额按整数分格式化成 ¥6.00：' + pay.data.amountText)
+  ok(pay.data.countText === '共 2 件', '商品件数能拿到就显示：' + pay.data.countText)
+  ok(payWxml.indexOf('支付成功，正在备货') > 0, '成功文案：支付成功，正在备货')
+  ok(payWxml.indexOf('查看订单') > 0 && payWxml.indexOf('goOrder') > 0, '成功后给出「查看订单」入口')
+  pay.goOrder()
+  ok(global.wx.navs[global.wx.navs.length - 1] === '/pages/order/order?id=M29', '「查看订单」进订单详情')
+  await pay.onShow()
+  ok(global.wx.pays.length === 1, '支付成功后再回本页不会又拉起一次收银台（返回行为合理）')
+
+  // 取消 → 留在页面 + 「重新支付」（不许弹窗循环）
+  global.wx = mkWx(PAY_ROUTES)
+  global.wx._payMode = 'cancel'
+  await api.wxLogin({ nickname: '阿明' })
+  pay = loadPage('pages/pay/pay.js')
+  pay.onLoad({ orderId: 'M29' })
+  await pay.onShow()
+  ok(pay.data.paid === false, '取消支付不算已付')
+  ok(pay.data.failMsg === '你取消了支付', '取消 → 可读文案「你取消了支付」：' + pay.data.failMsg)
+  ok(payWxml.indexOf('重新支付') > 0 && payWxml.indexOf('bind:click="retry"') > 0, '取消/失败后页面给出「重新支付」按钮')
+  ok(global.wx.pays.length === 1, '取消后不自动再弹一次：' + global.wx.pays.length)
+  global.wx._payMode = 'ok'
+  await pay.retry()
+  ok(global.wx.pays.length === 2 && pay.data.paid === true, '点「重新支付」再拉一次并成功')
+
+  // 倒计时：到 0 → 超时文案 + 停表 + 不再重试
+  global.wx = mkWx(PAY_ROUTES.map((r) => (r.path === '/api/pay/status' ? p29pay(NOW - 5) : r)))
+  await api.wxLogin({ nickname: '阿明' })
+  pay = loadPage('pages/pay/pay.js')
+  pay.onLoad({ orderId: 'M29' })
+  await pay.onShow()
+  ok(pay.data.expired === true, '服务端到期时间已过 → 页面直接判超时')
+  ok(global.wx.pays.length === 0, '已超时的单不再拉起支付')
+  ok(payWxml.indexOf('支付超时，订单已取消') > 0, '超时文案：支付超时，订单已取消')
+
+  // 倒计时真的会走到 0（不真等 1 秒：把到期时间拨到当前）
+  global.wx = mkWx(PAY_ROUTES)
+  await api.wxLogin({ nickname: '阿明' })
+  const tickPay = loadPage('pages/pay/pay.js')
+  tickPay.onLoad({ orderId: 'M29' })
+  tickPay.setData({ expireAt: Math.floor(Date.now() / 1000), leftText: '还剩 0:01' })
+  tickPay.tick()
+  ok(tickPay.data.expired === true && tickPay.data.leftText === '', '倒计时到 0 → 切超时态并停表：' + tickPay.data.leftText)
+  tickPay.stopTick()
+
+  // 未登录：不调支付、不发 prepay，只引导去登录
+  global.wx = mkWx(PAY_ROUTES)
+  pay = loadPage('pages/pay/pay.js')
+  pay.onLoad({ orderId: 'M29' })
+  await pay.onShow()
+  ok(pay.data.needLogin === true, '没 openid → 页面直接拦住（需要登录）')
+  ok(global.wx.pays.length === 0 && payCalls('/api/pay/prepay') === 0, '未登录既不拉起支付也不发 prepay')
+  ok(global.wx.toasts.indexOf('请先用微信登录，下单后可直接支付') >= 0, '未登录提示：请先用微信登录，下单后可直接支付')
+  pay.goLogin()
+  ok(global.wx.tabs[global.wx.tabs.length - 1] === '/pages/mine/mine', '未登录给「去我的页登录」入口')
+
+  // 店里没开通在线支付（prepay 503）
+  global.wx = mkWx(PAY_ROUTES.map((r) => (r.path === '/api/pay/prepay'
+    ? { method: 'POST', path: '/api/pay/prepay', status: 503, body: { error: '微信支付未配置（服务端缺少商户号 / 证书 / APIv3 密钥）' } }
+    : r)))
+  await api.wxLogin({ nickname: '阿明' })
+  pay = loadPage('pages/pay/pay.js')
+  pay.onLoad({ orderId: 'M29' })
+  await pay.onShow()
+  ok(pay.data.noPayConfig === true, 'prepay 503 → 页面识别为「没开通在线支付」')
+  ok(payWxml.indexOf('店里还没开通在线支付，请联系店家') > 0, '未配置文案：店里还没开通在线支付，请联系店家')
+  ok(global.wx.pays.length === 0, '没配置支付时不去拉微信收银台')
+
+  // 我的订单：待付款入口 / 已微信支付小标 / 超时文案
+  const p29list = [
+    p29health, p29login, p29settings(true),
+    { method: 'GET', path: '/api/orders', body: { items: [
+      mkOrder(),
+      mkOrder({ id: 'M30', paid: true, paidAt: '2026-10-11T03:00:00Z', transactionId: '4200001234' }),
+      mkOrder({ id: 'M31', status: 'cancelled', paid: false, payExpireAt: NOW - 60 })
+    ], total: 3 } }
+  ]
+  global.wx = mkWx(p29list)
+  await api.wxLogin({ nickname: '阿明' })
+  const p29ol = loadPage('pages/orders/orders.js')
+  await p29ol.onShow()
+  ok(p29ol.data.orders[0].statusText === '待付款', '在线未付款单显示「待付款」：' + p29ol.data.orders[0].statusText)
+  ok(p29ol.data.orders[0].canPay === true, '未付款单给「去支付」')
+  ok(p29ol.data.orders[1].statusText === '待备货' && p29ol.data.orders[1].paidText === '已微信支付',
+    '已付款的 pending 单＝待备货 + 「已微信支付」小标')
+  ok(p29ol.data.orders[2].statusText === '已取消（超时未付）', '超时未付 → 已取消（超时未付）：' + p29ol.data.orders[2].statusText)
+  ok(p29ol.data.orders[2].canPay === false, '超时单不再给「去支付」')
+  p29ol.onPay({ currentTarget: { dataset: { id: 'M29' } } })
+  ok(global.wx.navs[global.wx.navs.length - 1] === '/pages/pay/pay?orderId=M29', '列表「去支付」进收银台')
+  const p29olw = fs.readFileSync(path.join(ROOT, 'pages/orders/orders.wxml'), 'utf8')
+  ok(p29olw.indexOf('去支付') > 0 && p29olw.indexOf('bindtap="onPay"') > 0, '订单列表 wxml 有「去支付」入口')
+  ok(p29olw.indexOf('支付剩余时间') > 0 && p29olw.indexOf('已微信支付') > 0, '订单列表显示剩余时间 + 已微信支付小标')
+
+  // 订单详情：待付款 + 去支付 + 可折叠支付单号
+  const p29odw = fs.readFileSync(path.join(ROOT, 'pages/order/order.wxml'), 'utf8')
+  global.wx = mkWx([p29health, p29login, p29settings(true), { method: 'GET', path: '/api/orders/M29', body: mkOrder() }])
+  await api.wxLogin({ nickname: '阿明' })
+  let p29od = loadPage('pages/order/order.js')
+  p29od.onLoad({ id: 'M29' })
+  await p29od.onShow()
+  ok(p29od.data.o.statusText === '待付款' && p29od.data.o.canPay === true, '详情页未付款单＝待付款 + 「去支付」')
+  p29od.goPay()
+  ok(global.wx.navs[global.wx.navs.length - 1] === '/pages/pay/pay?orderId=M29', '详情页「去支付」进收银台')
+  global.wx = mkWx([p29health, p29login, p29settings(true), { method: 'GET', path: '/api/orders/M29', body: mkOrder({ paid: true, transactionId: '4200001234', paidAt: '2026-10-11T03:00:00Z' }) }])
+  await api.wxLogin({ nickname: '阿明' })
+  p29od = loadPage('pages/order/order.js')
+  p29od.onLoad({ id: 'M29' })
+  await p29od.onShow()
+  ok(p29od.data.o.statusText === '待备货' && p29od.data.o.paidText === '已微信支付', '详情页已付款单标「已微信支付」')
+  ok(p29od.data.payOpen === false, '支付单号默认折叠')
+  ok(p29odw.indexOf('transactionId') > 0 && p29odw.indexOf('togglePay') > 0, '详情页展示 transactionId 且可折叠')
+  p29od.togglePay()
+  ok(p29od.data.payOpen === true, '点一下展开支付单号（对账用）')
+
+  // 下单链路：在线成功直接进收银台；没登录不发单
+  const p29cartRoutes = [
+    p29health,
+    { method: 'GET', path: '/api/products', body: { items: SERVER_PRODUCTS, total: 2 } },
+    { method: 'GET', path: '/api/settings', body: { ok: true, payEnabled: true } },
+    p29login,
+    { method: 'POST', path: '/api/orders', status: 201, body: mkOrder() },
+    { method: 'GET', path: '/api/orders/M29', body: mkOrder() },
+    p29pay()
+  ]
+  global.wx = mkWx(p29cartRoutes)
+  const p29cart = loadPage('pages/cart/cart.js')
+  store.addToCart({ code: '6901234567892', name: '可口可乐', salePrice: 3 }, 2)
+  await p29cart.onShow()
+  p29cart.onName({ detail: { value: '张三' } })
+  p29cart.onPhone({ detail: { value: '13800138000' } })
+  p29cart.onAddress({ detail: { value: '3 栋 502' } })
+  const p29before = global.wx._calls.filter((c) => c.path === '/api/orders').length
+  await p29cart.submit()
+  ok(global.wx.toasts.indexOf('请先用微信登录，下单后可直接支付') >= 0, '在线没登录下单被拦下并提示先登录')
+  ok(global.wx._calls.filter((c) => c.path === '/api/orders').length === p29before, '没登录不发起下单请求')
+  ok(global.wx.redirs.length === 0, '没登录不跳收银台')
+  await api.wxLogin({ nickname: '阿明' })
+  await p29cart.submit()
+  ok(global.wx.redirs[global.wx.redirs.length - 1] === '/pages/pay/pay?orderId=M29',
+    '在线下单成功 → redirectTo 收银台：' + global.wx.redirs[global.wx.redirs.length - 1])
+  ok(global.wx.tabs.indexOf('/pages/orders/orders') < 0, '在线下单不再直接跳「我的订单」')
+
+  // ---- 第 31 轮：店里没开通在线支付 —— 退回第 28 轮语义，一笔款都不催 ----
+  const p29payRoutes = [
+    { method: 'GET', path: '/api/orders/M29', body: mkOrder() },
+    p29pay(),
+    { method: 'POST', path: '/api/pay/prepay', body: { outTradeNo: 'M29', amountFen: 600, payParams: PAY_PARAMS, expireAt: FUTURE } }
+  ]
+  global.wx = mkWx([p29health, p29login, p29settings(false)].concat(p29payRoutes))
+  await api.wxLogin({ nickname: '阿明' })
+  await api.getSettings() // 页面自己也会问一次；这里显式问是为了断言缓存归零
+  ok(api.payEnabled() === false, 'settings 说 payEnabled=false → api.payEnabled() 就是 false')
+  const offPay = loadPage('pages/pay/pay.js')
+  offPay.onLoad({ orderId: 'M29' })
+  await offPay.onShow()
+  ok(global.wx.pays.length === 0, '没开通在线支付：绝不拉起微信收银台')
+  ok(payCalls('/api/pay/prepay') === 0, '没开通在线支付：连 prepay 都不发')
+  ok(offPay.data.noPayConfig === true, '没开通在线支付：页面直接进「店里还没开通」态')
+  await offPay.retry()
+  ok(global.wx.pays.length === 0, '这种态下点「重新支付」也不会突然拉起支付')
+  global.wx = mkWx([p29health, p29login, p29settings(false), { method: 'GET', path: '/api/orders', body: { items: [mkOrder()], total: 1 } }])
+  await api.wxLogin({ nickname: '阿明' })
+  const offOl = loadPage('pages/orders/orders.js')
+  await offOl.onShow()
+  ok(offOl.data.orders[0].statusText === '待备货', '没开通支付时未付款单＝「待备货」（第 28 轮语义）：' + offOl.data.orders[0].statusText)
+  ok(offOl.data.orders[0].canPay === false, '没开通支付：列表不出现「去支付」')
+  global.wx = mkWx([p29health, p29login, p29settings(false), { method: 'GET', path: '/api/orders/M29', body: mkOrder() }])
+  await api.wxLogin({ nickname: '阿明' })
+  const offOd = loadPage('pages/order/order.js')
+  offOd.onLoad({ id: 'M29' })
+  await offOd.onShow()
+  ok(offOd.data.o.statusText === '待备货' && offOd.data.o.canPay === false, '没开通支付：详情页也是「待备货」且无「去支付」')
+
+  // ---- ⑯ 退款提示（第 29 轮追加）：顾客付了款、老板取消并退款，必须看得见钱去哪了 ----
+  section('⑯ 退款提示（已取消 + refundState，第 29 轮 / 0.9.0）')
+  ok(rules.refundLabel({ refundState: 'processing' }) === '退款处理中', '退款处理中 → 与 Web 同源文案')
+  ok(rules.refundLabel({ refundState: 'success' }) === '已退款', '退款成功 → 「已退款」')
+  ok(rules.refundLabel({ refundState: 'fail' }) === '退款失败，请联系店家', '退款失败必须醒目且让顾客联系店家（不许静默）')
+  ok(rules.refundLabel({ refundState: 'weird' }) === '' &&
+    rules.refundText({ status: 'cancelled', refundState: 'weird' }) === '',
+    '未知 refundState 当作「没有退款这回事」：不抛错、不显示空行')
+  ok(rules.refundText({ status: 'pending', paid: true, refundState: 'processing' }) === '', '没取消的单不提退款')
+  ok(rules.orderLabel({ status: 'cancelled', paid: true, refundState: 'success' }) === '已取消',
+    'orderLabel 仍是逐字「已取消」（三端一致，退款另起一行说）')
+
+  global.wx = mkWx([p29health, p29login, { method: 'GET', path: '/api/orders', body: { items: [
+    mkOrder({ id: 'R1', status: 'cancelled', paid: true, refundState: 'processing' }),
+    mkOrder({ id: 'R2', status: 'cancelled', paid: true, refundState: 'success', refundId: 'R20261014001' }),
+    mkOrder({ id: 'R3', status: 'cancelled', paid: true, refundState: 'fail' }),
+    mkOrder({ id: 'R4', status: 'cancelled', paid: true, refundState: 'weird' }),
+    mkOrder({ id: 'R5', status: 'cancelled', paid: true })
+  ], total: 5 } }])
+  await api.wxLogin({ nickname: '阿明' })
+  const rl = loadPage('pages/orders/orders.js')
+  await rl.onShow()
+  ok(rl.data.orders[0].refundText === '退款处理中' && rl.data.orders[0].refundTone === 'info',
+    '列表：退款中 → 「退款处理中」（蓝）')
+  ok(rl.data.orders[1].refundText === '已退款' && rl.data.orders[1].refundTone === 'done',
+    '列表：退款成功 → 「已退款」（灰）')
+  ok(rl.data.orders[1].refundNo === 'R20261014001', '退款成功带退款单号（列表不显示，详情页折叠看）')
+  ok(rl.data.orders[2].refundText === '退款失败，请联系店家' && rl.data.orders[2].refundTone === 'warn',
+    '列表：退款失败 → 红字「退款失败，请联系店家」')
+  ok(rl.data.orders[0].statusText === '已取消', '退款单的状态文案仍是「已取消」')
+  ok(rl.data.orders[3].refundText === '', '未知 refundState 在列表里不显示退款行')
+  ok(rl.data.orders[4].refundText === '' && rl.data.orders[4].paidText === '已微信支付',
+    '没有退款态时照旧显示「已微信支付」')
+  const rlw = fs.readFileSync(path.join(ROOT, 'pages/orders/orders.wxml'), 'utf8')
+  ok(rlw.indexOf('item.refundText') > 0 && rlw.indexOf('orefund') > 0, '订单列表 wxml 有独立的退款提示行')
+  ok(rlw.indexOf('wx:elif="{{item.paid}}"') > 0,
+    '退款态优先于 paid：退款行与「已微信支付」二选一（退款中 paid 仍是 true，只看 paid 会误读成已收款）')
+
+  global.wx = mkWx([p29health, p29login, {
+    method: 'GET', path: '/api/orders/R2',
+    body: mkOrder({ id: 'R2', status: 'cancelled', paid: true, refundState: 'success', refundId: 'R20261014001', transactionId: '4200001234' })
+  }])
+  await api.wxLogin({ nickname: '阿明' })
+  const rd = loadPage('pages/order/order.js')
+  rd.onLoad({ id: 'R2' })
+  await rd.onShow()
+  ok(rd.data.o.refundText === '已退款' && rd.data.o.refundNo === 'R20261014001', '详情页：已退款 + 退款单号')
+  ok(rd.data.refundOpen === false, '详情页退款单号默认折叠')
+  rd.toggleRefund()
+  ok(rd.data.refundOpen === true, '点一下展开退款单号（对账用）')
+  const rdw = fs.readFileSync(path.join(ROOT, 'pages/order/order.wxml'), 'utf8')
+  ok(rdw.indexOf('o.refundText') > 0 && rdw.indexOf('退款单号') > 0 && rdw.indexOf('toggleRefund') > 0,
+    '详情页 wxml：退款结论 + 可折叠退款单号')
+  ok(rdw.indexOf("'dv-' + o.refundTone") > 0, '详情页退款结论带退款态配色（fail 红、processing 蓝、success 灰）')
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

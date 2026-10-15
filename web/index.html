@@ -869,7 +869,12 @@ async function submitOrder() {
     // 第 27 轮（P0-1/P1-3）：在线=绿色「已下单」；离线=黄色警示且必须写明「未入库」，
     // 绝不能再让顾客把离线演示当成下单成功。
     if (online) {
-      toast('✅ 已下单 ' + order.id + '：店家已收到，可以在「我的订单」里看进度', 3200, 'ok');
+      // 支付轮（支付）：Web 端本轮不做线上支付，绝不假装已付——如实告诉顾客去哪儿付。
+      // 支付轮（payEnabled）：店家没开通在线支付时，叫顾客去小程序付钱是骗人的，回到下单成功口径。
+      const payTip = Mall.payEnabled()
+        ? '请在微信小程序里完成支付（网页版暂不支持线上支付）'
+        : '店家已收到，可以在「我的订单」里看进度';
+      toast('✅ 已下单 ' + order.id + '：' + payTip, 4200, 'ok');
     } else {
       toast('⚠️ 未入库：这一单只存在本机演示里，店里收不到，请连上网络后重新下单（单号 ' + order.id + '）', 5200, 'warn');
     }
@@ -885,11 +890,19 @@ async function submitOrder() {
 }
 
 /* ---------------- 我的订单 ---------------- */
-// 第 27 轮（P1-12）：状态名真源只有 mall.js 的 STATUS_META（ready=待取货、pending=待备货），
-// 页面不再自己写一份——以前这里自己写的名字和小程序/后端对不上。
-const FILTERS = [['全部', '']].concat(['pending', 'delivering', 'ready', 'done', 'cancelled'].map(s => [Mall.STATUS_META[s].label, s]));
+// 第 27 轮（P1-12）：状态名真源只有 mall.js（STATUS_META + orderLabel：ready=待取货、
+// pending 未付款=待付款、pending 已付款=待备货），页面不再自己写一份——以前这里自己写的名字
+// 和小程序/后端对不上。支付轮（支付）又加了一层：pending 显示名要看 paid，别再写死「待备货」。
+// 支付轮（payEnabled）：未开通在线支付时 pending 只有「待备货」一态，快捷片也别再提「待付款」。
+// 写成函数而不是常量：设置（含 payEnabled）是探测/同步之后才到的，常量会在脚本加载那一刻就写死。
+function filtersList() {
+  const pay = Mall.payEnabled();
+  // 快捷片按 status 过滤：开通支付时 pending 一档同时含「待付款」和「待备货」，文案如实写两态。
+  return [['全部', '']].concat(['pending', 'delivering', 'ready', 'done', 'cancelled'].map(s =>
+    [s === 'pending' ? (pay ? '待付款/待备货' : '待备货') : Mall.STATUS_META[s].label, s]));
+}
 function renderFilters() {
-  $('filters').innerHTML = FILTERS.map(f =>
+  $('filters').innerHTML = filtersList().map(f =>
     '<div class="chip' + (curFilter === f[1] ? ' on' : '') + '" role="button" tabindex="0" onclick="pickF(\'' + f[1] + '\')" onkeydown="keyAct(event,pickF,\'' + f[1] + '\')">' + f[0] + '</div>').join('');
 }
 function pickF(f) { curFilter = f; renderFilters(); renderOrders(); }

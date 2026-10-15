@@ -8,6 +8,7 @@
     "pages/search/search",
     "pages/goods/goods",
     "pages/order/order",
+    "pages/pay/pay",
     "pages/address/list",
     "pages/address/edit",
     "pages/staff/home",

@@ -90,6 +90,9 @@ const online = {
     const method = (opts && opts.method) || 'GET';
     const routes = {
       'GET /healthz': { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true },
+      // 支付轮（payEnabled）：这家店开通了在线支付，顾客侧才会出现「待付款」与去小程序付款的指引。
+      // 只给这一个派生字段（不下发配送费等），免得改动本节其它按默认运费算出来的断言。
+      'GET /api/settings': { payEnabled: true },
       'GET /api/products': { total: 2, items: [
         { code: '6901234567892', name: '可口可乐', brand: '可口可乐', spec: '330ml 罐装', category: '饮料', salePrice: 2.5, costPrice: 1.8, refPrice: 3, unit: '罐', stock: 118, syncStatus: 'synced' },
         { code: '6902083881234', name: '农夫山泉', brand: '农夫山泉', spec: '550ml', category: '饮料', salePrice: 1.8, costPrice: 1.1, unit: '瓶', stock: 200, syncStatus: 'pending' }
@@ -130,6 +133,11 @@ const online = {
     ok(env.els.grid.innerHTML.indexOf('可口可乐') >= 0, '用后端数据渲染商品网格');
     ok(env.els.grid.innerHTML.indexOf('伊利纯牛奶') < 0, '种子商品已被后端数据替换');
     ok(env.els.orders.innerHTML.indexOf('M123') >= 0, '订单页渲染后端订单 ' + 'M123');
+    // 支付轮（支付）：后端这条单没有 paid → 顾客侧必须显示「待付款」+ 付款指引（不是「待备货」）
+    ok(env.els.orders.innerHTML.indexOf('待付款') >= 0 && env.els.orders.innerHTML.indexOf('请在微信小程序里完成支付（网页版暂不支持线上支付）') >= 0,
+      '未付款单在「我的订单」显示「待付款」+ 去小程序付钱的指引');
+    ok(env.els.orders.innerHTML.indexOf('待备货') < 0,
+      '未付款单绝不显示成「待备货」（否则顾客以为等着收货，其实没付钱）');
   }
 
   /* ---------- 管理端：离线 ---------- */
@@ -326,9 +334,20 @@ const online = {
   {
     const env = await bootPage('admin.html', offline);
     const ctx = env.ctx;
+    // 支付轮（payEnabled）：本节测「店家已开通在线支付」时的红线——未付款单不许进备货队列。
+    // 未开通口径在同节末尾单独测（那时「已付款」这个前置条件根本不存在，队列必须收全部 pending）。
+    Mall.setSettings({ payEnabled: true });
+    // 支付轮（支付）：createOrder 返回的是副本，要改「店里那单」得写回镜像。
+    // 备货队列/批量打印读的都是镜像，所以这里按真实路径落库。
+    const seedPaid = ord => {
+      const m = Mall.getOrders();
+      m.filter(x => x.id === ord.id)[0].paid = true;
+      Mall._save(Mall.KEYS.orders, m);
+      return ord;
+    };
     ok(env.els.stName.value === Admin.DEFAULT_STORE.name, '系统页抬头表单回填默认店名：' + env.els.stName.value);
     Mall.addToCart('6901234567892', 2);
-    const o = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '张三', phone: '13800000000' } });
+    const o = seedPaid(Mall.createOrder({ deliveryType: 'pickup', customer: { name: '张三', phone: '13800000000' } }));
     ctx.renderOrders();
     ok(env.els.orders.innerHTML.indexOf('🖨 小票') >= 0, '每张订单末尾有「🖨 小票」按钮');
     let printed = 0;
@@ -351,12 +370,44 @@ const online = {
     ok(env.els.printRoot.innerHTML.indexOf('啥都有快送') >= 0 && env.els.printRoot.innerHTML.indexOf('0571-88888888') >= 0, '再打印时票头已更新');
     // 批量打印待备货
     Mall.addToCart('6902083881234', 1);
-    const o2 = Mall.createOrder({ deliveryType: 'delivery', customer: { name: '李四', phone: '13900000000', address: '幸福路2号' } });
+    const o2 = seedPaid(Mall.createOrder({ deliveryType: 'delivery', customer: { name: '李四', phone: '13900000000', address: '幸福路2号' } }));
     printed = 0;
     ctx.printPending();
     ok(printed === 1 && (env.els.printRoot.innerHTML.match(/class="receipt/g) || []).length === 2, '批量打印 2 张待备货小票（一次唤起）');
     ok(env.els.printRoot.innerHTML.indexOf('r-break') >= 0, '多张小票之间分页');
     ok(env.els.printRoot.innerHTML.indexOf('幸福路2号') >= 0 && env.els.printRoot.innerHTML.indexOf('配送费') >= 0, '配送单票面含地址与配送费');
+    // 支付轮（支付）红线：未付款的 pending 单**不许**混进备货队列（也不许被批量打印）
+    Mall.addToCart('6902083881234', 1);
+    const o3 = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '王五', phone: '13700000000' } });
+    printed = 0;
+    ctx.printPending();
+    ok(printed === 1 && (env.els.printRoot.innerHTML.match(/class="receipt/g) || []).length === 2 &&
+      env.els.printRoot.innerHTML.indexOf('王五') < 0,
+      '未付款的待付款单不进备货队列、不参与批量打印（仍只印 2 张已付款单）');
+    ok(Admin.prepQueue(Mall.getOrders()).length === 2 && Admin.prepQueue(Mall.getOrders()).every(x => x.paid),
+      'Admin.prepQueue 只列已付款的 pending 单');
+    // 支付轮（payEnabled）：服务端没配置微信支付时，未付款的 pending 单是**正常待备货单**，
+    // 队列必须收它们——否则老板的备货队列恒空、店铺停摆（这条是本次修的必修缺陷）。
+    Mall.setSettings({ payEnabled: false });
+    ctx.renderOrders();
+    ok(Mall.payEnabled() === false, '未开通在线支付（取不到 payEnabled）→ 未开通口径生效');
+    ok(Admin.prepQueue(Mall.getOrders()).length === 3 &&
+      Admin.prepQueue(Mall.getOrders()).every(x => x.status === 'pending'),
+      '未开通时备货队列收全部 pending（含未付款的 o3），队列绝不恒空');
+    ok(Mall.orderLabel(Mall.getOrders().filter(x => x.id === o3.id)[0]) === '待备货',
+      '未开通时未付款的 pending 单显示「待备货」（第 28 轮语义），不显示「待付款」');
+    ok(env.els.orders.innerHTML.indexOf('待付款') < 0,
+      '未开通时后台订单列表里一个「待付款」都不该出现');
+    ok(Admin.kpiOf(Mall.getOrders()).toCollect === 0,
+      '未开通时「待收款」为 0（那笔钱根本不会从线上进来）');
+    ok(Mall.payBadgeHTML(Mall.getOrders().filter(x => x.id === o3.id)[0]) === '',
+      '未开通时未付款单不出「未付款」徽标（线下收款不是欠款）');
+    printed = 0;
+    ctx.printPending();
+    ok(printed === 1 && (env.els.printRoot.innerHTML.match(/class="receipt/g) || []).length === 3,
+      '未开通时批量打印收全部待备货单（含线下收款的单）');
+    Mall.setSettings({ payEnabled: true });
+    ctx.renderOrders();
     // 全部完成后没有待备货 → 不唤起打印
     Mall.advanceOrder(o.id, 'ready');
     Mall.advanceOrder(o.id, 'done');
@@ -904,6 +955,11 @@ const online = {
     on.els.cName.value = '王五'; on.els.cPhone.value = '13800000003';
     await on.ctx.submitOrder();
     ok(on.els.toast.className.indexOf('ok') >= 0 && on.els.toast.textContent.indexOf('已下单') >= 0, '在线下单是绿色「已下单」：' + on.els.toast.className);
+    // 支付轮（支付）：Web 端不做线上支付，下单成功必须如实告诉顾客去哪儿付，不许假装已付
+    ok(on.els.toast.textContent.indexOf('请在微信小程序里完成支付（网页版暂不支持线上支付）') >= 0,
+      '在线下单 toast 如实提示去小程序付款：' + on.els.toast.textContent);
+    ok(on.els.toast.textContent.indexOf('已付款') < 0 && on.els.toast.textContent.indexOf('已收款') < 0,
+      '下单 toast 里不出现「已付款 / 已收款」字样（还没付钱）');
     ok(on.els.tabOrders.className.indexOf('on') >= 0, '在线下单后跳「我的订单」');
 
     // —— 状态名真源 / 键盘可达 / 对比度 / 热区（P1-6~P1-12，字符串断言）——
@@ -914,6 +970,21 @@ const online = {
     ok(css.indexOf('--faint: #5f6b7d') >= 0, '--faint 调深（白底 5.40:1 / --bg 4.99:1）');
     ok(css.indexOf('.toast.warn') >= 0 && css.indexOf('.toast.ok') >= 0, 'toast 有绿/黄两种配色');
     ok(css.indexOf('width: 44px; height: 44px') >= 0, '热区用 44×44 伪元素撑开（视觉尺寸不变）');
+
+    // —— 支付轮（支付）：顾客侧显示口径（改动要小，但必须真实）——
+    ok(html.indexOf('orderLabel') >= 0 && html.indexOf('STATUS_META[s].label') >= 0,
+      '状态名真源仍只有 mall.js（页面不再自己写一份：orderLabel + STATUS_META）');
+    ok(html.indexOf('请在微信小程序里完成支付（网页版暂不支持线上支付）') >= 0,
+      'index.html 里有给待付款单的付款指引（与 mall.js statusHint 逐字一致）');
+    // 支付轮（payEnabled）：快捷片按「是否开通在线支付」分支，不能写死两态文案。
+    ok(off.els.filters.innerHTML.indexOf('待付款') < 0 && off.els.filters.innerHTML.indexOf('待备货') >= 0,
+      '未开通在线支付时快捷片只写「待备货」（不叫顾客去付一笔付不了的钱）：' + off.els.filters.innerHTML.slice(0, 60));
+    Mall.setSettings({ payEnabled: true });
+    off.ctx.renderFilters();
+    ok(off.els.filters.innerHTML.indexOf('待付款/待备货') >= 0,
+      '开通后 pending 档如实写「待付款/待备货」（一档含两态）');
+    Mall.resetSettings();
+    off.ctx.renderFilters();
   }
 
   section('⑭ index.html · 第 28 轮：排序控件 / 分页提示 / 无结果推荐 / 金刚区（7.8）');

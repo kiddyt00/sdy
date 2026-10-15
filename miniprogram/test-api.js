@@ -27,6 +27,18 @@ function mkWx(routes) {
     removeStorageSync: (k) => { delete kv[k] },
     showToast: () => {},
     switchTab: () => {},
+    // 第 29 轮：收银台。_payMode = 'ok' | 'cancel' | 'fail'；_requestPays 记录每次拉起
+    _payMode: 'ok',
+    _requestPays: [],
+    requestPayment(opts) {
+      const o = opts || {}
+      wx._requestPays.push({
+        timeStamp: o.timeStamp, nonceStr: o.nonceStr, package: o.package, signType: o.signType, paySign: o.paySign
+      })
+      if (wx._payMode === 'ok') { if (o.success) o.success({ errMsg: 'requestPayment:ok' }); return }
+      const errMsg = wx._payMode === 'cancel' ? 'requestPayment:fail cancel' : 'requestPayment:fail system error'
+      if (o.fail) o.fail({ errMsg: errMsg })
+    },
     // 假 wx.login：默认给一个 code，可用 _loginCode / _loginFail 改行为
     login(opts) {
       const o = opts || {}
@@ -621,6 +633,169 @@ async function main() {
   p28err = ''
   await api.alternatives('6900000000009', 5).catch((e) => { p28err = String((e && e.message) || e) })
   ok(p28err.length > 0, '同类推荐请求失败 → reject（不吞成空数组）')
+
+  /* ---------- ⑫ 第 29 轮：微信支付（顾客侧收银台） ---------- */
+  section('⑫ 微信支付：prepay / payStatus / requestPayment（第 29 轮 / 0.9.0）')
+  const PAY_PARAMS = { timeStamp: '1791960000', nonceStr: 'N1', package: 'prepay_id=wx123', signType: 'RSA', paySign: 'SIG' }
+  const FUT = Math.floor(Date.now() / 1000) + 900
+  const PREPAY_BODY = { outTradeNo: SERVER_ORDER.id, amountFen: 600, payParams: PAY_PARAMS, expireAt: FUT }
+  const PAY_STATUS_BODY = { paid: true, status: 'pending', transactionId: '4200001234', refundState: '', expireAt: FUT }
+  const p29routes = (extra) => ROUTES.concat([
+    { method: 'POST', path: '/api/pay/prepay', body: PREPAY_BODY },
+    { method: 'GET', path: '/api/pay/status', body: PAY_STATUS_BODY }
+  ]).concat(extra || [])
+
+  // 订单字段映射：paid 统一成布尔（缺字段的老后端保持第 27 轮口径）
+  const moPaid = api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 1, payExpireAt: FUT, transactionId: 'T1', refundState: '' }))
+  ok(moPaid.paid === true && moPaid.paidText === '已微信支付', '订单映射：paid=1 → 布尔 true + 「已微信支付」')
+  ok(moPaid.statusText === '待备货', '已付款的 pending 单文案＝待备货：' + moPaid.statusText)
+  ok(moPaid.transactionId === 'T1' && moPaid.payExpireAt === FUT && moPaid.refundState === '', '订单映射补上 transactionId / payExpireAt / refundState')
+  // 第 31 轮（payEnabled）：未付款单显不显「待付款」还取决于店铺有没有开通在线支付
+  const moUnpaid = api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0, payExpireAt: FUT, payEnabled: true }))
+  ok(moUnpaid.paid === false && moUnpaid.statusText === '待付款', '订单映射：paid=0 + 已开通支付 → 待付款：' + moUnpaid.statusText)
+  ok(moUnpaid.canPay === true && moUnpaid.canCancel === true, '未付款单给「去支付」+ 仍可取消')
+  // 第 31 轮：支付没开通（或取不到）→ 退回第 28 轮语义，绝不催一笔付不出来的款
+  const moPayOff = api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0, payExpireAt: FUT, payEnabled: false }))
+  ok(moPayOff.statusText === '待备货' && moPayOff.canPay === false, '未开通在线支付：未付款单仍是「待备货」且不给「去支付」：' + moPayOff.statusText)
+  ok(moPayOff.canCancel === true, '未开通在线支付：未付款单照样能取消')
+  ok(moPayOff.payHint === '', '未开通在线支付：不出现「还没付款」那句催促')
+  ok(api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0, payExpireAt: FUT })).canPay === false, '取不到 payEnabled（字段缺失）一律按未开通')
+  ok(api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0, payEnabled: 'true' })).canPay === false, 'payEnabled 只认布尔 true（字符串 "true" 不算开通）')
+  const moOld = api._mapOrder(SERVER_ORDER)
+  ok(moOld.paidKnown === false && moOld.statusText === '待备货', '服务端没下发 paid 的老单保持第 27 轮口径（待备货）')
+  const moExp = api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0, payExpireAt: Math.floor(Date.now() / 1000) - 60 }))
+  ok(moExp.payExpired === true && moExp.statusText === '已取消（超时未付）', '超时未付 → 已取消（超时未付）：' + moExp.statusText)
+  ok(moExp.canPay === false, '超时单不再给「去支付」')
+
+  /* ---------- ⑫b 第 31 轮：payEnabled（/api/settings 的派生字段）---------- */
+  section('⑫b payEnabled：支付没开通时退回第 28 轮语义（第 31 轮）')
+  const settingsRoute = (on) => p29routes([{ method: 'GET', path: '/api/settings', body: { name: '家庭超市', lowStock: 2, payEnabled: on } }])
+  global.wx = mkWx(settingsRoute(true))
+  await api.probe()
+  const setOn = await api.getSettings()
+  ok(setOn.payEnabled === true && api.payEnabled() === true, 'GET /api/settings 的 payEnabled 收进缓存：' + api.payEnabled())
+  ok(api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0, payExpireAt: FUT })).canPay === true,
+    '缓存说开通了，订单映射不用逐单传 flag 也会给「去支付」')
+  ok(api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0, payExpireAt: FUT })).statusText === '待付款', '缓存说开通了 → 未付款单是「待付款」')
+  global.wx = mkWx(settingsRoute(false))
+  await api.probe()
+  await api.getSettings()
+  ok(api.payEnabled() === false, '服务端说没开通就按没开通算')
+  ok(api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0, payExpireAt: FUT })).statusText === '待备货', '没开通 → 订单映射回到「待备货」')
+  global.wx = mkWx(p29routes()) // 这一版没有 /api/settings 路由：取不到配置
+  await api.probe()
+  let setErr = ''
+  await api.getSettings().catch((e) => { setErr = e.message })
+  ok(setErr.length > 0 && api.payEnabled() === false, '取不到配置 ⇒ 一律按未开通（' + api.payEnabled() + '）')
+  global.wx = mkWx([{ method: 'GET', path: '/healthz', fail: 'request:fail timeout' }])
+  await api.probe()
+  ok(api.payEnabled() === false, '连不上后端 ⇒ 也按未开通（离线演示不许冒出「待付款」）')
+  ok(api._mapOrder(Object.assign({}, SERVER_ORDER, { paid: 0 })).statusText === '待备货', '离线时未付款单仍是第 28 轮「待备货」')
+
+  // prepay：URL / body / 身份头
+  global.wx = mkWx(p29routes())
+  api.saveSession({ openid: 'o_api_pay', nickname: '阿明' })
+  await api.probe()
+  const pp = await api.prepay(SERVER_ORDER.id)
+  const ppCall = global.wx._calls.filter((c) => c.path.split('?')[0] === '/api/pay/prepay').pop()
+  ok(ppCall && ppCall.method === 'POST', 'prepay 打到 POST /api/pay/prepay')
+  ok(ppCall.path.indexOf('openid=o_api_pay') > 0, 'prepay 带顾客身份（query，照 identityParams）：' + ppCall.path)
+  ok(!!ppCall.header && ppCall.header['X-Wx-Openid'] === 'o_api_pay', 'prepay 身份头 X-Wx-Openid')
+  ok(ppCall.data && ppCall.data.orderId === SERVER_ORDER.id, 'prepay body 只带 orderId：' + JSON.stringify(ppCall.data))
+  ok(pp.outTradeNo === SERVER_ORDER.id && pp.amountFen === 600, 'prepay 原样带回 outTradeNo / amountFen')
+  ok(pp.amountText === '¥6.00', '整数分换算文案：' + pp.amountText)
+  ok(pp.expireAt === FUT, 'prepay 原样带回 expireAt')
+  ok(pp.payParams.package === 'prepay_id=wx123' && pp.payParams.signType === 'RSA', 'payParams 原样透传给页面')
+
+  // payStatus：查询 + paid 布尔化
+  const pst = await api.payStatus(SERVER_ORDER.id)
+  const pstCall = global.wx._calls.filter((c) => c.path.split('?')[0] === '/api/pay/status').pop()
+  ok(pstCall && pstCall.method === 'GET' && pstCall.path.indexOf('/api/pay/status?orderId=') === 0,
+    'payStatus 打到 GET /api/pay/status?orderId=…：' + pstCall.path)
+  ok(pstCall.path.indexOf('openid=o_api_pay') > 0, 'payStatus 也带顾客身份')
+  ok(pst.paid === true && typeof pst.paid === 'boolean', 'payStatus 的 paid 统一成布尔')
+  ok(pst.status === 'pending' && pst.transactionId === '4200001234' && pst.expireAt === FUT, 'payStatus 解析 status / transactionId / expireAt')
+
+  // requestPayment：成功 / 用户取消 / 其它失败
+  const rp = await api.requestPayment(PAY_PARAMS)
+  ok(rp && rp.ok === true, 'requestPayment 成功 resolve')
+  const rpSent = global.wx._requestPays[0]
+  ok(rpSent.package === 'prepay_id=wx123' && rpSent.timeStamp === '1791960000' && rpSent.paySign === 'SIG',
+    'payParams 原样交给 wx.requestPayment')
+  global.wx._payMode = 'cancel'
+  let cerr = ''
+  let cflag = false
+  await api.requestPayment(PAY_PARAMS).catch((e) => { cerr = e.message; cflag = !!e.cancelled })
+  ok(cerr === '你取消了支付', '用户取消 → 可读文案「你取消了支付」：' + cerr)
+  ok(cflag === true, '取消错误带 cancelled 标记（页面据此留在收银台）')
+  global.wx._payMode = 'fail'
+  let ferr = ''
+  await api.requestPayment(PAY_PARAMS).catch((e) => { ferr = e.message })
+  ok(ferr === 'requestPayment:fail system error', '其它失败 → 原文透传：' + ferr)
+  global.wx._payMode = 'ok'
+
+  // 未配置支付 → 503，抛出可识别错误
+  global.wx = mkWx(ROUTES.concat([{ method: 'POST', path: '/api/pay/prepay', status: 503, body: { error: '微信支付未配置（服务端缺少商户号 / 证书 / APIv3 密钥）' } }]))
+  api.saveSession({ openid: 'o_api_pay' })
+  await api.probe()
+  let perr = null
+  await api.prepay(SERVER_ORDER.id).catch((e) => { perr = e })
+  ok(!!perr && perr.noPayConfig === true, '未配置支付 → 503 抛出可识别错误（noPayConfig）')
+  ok(String(perr && perr.message).indexOf('微信支付未配置') >= 0, '错误信息可读（原文透传）：' + (perr && perr.message))
+  ok(api.NO_PAY_CONFIG === '店里还没开通在线支付，请联系店家', '未配置文案：' + api.NO_PAY_CONFIG)
+
+  // 没身份：不往后端打
+  global.wx = mkWx(p29routes())
+  api.clearSession()
+  let ierr = ''
+  await api.prepay(SERVER_ORDER.id).catch((e) => { ierr = e.message })
+  ok(ierr === api.NO_IDENTITY, '没身份不发 prepay：' + ierr)
+  ok(global.wx._calls.filter((c) => c.path.split('?')[0] === '/api/pay/prepay').length === 0, '没身份确实没发出 prepay 请求')
+
+  /* ---------- ⑬ 第 29 轮：退款态展示（已取消 + refundState） ---------- */
+  section('⑬ 退款态展示：已付款单被取消退款后，顾客必须看得见（第 29 轮 / 0.9.0）')
+  ok(rules.refundLabel({ refundState: 'processing' }) === '退款处理中', '退款处理中：' + rules.refundLabel({ refundState: 'processing' }))
+  ok(rules.refundLabel({ refundState: 'success' }) === '已退款', '退款成功 → 「已退款」')
+  ok(rules.refundLabel({ refundState: 'fail' }) === '退款失败，请联系店家', '退款失败必须醒目且让顾客联系店家（不许静默）')
+  ok(rules.refundLabel({ refundState: 'weird' }) === '' && rules.refundLabel({}) === '', '未知 / 空 refundState 当没有退款这回事（不抛错、不显空行）')
+  ok(rules.REFUND_TONES.processing === 'info' && rules.REFUND_TONES.success === 'done' && rules.REFUND_TONES.fail === 'warn', '退款态配色 key 与 web badge 同义（info/done/warn）')
+
+  const moRefund = (over) => api._mapOrder(Object.assign({}, SERVER_ORDER, { status: 'cancelled', paid: true }, over))
+  const mProc = moRefund({ refundState: 'processing' })
+  ok(mProc.refundText === '退款处理中' && mProc.refundTone === 'info', '映射：退款中 → 「退款处理中」（蓝）')
+  const mSucc = moRefund({ refundState: 'success', refundId: 'R20261014001' })
+  ok(mSucc.refundText === '已退款' && mSucc.refundTone === 'done', '映射：退款成功 → 「已退款」（灰）')
+  ok(mSucc.refundNo === 'R20261014001', '退款成功带退款单号（详情页折叠看，列表页不显示）')
+  const mFail = moRefund({ refundState: 'fail' })
+  ok(mFail.refundText === '退款失败，请联系店家' && mFail.refundTone === 'warn', '映射：退款失败 → 醒目警示（红）')
+  ok(mFail.refundNo === '', '退款失败没有退款单号，不显示空行')
+  const mWeird = moRefund({ refundState: 'weird' })
+  ok(mWeird.refundText === '' && mWeird.refundTone === '' && mWeird.refundNo === '', '未知 refundState 映射成空，前端不会显示空行')
+  const mNoRef = moRefund({})
+  ok(mNoRef.refundText === '' && mNoRef.paidText === '已微信支付', '没有退款态 → 不提退款，照旧「已微信支付」')
+  const mNotCancelled = api._mapOrder(Object.assign({}, SERVER_ORDER, { status: 'pending', paid: true, refundState: 'success', refundId: 'R1' }))
+  ok(mNotCancelled.refundText === '' && mNotCancelled.refundNo === '', '没取消的单（status 非 cancelled）不显示退款行')
+  ok(mSucc.statusText === '已取消' && rules.orderLabel({ status: 'cancelled', paid: true, refundState: 'success' }) === '已取消', 'statusText / orderLabel 仍是逐字「已取消」（三端一致，退款另起一行说）')
+  ok(rules.STATUS_LABELS.cancelled === '已取消', 'STATUS_LABELS 未新增 status 值、文案未动')
+
+  // 列表端到端：listOrders 也要把退款字段带出来
+  const refundListRoutes = ROUTES.filter((r) => r.path !== '/api/orders').concat([{
+    method: 'GET', path: '/api/orders',
+    body: { items: [
+      Object.assign({}, SERVER_ORDER, { id: 'M-RF1', status: 'cancelled', paid: true, refundState: 'processing' }),
+      Object.assign({}, SERVER_ORDER, { id: 'M-RF2', status: 'cancelled', paid: true, refundState: 'success', refundId: 'R20261014001' }),
+      Object.assign({}, SERVER_ORDER, { id: 'M-RF3', status: 'cancelled', paid: true, refundState: 'fail' })
+    ], total: 3 }
+  }])
+  global.wx = mkWx(refundListRoutes)
+  api.saveSession({ openid: 'o_api_refund', nickname: '阿明' })
+  await api.probe()
+  const rlist = await api.listOrders()
+  ok(rlist[0].refundText === '退款处理中' && rlist[0].statusText === '已取消', 'listOrders 带出退款中文案 + 状态仍是「已取消」')
+  ok(rlist[1].refundText === '已退款' && rlist[1].refundNo === 'R20261014001', 'listOrders 带出已退款 + 退款单号')
+  ok(rlist[2].refundText === '退款失败，请联系店家' && rlist[2].refundTone === 'warn', 'listOrders 带出退款失败警示')
+  ok(rules.REFUND_LABELS.processing === '退款处理中' && rules.REFUND_LABELS.success === '已退款' && rules.REFUND_LABELS.fail === '退款失败，请联系店家',
+    '退款文案只有一份真源（rules.REFUND_LABELS，三端同源）')
 
   console.log('\n========================================')
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项')

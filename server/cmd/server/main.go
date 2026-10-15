@@ -74,9 +74,26 @@ func main() {
 	}
 	resolver := barcode.New(st, barcode.DefaultConfig(), cloud)
 
+	// 微信支付（支付轮）：商户号 / 证书 / APIv3 密钥全部只从环境变量读，
+	// 绝不落库、绝不进日志。配置不全时**不让服务起不来**：记一行 WARN，
+	// /api/pay/prepay 返回 503，其它功能（下单/后台/库存）完全照旧。
+	pay, payErr := newPayRT(payConfFromEnv())
+	if payErr != nil {
+		log.Printf("WARN 微信支付未启用（/api/pay/prepay 将返回 503）：%v", payErr)
+		pay = nil
+	} else {
+		log.Printf("微信支付已启用（商户号 %s）", pay.mchID)
+	}
+
+	// 超时扫单（§1.6）：每 PAY_SWEEP_INTERVAL（默认 60s）扫一次，把 15 分钟内没付款的
+	// pending 单自动取消并回补库存。跟着进程的 context 退出，优雅停机时不再扫。
+	sweepCtx, sweepCancel := context.WithCancel(context.Background())
+	defer sweepCancel()
+	go sweepExpiredOrders(sweepCtx, st, pay)
+
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           withCORS(withLogging(routes(st, resolver, staticDir, appcode != "", wxc))),
+		Handler:           withCORS(withLogging(routes(st, resolver, staticDir, appcode != "", wxc, pay))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -108,6 +125,15 @@ type orderResp struct {
 	Duplicated bool `json:"duplicated,omitempty"`
 }
 
+// settingsResp 是 /api/settings 的响应。既有键一个都不改：用**嵌入结构体**（序列化后
+// 仍是平铺键，store.Settings 的字段原样出现），只多下发一个派生字段 payEnabled。
+// 两端靠它判断「微信支付是否已开通」：未开通时回到第 28 轮语义（下单不开未付倒计时、
+// 不自动扫单取消、prepay 回 503）。
+type settingsResp struct {
+	store.Settings
+	PayEnabled bool `json:"payEnabled"`
+}
+
 // addressResp 保存地址的响应（第 27 轮地址簿能力令牌）：地址字段平铺（嵌入 store.Address），
 // 另带 ok 与 key——key 只在第一次保存该手机号的地址时生成，之后每次都是同一个。
 type addressResp struct {
@@ -116,7 +142,7 @@ type addressResp struct {
 	Key string `json:"key,omitempty"`
 }
 
-func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabled bool, wxc wxConf) http.Handler {
+func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabled bool, wxc wxConf, pay *payRT) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +240,11 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				Unit           string   `json:"unit"`
 				Stock          *float64 `json:"stock"`
 				IsWholesale    bool     `json:"isWholesale"`
+				// IsDemo 示例 / 测试商品标记（支付轮）：只认显式 true，缺字段一律当正式商品
+				// （沿用 D23「缺字段视为旧行为」）。落库走 store.UpsertProduct，而该列**只在新插入时写**
+				// （ON CONFLICT 不含 is_demo，规则 29① 的既有决策不变）：所以灌过测试商品的库，
+				// 老板后来在管理端编辑它也不会把标记抹掉 —— 但也不会把真商品误标成测试商品。
+				IsDemo bool `json:"isDemo"`
 			}
 			if !decode(w, r, &req) {
 				return
@@ -228,7 +259,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				Code: req.Code, Name: req.Name, Brand: req.Brand, Spec: req.Spec, Category: req.Category,
 				Img: req.Img, CostPrice: req.CostPrice, SalePrice: req.SalePrice,
 				WholesalePrice: req.WholesalePrice, RefPrice: req.RefPrice,
-				Unit: req.Unit, Stock: stock, IsWholesale: req.IsWholesale,
+				Unit: req.Unit, Stock: stock, IsWholesale: req.IsWholesale, IsDemo: req.IsDemo,
 				SyncStatus: "pending", // 档案变更 → 待与牵牛花核对（D3 月度对账）
 			})
 			if err != nil {
@@ -341,7 +372,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, 200, s)
+			writeJSON(w, 200, settingsResp{Settings: s, PayEnabled: pay != nil && pay.ready()})
 		case http.MethodPost:
 			// 管理端接口（第 27 轮）：ADMIN_PASSWORD 没配时放行，配了就要管理员 Cookie。
 			if !adminGate(w, r) {
@@ -535,6 +566,8 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				return
 			}
 			// 第 28 轮（§7.5）新增筛选：q/status/date/from/to/type。
+			// 支付轮（§1.5）再加 paid=0|1：后台「待付款 / 待备货」队列用它，
+			// 空值＝不过滤（保持老调用方行为）。
 			// 这些参数**只做筛选、绝不参与身份判定**；身份永远走上面那一行的第 27 轮规则。
 			// 顾客身份下先归属过滤（f.Phone）再筛选，所以顾客传 q=别人的手机号也拿不到别人的单。
 			query := r.URL.Query()
@@ -545,6 +578,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				From:   strings.TrimSpace(query.Get("from")),
 				To:     strings.TrimSpace(query.Get("to")),
 				Type:   strings.TrimSpace(query.Get("type")),
+				Paid:   strings.TrimSpace(query.Get("paid")),
 				Limit:  queryInt(r, "limit", 50),
 				Offset: queryInt(r, "offset", 0),
 			}
@@ -572,6 +606,18 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			if !decode(w, r, &in) {
 				return
 			}
+			// 支付轮（§1.4）：openid 由**服务端**从身份里取，绝不信任请求体里的 openid
+			//（否则谁都能把单挂到别人的微信上）。纯网页下单（只有 phone/管理员）取到空串，
+			// 这正是「跨端补 openid」要处理的情形：等顾客用小程序登录时再补写（prepay 里做）。
+			ident, ok := identityOf(w, r, st)
+			if !ok {
+				return
+			}
+			in.OpenID = ident.OpenID
+			// 支付轮修正：只有微信支付真的可用时才给这单开未付倒计时。支付没开通时
+			// prepay 一律 503，顾客付不了款，若照样写 pay_expire_at，15 分钟后就会被扫单
+			// 自动取消并回补库存——正常订单全被清掉，店铺等于停摆。
+			in.PayWindow = pay != nil && pay.ready()
 			o, err := st.CreateOrder(in)
 			if err != nil {
 				// 幂等命中（第 27 轮）：同一个 clientToken 已经出过单了——把原来那张单按 200
@@ -670,7 +716,7 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/orders/"), "/")
 		action := ""
 		id := path
-		for _, a := range []string{"advance", "cancel"} {
+		for _, a := range []string{"advance", "cancel", "mark-paid"} {
 			if strings.HasSuffix(path, "/"+a) {
 				action = a
 				id = strings.TrimSuffix(path, "/"+a)
@@ -686,6 +732,51 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 			return
 		}
 		switch action {
+		// 支付轮（§1.5）：标记已收款（现金 / 线下扫码 / 老板兜底）。
+		// 管理员与员工都允许——判据用 identityOf 的 ident.Admin（第 27/28 轮的
+		// adminGate/Cookie 与员工令牌两条路它都已经覆盖），不额外调 adminGate，
+		// 否则带员工令牌的店主会被 401。
+		case "mark-paid":
+			if r.Method != http.MethodPost {
+				writeJSON(w, 405, map[string]string{"error": "方法不支持"})
+				return
+			}
+			if !ident.Admin {
+				writeJSON(w, 403, map[string]string{"error": "只有店主可以标记已收款"})
+				return
+			}
+			o, err := st.GetOrder(id)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			// 幂等：已经标记过就直接把当前单返回，不覆盖原来的 transaction_id/paid_at。
+			if o.Paid {
+				writeJSON(w, 200, o)
+				return
+			}
+			var in struct {
+				Note string `json:"note"`
+			}
+			// body 是可选的（「一键标记」不带 note），空/坏 body 不算错。
+			parseOptionalJSON(r, &in)
+			// 手工标记不算微信支付：transaction_id 留空，绝不占用唯一索引上的号。
+			if err := st.MarkPaid(id, "", ""); err != nil {
+				writeErr(w, err)
+				return
+			}
+			if note := strings.TrimSpace(in.Note); note != "" {
+				log.Printf("订单 %s 已由 %s 手工标记为已收款（%s）", id, ident.Operator(), note)
+			} else {
+				log.Printf("订单 %s 已由 %s 手工标记为已收款", id, ident.Operator())
+			}
+			latest, err := st.GetOrder(id)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, 200, latest)
+			return
 		case "cancel":
 			if r.Method != http.MethodPost {
 				writeJSON(w, 405, map[string]string{"error": "方法不支持"})
@@ -706,7 +797,19 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, 200, cancelled)
+			// 支付轮（§1.7）：取消**之前**已收过款的单要退款（顾客/后台/员工三条路径共用这里）。
+			// 退款失败绝不让取消失败——单已经 cancelled 了；失败如实写进 refund_state='fail'，
+			// 并在响应里带 refundError 让前端/店主看得见。
+			if !o.Paid {
+				writeJSON(w, 200, cancelled)
+				return
+			}
+			warn := refundCancelledOrder(r.Context(), st, pay, cancelled, "订单取消（"+ident.Operator()+"）")
+			latest, gerr := st.GetOrder(id)
+			if gerr != nil {
+				latest = cancelled
+			}
+			writeJSON(w, 200, orderPayResp{Order: latest, RefundError: warn})
 			return
 		case "advance":
 			if r.Method != http.MethodPost {
@@ -735,7 +838,18 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 				writeErr(w, err)
 				return
 			}
-			writeJSON(w, 200, advanced)
+			// store.AdvanceOrder 在 to==cancelled 时会转成 CancelOrder，所以这条路径
+			// 同样可能取消一张**已收款**的单——退款逻辑与 cancel 分支一致。
+			if !(in.To == pricing.StatusCancelled && o.Paid) {
+				writeJSON(w, 200, advanced)
+				return
+			}
+			warn := refundCancelledOrder(r.Context(), st, pay, advanced, "订单取消（"+ident.Operator()+"）")
+			latest, gerr := st.GetOrder(id)
+			if gerr != nil {
+				latest = advanced
+			}
+			writeJSON(w, 200, orderPayResp{Order: latest, RefundError: warn})
 			return
 		}
 		if r.Method != http.MethodGet {
@@ -906,6 +1020,22 @@ func routes(st *store.Store, res *barcode.Resolver, staticDir string, cloudEnabl
 		}
 		writeJSON(w, 200, saved)
 	}))
+
+	// 微信支付（支付轮，契约见 docs/支付与配送-方案与验收.md §1.5）。
+	// prepay/status 是顾客面（身份走 identityOf）；notify 两个回调必须**公开**——
+	// 微信服务器不带我们的 Cookie/令牌，靠 wxpay 包的验签 + 解密证明来源。
+	mux.HandleFunc("/api/pay/prepay", func(w http.ResponseWriter, r *http.Request) {
+		handlePrepay(w, r, st, pay)
+	})
+	mux.HandleFunc("/api/pay/notify", func(w http.ResponseWriter, r *http.Request) {
+		handlePayNotify(w, r, st, pay)
+	})
+	mux.HandleFunc("/api/pay/refund-notify", func(w http.ResponseWriter, r *http.Request) {
+		handleRefundNotify(w, r, st, pay)
+	})
+	mux.HandleFunc("/api/pay/status", func(w http.ResponseWriter, r *http.Request) {
+		handlePayStatus(w, r, st, pay)
+	})
 
 	// 微信登录（第 23 轮 / D28；第 25 轮 D31 起手机号改为可选）：小程序 wx.login 的 code 换 openid。
 	// 手机号仍是业务身份（D24）——但它是**下单时**才需要的东西：登录只让服务端记住「这台微信是谁」，

@@ -40,7 +40,7 @@ func newR27Server(t *testing.T) (*httptest.Server, *store.Store) {
 	if err := os.WriteFile(filepath.Join(dir, "admin.html"), []byte("<!doctype html><title>admin</title>"), 0o644); err != nil {
 		t.Fatalf("写测试用 admin.html 失败: %v", err)
 	}
-	ts := httptest.NewServer(withCORS(routes(st, res, dir, false, wxConf{})))
+	ts := httptest.NewServer(withCORS(routes(st, res, dir, false, wxConf{}, nil)))
 	t.Cleanup(ts.Close)
 	return ts, st
 }

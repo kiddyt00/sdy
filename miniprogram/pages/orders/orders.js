@@ -56,7 +56,9 @@ Page({
           this.setData({ loading: false, needIdentity: true, orders: [], empty: false })
           return null
         }
-        return api.listOrders(this.data.status)
+        // 第 31 轮（payEnabled）：先同步一次店铺配置 —— 「待付款 / 待备货」取决于支付开没开通，
+        // 拿不到配置一律按未开通（退回第 28 轮语义），绝不自作主张催款。
+        return api.getSettings().catch(() => null).then(() => api.listOrders(this.data.status))
       })
       .then((list) => {
         if (list === null) return []
@@ -92,6 +94,15 @@ Page({
     const id = e.currentTarget.dataset.id
     if (!id) return
     wx.navigateTo({ url: '/pages/order/order?id=' + encodeURIComponent(id) })
+  },
+
+  // 第 29 轮：未付款单的「去支付」→ 收银台（支付要带身份，先在页面拦住）
+  onPay(e) {
+    const id = e.currentTarget.dataset.id
+    if (!id) return null
+    if (!this.ensureIdentity()) return null
+    wx.navigateTo({ url: '/pages/pay/pay?orderId=' + encodeURIComponent(id) })
+    return null
   },
 
   onCancel(e) {

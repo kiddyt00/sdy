@@ -91,6 +91,13 @@ if [ "${SKIP_INTEGRATION:-0}" != "1" ]; then
   # 第 28 轮契约（排序 / 分页 / 热销 / 替代推荐 / 订单筛选 / CSV 导出）。同样要跑在播种之前；
   # 它自己会建商品与订单，所以必须排在 accept-r27 的「干净库」断言之后。
   run "accept-r28（排序/筛选/导出契约）" node deploy/accept-r28.js "http://127.0.0.1:$PORT_API"
+  # 第 29 轮支付契约（prepay / 回调验签幂等 / 金额核对 / 退款 / 过期自动取消 / 跨端补 openid）。
+  # 它自己起假支付（8098）、假微信（8099）与一个临时后端（8095），不依赖上面的临时库，所以放在最后跑。
+  run "accept-pay（支付端到端契约）" env SDY_BIN="$BIN" node deploy/accept-pay.js
+  # 未开通支付时的安全回归：一个 WXPAY_* 都不配，把未付有效期压成 1 秒、扫单压成 1 秒一轮，
+  # 证明扫单 goroutine 不会误杀正常订单（历史上未配置支付时它会把订单 15 分钟后自动取消，导致店铺停摆）。
+  # 自带端口（后端 8096 / 假支付 8090 / 假微信 8091）与 accept-pay 错开，同样放在最后跑。
+  run "accept-pay-off（未开通支付时的安全回归）" env SDY_BIN="$BIN" node deploy/accept-pay-off.js
   # 联调用例依赖演示商品（可口可乐 / 批发价 / 演示地址），走生产的播种脚本而不是服务端内置播种
   run "播种演示库（deploy/seed-demo.py）" python3 deploy/seed-demo.py "http://127.0.0.1:$PORT_API"
   run "miniprogram test-api" node miniprogram/test-api.js

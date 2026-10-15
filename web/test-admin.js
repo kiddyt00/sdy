@@ -240,6 +240,7 @@ fresh();
   Mall.addToCart('6901234567892', 2);   // 2.50 × 2
   Mall.addToCart('6921168509256', 1);   // 4.50 × 1
   const o = Mall.createOrder({ deliveryType: 'delivery', customer: { name: '张三', phone: '13800000000', address: '幸福路1号' } });
+  o.paid = true;   // 支付轮（支付）：小票印的是「待备货」的单，显式标已收款
   const r = Admin.buildReceipt(o, { store: Admin.getStoreInfo() });
   ok(r.title === '配送小票' && r.isPickup === false, '配送单标题=配送小票');
   ok(r.orderNo === o.id && r.customer.phone === '13800000000' && r.customer.address === '幸福路1号', '单号/电话/地址带出');
@@ -751,13 +752,16 @@ fresh();
     ok(T('id="ofCustom" class="obar-custom hide"') && T("orderFilter.date === 'custom' ? '' : ' hide'") &&
       /\.hide\s*\{[^}]*display:\s*none/.test(fs.readFileSync(require.resolve('./assets/theme.css'), 'utf8')),
       '自定义日期区间默认收起、只在「自定义」档展开（.hide 真有 display:none 定义）');
-    ok(['pending', 'delivering', 'ready', 'done', 'cancelled'].every(s => T('value="' + s + '"')) &&
+    // 支付轮（支付）：pending 显示名要跟支付状态走，所以状态下拉改成由 ORDER_STATUSES
+    // 动态生成（选项文案只有 Mall.orderLabel 一份真源）。契约的 5 个 status 值仍在，不新增。
+    ok(['pending', 'delivering', 'ready', 'done', 'cancelled'].every(s => M("'" + s + "'")) &&
+      T('id="ofStatus"') && T('Admin.ORDER_STATUSES') && T('Mall.orderLabel') &&
       T('<option value="today">今天</option>') && T('<option value="7d">近 7 天</option>') &&
       T('<option value="custom">自定义</option>') && T('id="ofFrom"') && T('id="ofTo"') &&
       T('<option value="pickup">自提</option>') && T('<option value="delivery">配送</option>'),
-      '状态 5 值 / 日期 3 档 + from-to / 配送方式 3 值齐备');
-    ok(T("['ofQ', 'ofStatus', 'ofDate', 'ofFrom', 'ofTo', 'ofType']"),
-      '6 个控件都走同一个刷新出口（不会只刷半个页面）');
+      '状态 5 值（动态生成）/ 日期 3 档 + from-to / 配送方式 3 值齐备');
+    ok(T("['ofQ', 'ofStatus', 'ofDate', 'ofFrom', 'ofTo', 'ofType', 'ofPaid']"),
+      '7 个控件（含新增的支付状态）都走同一个刷新出口（不会只刷半个页面）');
     ok(T('await SdyApi.downloadOrdersCSV(filter)') && T('btn.disabled = true') && T("btn.textContent = '导出中…'"),
       '导出调用 SdyApi.downloadOrdersCSV(filter)，导出中按钮禁用并显示「导出中…」');
     ok(T('toastErr(') && T(".className = 'toast show err'") && T('.toast.err {'),
@@ -816,6 +820,212 @@ fresh();
   }
 
   console.log('\n========================================');
+  // ============ ⑮ 支付轮：支付状态 / 退款 / 对账 ============
+  section('⑮ 支付状态 / 退款 / 对账（支付轮）');
+  {
+    // 支付轮（payEnabled）：本节前半测「店家已开通在线支付」的口径，显式打开；
+    // 未开通口径在本节末尾单测（默认就是未开通，两套口径必须分开测，否则互相掩盖）。
+    Mall.setSettings({ payEnabled: true });
+    // —— orderLabel：status 一个值都不新增，pending 内部按 paid 派生 ——
+    ok(Mall.orderLabel({ status: 'pending', paid: false }) === '待付款', 'pending + 未付款 → 待付款');
+    ok(Mall.orderLabel({ status: 'pending', paid: true }) === '待备货', 'pending + 已付款 → 待备货');
+    ok(Mall.orderLabel({ status: 'pending' }) === '待付款', 'paid 字段缺失（老服务端）→ 当未付款，绝不假装已收款');
+    ok(Mall.orderLabel({ status: 'pending', paid: 1 }) === '待备货' && Mall.orderLabel({ status: 'pending', paid: '1' }) === '待备货',
+      'paid 为 1 / "1"（后端 JSON 数字或字符串）同样算已付款');
+    ok(Mall.orderLabel({ status: 'delivering', paid: true }) === '配送中' &&
+      Mall.orderLabel({ status: 'ready', paid: false }) === '待取货' &&
+      Mall.orderLabel({ status: 'done', paid: true }) === '已完成' &&
+      Mall.orderLabel({ status: 'cancelled', paid: true }) === '已取消',
+      '其余状态沿用第 27 轮文案，paid 不影响（三端逐字一致）');
+    ok(Admin.orderLabel({ status: 'pending', paid: true }) === '待备货' &&
+      Admin.orderLabel === Mall.orderLabel || typeof Admin.orderLabel === 'function',
+      'Admin.orderLabel 与 Mall.orderLabel 同一口径（页面不会各写一份）');
+
+    // —— payBadgeHTML：未付款 / 已付款+时间 / 退款处理中 / 已退款 / 退款失败，请联系店家（红） ——
+    const bUnpaid = Mall.payBadgeHTML({ status: 'pending', paid: false });
+    ok(bUnpaid.indexOf('未付款') >= 0 && bUnpaid.indexOf('st-pending') >= 0,
+      'payBadgeHTML 未付款 → 琥珀徽标：' + bUnpaid);
+    const bPaid = Mall.payBadgeHTML({ status: 'pending', paid: true, paidAt: new Date(2026, 9, 10, 8, 6).getTime() });
+    ok(bPaid.indexOf('已付款') >= 0 && bPaid.indexOf('st-done') >= 0 && bPaid.indexOf('10-10 08:06') >= 0,
+      'payBadgeHTML 已付款 → 绿徽标 + 到账时间（MM-DD HH:mm）：' + bPaid);
+    const bPaidNoTime = Mall.payBadgeHTML({ status: 'pending', paid: true });
+    ok(bPaidNoTime.indexOf('已付款') >= 0 && !/\d\d-\d\d/.test(bPaidNoTime),
+      'paidAt 缺失时只显示「已付款」，绝不瞎编时间：' + bPaidNoTime);
+    const bProc = Mall.payBadgeHTML({ status: 'cancelled', paid: true, refundState: 'processing' });
+    ok(bProc === '<span class="badge st-info">退款处理中</span>',
+      'refundState=processing → 蓝徽标「退款处理中」（整串全等，字面与小程序一致；退款态优先于 paid）：' + bProc);
+    const bDone = Mall.payBadgeHTML({ status: 'cancelled', paid: true, refundState: 'success' });
+    ok(bDone === '<span class="badge st-cancelled">已退款</span>',
+      'refundState=success → 灰徽标「已退款」（整串全等）：' + bDone);
+    const bFail = Mall.payBadgeHTML({ status: 'cancelled', paid: true, refundState: 'fail' });
+    ok(bFail === '<span class="badge st-warn">退款失败，请联系店家</span>',
+      'refundState=fail → 红色徽标「退款失败，请联系店家」（整串全等，老板一眼看见）：' + bFail);
+    ok(Mall.payBadgeHTML({ status: 'cancelled', paid: true, refundState: 'fail' }).indexOf('st-done') < 0,
+      '「退款失败，请联系店家」绝不退化成绿色「已付款」（否则钱没退回来还看着像收了款）');
+    ok(Mall.payBadgeHTML(null) === '' && Mall.payBadgeHTML(undefined) === '',
+      '空订单吐空串，不抛错也不吐半个徽标');
+    ok(Mall.payBadgeHTML({}).indexOf('未付款') >= 0,
+      '订单对象缺 paid（老服务端）→ 按未付款显示，绝不假装已收款');
+
+    // —— kpiOf：toCollect / paidAmount；doneAmount 语义一字不改 ——
+    const now = Date.now();
+    const day = 24 * 3600 * 1000;
+    const mk = (id, status, total, paid, at) =>
+      ({ id: id, status: status, total: total, paid: paid, createdAt: at == null ? now : at });
+    const orders = [
+      mk('A', 'pending', 100, true),      // 今日已付款待备货 → 进 paidAmount
+      mk('B', 'pending', 10, false),      // 今日待付款 → 进 toCollect，不进 paidAmount
+      mk('C', 'done', 30, true),          // 今日已完成且已收款 → 进 paidAmount 与 doneAmount
+      mk('D', 'cancelled', 99, true),     // 今日已取消的已付款单 → 退款处理中，不计入已收款
+      mk('E', 'done', 50, true, now - day),  // 昨天的单 → 只算今天，不进任何今日口径
+      mk('F', 'delivering', 20, true)     // 今日配送中且已收款 → 进 paidAmount
+    ];
+    const k = Admin.kpiOf(orders, now);
+    ok(k.paidAmount === 150, '今日已收款 = 已付款且未取消的合计 150（100+30+20）：' + k.paidAmount);
+    ok(k.toCollect === 1, '今日待收款 = 今日未付款单数 1：' + k.toCollect);
+    ok(k.doneAmount === 30, '「今日营业额」语义未变：仍只算已完成 30（已付款的 pending/delivering 绝不混入）');
+    ok(k.paidAmount !== k.openAmount, '已收款 ≠ 进行中金额（口径是两根管子，别互相顶替）');
+    ok(k.paidAmount + k.toCollect !== 0 && orders.filter(o => o.paid === true && o.status === 'cancelled').length === 1,
+      '已取消的已付款单（99 元）既不计入已收款，也不计入营业额');
+    const kEmpty = Admin.kpiOf([], now);
+    ok(kEmpty.paidAmount === 0 && kEmpty.toCollect === 0, '空列表 paidAmount / toCollect 全 0，不抛错');
+    ok(Admin.kpiOf(null, now).paidAmount === 0 && Admin.kpiOf(null, now).toCollect === 0,
+      'orders 为 null 时 paidAmount / toCollect 全 0，不抛错');
+
+    // —— ① 跨夜收款必须归到「付款那天」：昨晚下单、今天付款 = 今天的钱（微信商户账单口径） ——
+    const overnight = [
+      { id: 'N1', status: 'pending', total: 7, paid: true, createdAt: now - day, paidAt: now - 1000 }
+    ];
+    ok(Admin.kpiOf(overnight, now).paidAmount === 7,
+      '昨晚下单 / 今天付款的单算进「今日已收款」（按 paidAt 归日）');
+    ok(Admin.kpiOf(overnight, now - day).paidAmount === 0,
+      '同一张单不算进「昨日已收款」（否则跟微信商户账单对不上）');
+    ok(Admin.kpiOf(overnight, now).toCollect === 0 && Admin.kpiOf(overnight, now).doneAmount === 0,
+      '跨夜单只影响已收款口径：待收款按 createdAt 归昨日、营业额仍只算已完成');
+    // paidAt 用服务端 RFC3339 字符串也要能解析（真实数据就是这个形状）
+    ok(Admin.kpiOf([{ id: 'N2', status: 'done', total: 9, paid: true, createdAt: now - day, paidAt: new Date(now).toISOString() }], now).paidAmount === 9,
+      'paidAt 为 RFC3339 字符串（服务端原样）同样能解析归日');
+    // —— ② paidAt 取不到 → 退回 createdAt 归日（不丢、不报错） ——
+    const noPaidAt = [
+      { id: 'N3', status: 'pending', total: 11, paid: true, createdAt: now },              // 老单：没有 paidAt
+      { id: 'N4', status: 'done', total: 13, paid: true, createdAt: now - day },           // 老单：没有 paidAt
+      { id: 'N5', status: 'pending', total: 17, paid: true, createdAt: now, paidAt: '不是时间' },  // paidAt 解析不出来
+      { id: 'N6', status: 'pending', total: 19, paid: true }                               // 两个时间都缺 → 归不了日，丢掉也不报错
+    ];
+    ok(Admin.kpiOf(noPaidAt, now).paidAmount === 28,
+      '缺 paidAt 的老单退回 createdAt 归日（今天 11 + 解析失败退回今天 17 = 28）：' + Admin.kpiOf(noPaidAt, now).paidAmount);
+    ok(Admin.kpiOf(noPaidAt, now - day).paidAmount === 13,
+      '缺 paidAt 的老单按 createdAt 归到昨天（昨天的 13 算昨天的钱）');
+    ok(Admin.kpiOf(noPaidAt, now).toCollect === 0, '这些单都已付款 → 不计入待收款');
+    ok(Admin.kpiOf([{ id: 'N7', status: 'pending', total: 5, paid: true }], now).paidAmount === 0,
+      'paidAt / createdAt 都缺的单归不了日 → 不计入任何一天，但绝不抛错');
+
+    // —— prepQueue：备货队列只列已付款的 pending（老板红线） ——
+    const pq = Admin.prepQueue([
+      mk('P1', 'pending', 1, true, now - 5000),
+      mk('P2', 'pending', 1, false, now),
+      mk('P3', 'pending', 1, true, now),
+      mk('P4', 'done', 1, true, now),
+      mk('P5', 'delivering', 1, true, now),
+      mk('P6', 'pending', 1, '1', now - 10000)
+    ]);
+    ok(pq.length === 3 && pq.every(o => o.status === 'pending' && o.paid), 'prepQueue 只返回已付款的 pending 单');
+    ok(pq.map(o => o.id).join(',') === 'P3,P1,P6', 'prepQueue 按下单时间倒序（最新在前）：' + pq.map(o => o.id).join(','));
+    ok(Admin.prepQueue([mk('X', 'pending', 1, false)]).length === 0,
+      '一张未付款单都不放行（未付款单绝不混进备货队列）');
+    ok(Admin.prepQueue(null).length === 0 && Admin.prepQueue(undefined).length === 0 && Admin.prepQueue('x').length === 0,
+      '非数组入参 → 空数组，不抛错');
+
+    // —— orderFilterQuery 的 paid：只认 0/1，其余视为不筛 ——
+    const NOW = new Date(2026, 9, 14, 10, 30, 0).getTime();
+    const J = o => JSON.stringify(o);
+    ok(J(Admin.orderFilterQuery({ date: 'none', paid: '1' })) === J({ paid: '1' }), "paid='1' 逐字进查询串");
+    ok(J(Admin.orderFilterQuery({ date: 'none', paid: '0' })) === J({ paid: '0' }), "paid='0' 逐字进查询串");
+    ok(J(Admin.orderFilterQuery({ date: 'none', paid: 'all' })) === J({}) &&
+      J(Admin.orderFilterQuery({ date: 'none', paid: '' })) === J({}),
+      "paid 为 'all' / '' / 缺失 → 不拼进查询串（空 = 不筛）");
+    ok(J(Admin.orderFilterQuery({ date: 'none', paid: '2' })) === J({}) &&
+      J(Admin.orderFilterQuery({ date: 'none', paid: 'true' })) === J({}),
+      'paid 只认 0/1，其它值一律当不筛（绝不把非法值透传给服务端）');
+    ok(Admin.hasOrderFilter({ paid: '1' }) === true && Admin.hasOrderFilter({ paid: '0' }) === true &&
+      Admin.hasOrderFilter({ paid: 'all' }) === false && Admin.hasOrderFilter({}) === false,
+      'hasOrderFilter 认 paid：有 paid=0/1 时必须走服务端过滤，不能当「无筛选」直接回镜像');
+    const fo = Admin.filterOrders([
+      { id: 'a', status: 'pending', paid: true, createdAt: now },
+      { id: 'b', status: 'pending', paid: false, createdAt: now },
+      { id: 'c', status: 'pending', paid: 1, createdAt: now }
+    ], { paid: '1' });
+    ok(fo.length === 2 && fo.every(o => o.paid), 'filterOrders(paid=1) 只留已付款单');
+    ok(Admin.filterOrders([{ id: 'a', status: 'pending', paid: true }], { paid: '0' }).length === 0,
+      'filterOrders(paid=0) 只留未付款单');
+
+    // —— admin.html 接线：支付列 / 支付状态筛选 / 退款按钮 / KPI 卡都真在页面上 ——
+    const fs = require('fs');
+    const html = fs.readFileSync(require.resolve('./admin.html'), 'utf8');
+    const T = s => html.indexOf(s) >= 0;
+    ok(T('id="ofPaid"') && T('value="1">已付款') && T('value="0">待付款') && T('value="all">全部'),
+      '筛选条有「支付状态」（全部 / 待付款 / 已付款）');
+    ok(T('Mall.payBadgeHTML(o)') && /<th[^>]*>支付<\/th>/.test(html),
+      '订单表有「支付」列且用 Mall.payBadgeHTML 渲染（四态一眼可见）');
+    ok(T('markPaidO(') && T('refundO(') && T('function markPaidO(') && T('function refundO('),
+      '订单动作区有「标记已收款」与「发起退款」按钮且处理函数都在');
+    ok(T('SdyApi.markPaid(id, \'现金\')') && T("SdyApi.refundOrder(id, '老板发起退款')"),
+      '两个按钮分别打 SdyApi.markPaid / SdyApi.refundOrder（没有本地假成功）');
+    ok(T('confirm(') && /markPaidO[\s\S]{0,900}?toastErr\(/.test(html) && /refundO[\s\S]{0,900}?toastErr\(/.test(html),
+      '两个动作都有二次确认，且失败走红色 toastErr（不静默）');
+    ok(/if \(!Mall\.isPaid\(o\) && o\.status !== 'cancelled'\) acts\.push\([\s\S]{0,140}?markPaidO/.test(html),
+      '「标记已收款」只给未付款且未取消的单（已取消的单再标已收款会把没进账的钱算进「今日已收款」）');
+    ok(/if \(Mall\.isPaid\(o\) && o\.status !== 'cancelled'\) acts\.push\([\s\S]{0,140}?refundO/.test(html),
+      '「发起退款」只给已付款且未取消的单（已取消的单服务端已发过退款）');
+    ok(T('id="kpiPaidAmount"') && T('id="kpiToCollect"') &&
+      T("$('kpiPaidAmount').textContent") && T("$('kpiToCollect').textContent"),
+      'KPI 区新增「今日已收款（微信）」「待收款」两张卡且真会被写入');
+    ok(T('按付款时间统计') && T('按订单时间统计'),
+      '两张卡的脚注写明口径差别（已收款按付款时间 / 待收款按订单时间），老板一眼能懂');
+    ok(T('只算已完成') && T('下单≠收款'),
+      '「今日营业额」的脚注仍是「只算已完成（下单≠收款）」，没被改成含未收款');
+    ok(T('Admin.prepQueue(list)') && T('Admin.prepQueue(Mall.getOrders())') &&
+      !T("list.filter(o => o.status === 'pending').length"),
+      '待备货计数与批量打印都走 Admin.prepQueue（未付款单混不进来）');
+    ok(T('REFUND_LABELS') && T("processing: '退款处理中'") && T("fail: '退款失败，请联系店家'") && T("'': '未退款'") && T('function refundLabel('),
+      'REFUND_LABELS 三态逐字用小程序侧字面（退款处理中 / 已退款 / 退款失败，请联系店家），后台空态保留「未退款」');
+    ok(T('o.transactionId') && T('o.refundId') && T('o.paidAt'),
+      '订单明细显示 transactionId / refundId / 到账时间（对账要看得到）');
+
+    // —— 支付轮（payEnabled）：未开通在线支付（服务端缺 WXPAY_*，也就是当前线上真实状态）——
+    // 这时根本不存在「待付款」这个状态：显示名回到第 28 轮，备货队列必须收下这些 pending 单，
+    // 否则老板的备货队列恒空、店铺停摆（这正是本次要修的必修缺陷）。
+    Mall.setSettings({ payEnabled: false });
+    ok(Mall.payEnabled() === false && Admin.payEnabled() === false, '未开通在线支付 → Mall / Admin 读到同一个 false');
+    ok(Mall.orderLabel({ status: 'pending', paid: false }) === '待备货' &&
+      Mall.orderLabel({ status: 'pending' }) === '待备货' &&
+      Admin.orderLabel({ status: 'pending', paid: false }) === '待备货',
+      '未开通时 pending 一律显示「待备货」（第 28 轮语义），绝不显示「待付款」');
+    ok(Mall.orderLabel({ status: 'cancelled', paid: false }) === '已取消' &&
+      Mall.orderLabel({ status: 'done', paid: false }) === '已完成' &&
+      Mall.orderLabel({ status: 'ready', paid: false }) === '待取货',
+      '未开通时 cancelled/done/ready 分支一点不受影响');
+    ok(Mall.payBadgeHTML({ status: 'pending', paid: false }) === '',
+      '未开通时未付款单不出「未付款」徽标（线下收款不是欠款）');
+    ok(Mall.payBadgeHTML({ status: 'pending', paid: true, paidAt: now }).indexOf('已付款') >= 0,
+      '未开通时老板线下标记过的已收款单照常显示绿徽标（对账要看得见）');
+    const pqOff = Admin.prepQueue([
+      mk('Q1', 'pending', 1, false, now),
+      mk('Q2', 'pending', 1, true, now - 1000),
+      mk('Q3', 'done', 1, false, now),
+      mk('Q4', 'cancelled', 1, false, now)
+    ]);
+    ok(pqOff.map(o => o.id).join(',') === 'Q1,Q2',
+      '未开通时备货队列收全部 pending（含未付款单），done/cancelled 仍不进：' + pqOff.map(o => o.id).join(','));
+    ok(Admin.kpiOf(orders, now).toCollect === 0,
+      '未开通时「待收款」为 0（那笔钱不会从线上进来），卡片还在但这个数不该虚挂');
+    ok(Admin.kpiOf(orders, now).paidAmount === 150 && Admin.kpiOf(orders, now).doneAmount === 30,
+      '未开通时已收款 / 今日营业额口径照旧（线下标记的单仍算钱）');
+    ok(Admin.orderFilterQuery({ date: 'none', paid: '1' }).paid === '1',
+      '未开通时「已付款 / 待付款」筛选仍可用（老板要能翻出标记过收款的单）');
+    Mall.setSettings({ payEnabled: true });   // 复位：别把「未开通」口径漏给后面的用例
+  }
+
   console.log('通过 ' + passed + ' 项 / 失败 ' + failed + ' 项');
   process.exit(failed ? 1 : 0);
 })();

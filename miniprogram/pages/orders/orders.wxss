@@ -36,6 +36,32 @@ van-tabs {
   border-bottom: 1rpx solid #f3f4f6;
 }
 .oid { font-size: 23rpx; color: #9ca3af; }
+.otags { display: flex; align-items: center; }
+/* 第 29 轮：已付款小标（微信支付） */
+.opaid {
+  font-size: 20rpx;
+  padding: 4rpx 14rpx;
+  margin-right: 10rpx;
+  border-radius: 999rpx;
+  background: #dcfce7;
+  color: #166534;
+}
+/* 第 29 轮：退款提示行（processing 蓝 / success 灰 / fail 红醒目标示，fail 必须一眼看见） */
+.orefund {
+  font-size: 20rpx;
+  padding: 4rpx 14rpx;
+  margin-right: 10rpx;
+  border-radius: 999rpx;
+  background: #e0f2fe;
+  color: #075985;
+}
+.orefund.done { background: #f3f4f6; color: #6b7280; }
+.orefund.warn {
+  background: #fee2e2;
+  color: #b91c1c;
+  font-weight: 700;
+  border: 1rpx solid #fca5a5;
+}
 .ostatus {
   font-size: 22rpx;
   padding: 6rpx 20rpx;
@@ -93,6 +119,12 @@ van-tabs {
 }
 .ometa { font-size: 22rpx; color: #9ca3af; }
 .odot { margin: 0 8rpx; }
+/* 第 29 轮：未付款单的支付倒计时 */
+.oleft {
+  font-size: 23rpx;
+  color: #b45309;
+  margin-top: 8rpx;
+}
 .osum { font-size: 24rpx; color: #374151; }
 .osum-n { font-size: 32rpx; font-weight: 700; color: #dc2626; }
 
@@ -104,7 +136,9 @@ van-tabs {
 }
 .obtn {
   font-size: 26rpx;
-  padding: 12rpx 30rpx;
+  /* 第 29 轮：按钮热区 ≥44px（88rpx = 20rpx*2 + 48rpx 行高） */
+  padding: 20rpx 30rpx;
+  line-height: 48rpx;
   border-radius: 999rpx;
   margin-left: 16rpx;
 }

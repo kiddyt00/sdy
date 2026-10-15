@@ -23,7 +23,7 @@ function mkFetch(routes) {
     let body = null;
     if (opts && opts.body) { try { body = JSON.parse(opts.body); } catch (e) { body = opts.body; } }
     const path = String(url).replace(/^https?:\/\/[^/]+/, '');
-    calls.push({ method: method, path: path, url: String(url), body: body, headers: (opts && opts.headers) || null });
+    calls.push({ method: method, path: path, url: String(url), body: body, headers: (opts && opts.headers) || null, credentials: (opts && opts.credentials) || null });
     for (const r of routes) {
       if (r.method === method && (r.path === path || (r.re && r.re.test(path)))) {
         if (r.throw) throw new Error(r.throw);
@@ -43,7 +43,7 @@ const SERVER_PRODUCTS = [
   { code: '6902083881234', name: '农夫山泉', brand: '农夫山泉', spec: '550ml', category: '饮料', salePrice: 1.8, wholesalePrice: 0, price: 1.8, costPrice: 1.1, unit: '瓶', stock: 200, syncStatus: 'pending', createdAt: '2026-10-10T08:00:00Z' }
 ];
 const SERVER_ORDERS = [
-  { id: 'M1791619813104136149', customerName: '张三', phone: '13800000000', address: '1 号楼 101', deliveryType: 'pickup', subtotal: 5, deliveryFee: 0, total: 5, status: 'pending', items: [{ code: '6901234567892', name: '可口可乐', price: 2.5, qty: 2 }], createdAt: '2026-10-10T08:05:00Z' }
+  { id: 'M1791619813104136149', customerName: '张三', phone: '13800000000', address: '1 号楼 101', deliveryType: 'pickup', subtotal: 5, deliveryFee: 0, total: 5, status: 'pending', paid: true, paidAt: '2026-10-10T08:06:00Z', transactionId: '4200001234202610101234567890', payExpireAt: 1791969999, refundId: '', refundState: '', items: [{ code: '6901234567892', name: '可口可乐', price: 2.5, qty: 2 }], createdAt: '2026-10-10T08:05:00Z' }
 ];
 
 function serverRoutes(extra) {
@@ -51,7 +51,7 @@ function serverRoutes(extra) {
   return (extra || []).concat([
     { method: 'GET', path: '/healthz', body: { ok: true, circuitOpen: false, cloudFails: 0, cloudConfigured: true } },
     // 运营参数（第 27 轮起 sync 会拉一次）：服务端是真源，页面的本地默认值只兜底
-    { method: 'GET', re: /^\/api\/settings(\?|$)/, body: { name: '家庭超市', phone: '', address: '', footer: '', lowStock: 5, minOrder: 0, deliveryFee: 3, minFree: 30 } },
+    { method: 'GET', re: /^\/api\/settings(\?|$)/, body: { name: '家庭超市', phone: '', address: '', footer: '', lowStock: 5, minOrder: 0, deliveryFee: 3, minFree: 30, payEnabled: true } },
     // 商品：带 ?phone= 时服务端会按顾客等级算好 price（D24），这里统一用正则匹配
     { method: 'GET', re: /^\/api\/products(\?|$)/, body: { items: SERVER_PRODUCTS, total: 2, tier: 'retail' } },
     // 订单：第 27 轮起顾客必须带 ?phone=，服务端只回他自己的单
@@ -105,6 +105,20 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     ok(orders[0].customer.name === '张三' && orders[0].customer.phone === '13800000000', '顾客字段映射 customer.name/phone');
     ok(orders[0].items[0].spec === '330ml 罐装' && orders[0].items[0].unit === '罐', '订单行从商品档案补齐 spec/unit');
     ok(Mall.orderView(orders[0]).statusLabel === '待备货', '状态标签可直接渲染');
+    // 支付轮（支付）：服务端支付/退款字段必须原样透到镜像（少一个后台就会静默当未付款）
+    ok(orders[0].paid === true, 'paid 布尔原样透传');
+    ok(orders[0].paidAt > 0 && typeof orders[0].paidAt === 'number', 'ISO paidAt → 时间戳');
+    ok(orders[0].transactionId === '4200001234202610101234567890', '微信支付单号透传');
+    ok(orders[0].payExpireAt === 1791969999, '支付截止（Unix 秒）原样透传，不当时刻换算');
+    ok(orders[0].refundId === '' && orders[0].refundState === '', '没退款时 refundId/refundState 为空串，不是 undefined');
+    const bare = SdyApi.fromServerOrder({ id: 'M0', status: 'pending', items: [], subtotal: 0, deliveryFee: 0, total: 0, customerName: 'x', phone: '1' });
+    ok(bare.paid === false && bare.paidAt === 0 && bare.transactionId === '' && bare.payExpireAt === 0 && bare.refundId === '' && bare.refundState === '',
+      '老服务端缺字段时兜底为未付款（不抛错、不返回 undefined）');
+    ok(Mall.orderLabel(bare) === '待付款' && Mall.orderLabel(orders[0]) === '待备货',
+      '同一批数据：未付款→待付款 / 已付款→待备货');
+    // 支付轮（payEnabled）：上面这个「待付款」只有在店家真的开通了在线支付时才成立
+    ok(Mall.payEnabled() === true && SdyApi.payEnabled() === true,
+      'settings 里 payEnabled:true → 已开通在线支付（同步进 Mall，显示层与请求层共用一个口径）');
   }
 
   /* ============ ③ 后端优先写操作 ============ */
@@ -548,6 +562,20 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
     ok(Mall.minOrder() === 8, 'sync 应用服务端 minOrder（起送价）');
     ok(Mall.calcDeliveryFee('delivery', 10) === 4.5, 'sync 应用端 deliveryFee（10 元不满 39 → 4.5 元）');
     ok(Mall.calcDeliveryFee('delivery', 39) === 0, 'sync 应用服务端 minFree（满 39 免运费）');
+    // 支付轮（payEnabled）：GET /api/settings 的派生字段，默认口径「取不到 = 未开通」。
+    // 这个 fixture 故意没写 payEnabled（= 服务端未配置 WXPAY_*，也就是当前线上真实状态）：
+    // 前端绝不能因为「没看到 false」就当成开通，否则老板的备货队列会被未付款单卡住。
+    ok(Mall.payEnabled() === false, '服务端没下发 payEnabled → 未开通在线支付（缺字段绝不等于开通）');
+    ok(SdyApi.payEnabled() === false, 'SdyApi.payEnabled() 与 Mall 同一口径（页面上只有这一个真源）');
+    Mall.setSettings({ payEnabled: true });
+    ok(Mall.payEnabled() === true && SdyApi.payEnabled() === true, 'payEnabled:true → 开通（SdyApi 直接读 Mall 的真源）');
+    Mall.setSettings({ payEnabled: 'true' });
+    ok(Mall.payEnabled() === false, "payEnabled 严格认布尔：字符串 'true' 一律按未开通（服务端下发的是 JSON bool）");
+    Mall.setSettings({ payEnabled: 1 });
+    ok(Mall.payEnabled() === false, 'payEnabled=1 也按未开通（不做类型兼容，免得把 false 认成开通）');
+    Mall.resetSettings();
+    SdyApi._resetForTest();
+    ok(Mall.payEnabled() === false && SdyApi.payEnabled() === false, '复位/请求失败 → 回到未开通（默认口径）');
     const oGet = f.calls.filter(c => c.method === 'GET' && /^\/api\/orders/.test(c.path))[0];
     ok(!!oGet && oGet.path === '/api/orders?phone=13800138000', 'sync 拉订单必须带手机号（服务端据此只回我的单）');
 
@@ -786,6 +814,134 @@ function fresh() { Mall._resetForTest(); SdyApi._resetForTest(); Mall.loadCatalo
       try { await SdyApi.downloadOrdersCSV({}); } catch (e) { noUrl = (e && e.message) || String(e); }
     } finally { global.URL = realURL; }
     ok(noUrl.indexOf('blob 下载') >= 0, '浏览器缺 blob 下载能力时 throw（不静默、不假报成功）：' + noUrl);
+  }
+
+  /* ============ ■ 支付轮：支付状态 / 退款 / 对账 ============ */
+  section('■ 支付轮：支付状态 / 退款 / 对账（paid 筛选 + markPaid/prepayOrder/payStatus/refundOrder）');
+  {
+    // ① orderFilterQuery：paid 逐字进 query；'' 与 'all' 视为不带（与 q/status 空值同规矩）
+    ok(SdyApi.orderFilterQuery({ paid: '1' }) === '?paid=1', 'orderFilterQuery：paid=1 逐字进 query');
+    ok(SdyApi.orderFilterQuery({ paid: '0' }) === '?paid=0', 'orderFilterQuery：paid=0 逐字进 query');
+    ok(SdyApi.orderFilterQuery({ paid: '' }) === '' && SdyApi.orderFilterQuery({ paid: 'all' }) === '',
+      "orderFilterQuery：paid 为 '' / 'all' 时视为不带（与 q/status 空值同规矩）");
+    ok(SdyApi.orderFilterQuery({ q: 'x', paid: '1' }) === '?q=x&paid=1',
+      'orderFilterQuery：paid 与其它筛选并列且排在最后（老参数顺序不变）');
+
+    // ② sync(filter.paid)：与身份参数并列；'all' 不拼
+    const fp1 = mkFetch(serverRoutes([
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: SERVER_ORDERS, total: 1 } }
+    ]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fp1, mall: Mall, timeoutMs: 50 });
+    global.fetch = fp1;
+    await SdyApi.probe();
+    await SdyApi.sync('13800138000', { all: false, filter: { paid: '1' } });
+    const pc1 = fp1.calls.filter(c => c.path.indexOf('/api/orders') === 0)[0];
+    ok(!!pc1 && pc1.path === '/api/orders?phone=13800138000&paid=1',
+      'sync(filter.paid=1) 与身份参数并列：' + (pc1 && pc1.path));
+    await SdyApi.sync('13800138000', { all: false, filter: { paid: 'all' } });
+    const pc2 = fp1.calls.filter(c => c.path.indexOf('/api/orders') === 0)[1];
+    ok(!!pc2 && pc2.path === '/api/orders?phone=13800138000',
+      "sync(filter.paid='all') 不拼 paid：" + (pc2 && pc2.path));
+    await SdyApi.sync(null, { all: true, filter: { paid: '0' } });
+    const pc3 = fp1.calls.filter(c => c.path.indexOf('/api/orders') === 0)[2];
+    ok(!!pc3 && pc3.path === '/api/orders?paid=0' && !!pc3.headers && pc3.headers['X-Admin'] === '1',
+      '管理端 sync(all:true, paid=0) 不带 phone、只带筛选 + X-Admin：' + (pc3 && pc3.path));
+
+    // ③ markPaid：POST /api/orders/{id}/mark-paid，body 可带 {"note":"现金"}
+    const fmp = mkFetch(serverRoutes([
+      { method: 'POST', re: /^\/api\/orders\/[^/]+\/mark-paid$/, body: { id: 'M1', status: 'pending', paid: true } }
+    ]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fmp, mall: Mall, timeoutMs: 50 });
+    global.fetch = fmp;
+    await SdyApi.probe();
+    const mpRes = await SdyApi.markPaid('M1', '现金');
+    const mpCall = fmp.calls.filter(c => c.path.indexOf('/mark-paid') > 0)[0];
+    ok(!!mpCall && mpCall.method === 'POST' && mpCall.path === '/api/orders/M1/mark-paid',
+      'markPaid 打 POST /api/orders/{id}/mark-paid：' + (mpCall && mpCall.path));
+    ok(!!mpCall && !!mpCall.body && mpCall.body.note === '现金' && Object.keys(mpCall.body).length === 1,
+      'markPaid 只带线下备注（body={note:"现金"}）：' + JSON.stringify(mpCall && mpCall.body));
+    ok(!!mpCall && !!mpCall.headers && mpCall.headers['X-Admin'] === '1' &&
+      mpCall.headers['Content-Type'] === 'application/json' && mpCall.credentials === 'same-origin',
+      'markPaid 走管理员通道：X-Admin: 1 + Content-Type + credentials=same-origin');
+    ok(!!mpRes && mpRes.id === 'M1' && mpRes.paid === true, 'markPaid 返回服务端订单（供页面就地刷新）');
+    await SdyApi.markPaid('M1');
+    const mpCall2 = fmp.calls.filter(c => c.path.indexOf('/mark-paid') > 0)[1];
+    ok(!!mpCall2 && !!mpCall2.body && Object.keys(mpCall2.body).length === 0,
+      'markPaid(不带 note) 发空 body，绝不瞎编备注：' + JSON.stringify(mpCall2 && mpCall2.body));
+
+    // ④ prepayOrder：POST /api/pay/prepay，body 只有 {orderId}
+    const fpp = mkFetch(serverRoutes([
+      { method: 'POST', path: '/api/pay/prepay', body: { outTradeNo: 'OT1', amountFen: 500, payParams: { timeStamp: '1' }, expireAt: 1791969999 } },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: [], total: 0 } }
+    ]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fpp, mall: Mall, timeoutMs: 50 });
+    global.fetch = fpp;
+    await SdyApi.probe();
+    const pp = await SdyApi.prepayOrder('M1');
+    const ppCall = fpp.calls.filter(c => c.path === '/api/pay/prepay')[0];
+    ok(!!ppCall && ppCall.method === 'POST' && !!ppCall.body && ppCall.body.orderId === 'M1' &&
+      Object.keys(ppCall.body).length === 1,
+      'prepayOrder 打 POST /api/pay/prepay，body 只有 {orderId}：' + JSON.stringify(ppCall && ppCall.body));
+    ok(!!pp && pp.outTradeNo === 'OT1' && pp.amountFen === 500 && pp.expireAt === 1791969999 &&
+      !!pp.payParams && pp.payParams.timeStamp === '1',
+      'prepayOrder 原样透传 {outTradeNo,amountFen,payParams,expireAt}（收银台要的四个字段）');
+
+    // ⑤ payStatus：GET /api/pay/status?orderId=M…
+    const fps = mkFetch(serverRoutes([
+      { method: 'GET', re: /^\/api\/pay\/status\?/, body: { paid: true, status: 'pending', transactionId: 'T1', refundState: '' } },
+      { method: 'GET', re: /^\/api\/orders(\?|$)/, body: { items: [], total: 0 } }
+    ]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: fps, mall: Mall, timeoutMs: 50 });
+    global.fetch = fps;
+    await SdyApi.probe();
+    const st = await SdyApi.payStatus('M1');
+    const psCall = fps.calls.filter(c => c.path.indexOf('/api/pay/status') === 0)[0];
+    ok(!!psCall && psCall.method === 'GET' && psCall.path === '/api/pay/status?orderId=M1',
+      'payStatus 打 GET /api/pay/status?orderId=…：' + (psCall && psCall.path));
+    ok(!!st && st.paid === true && st.transactionId === 'T1' && st.refundState === '',
+      'payStatus 原样透传服务端字段（页面零加工）');
+
+    // ⑥ refundOrder：服务端没有独立退款接口 → 如实调 POST /api/orders/{id}/cancel
+    const frf = mkFetch(serverRoutes([
+      { method: 'POST', re: /^\/api\/orders\/[^/]+\/cancel$/, body: { id: 'M1', status: 'cancelled', paid: true, refundState: 'processing' } }
+    ]));
+    SdyApi._resetForTest();
+    SdyApi.configure({ base: 'http://api.test', fetchImpl: frf, mall: Mall, timeoutMs: 50 });
+    global.fetch = frf;
+    await SdyApi.probe();
+    const rf = await SdyApi.refundOrder('M1', '老板发起退款');
+    const rfCall = frf.calls.filter(c => c.path.indexOf('/cancel') > 0)[0];
+    ok(!!rfCall && rfCall.method === 'POST' && rfCall.path === '/api/orders/M1/cancel' &&
+      !!rfCall.body && rfCall.body.to === 'cancelled' && rfCall.body.reason === '老板发起退款',
+      'refundOrder 如实调 POST /api/orders/{id}/cancel（无独立退款接口）并带上取消原因');
+    ok(!!rfCall && !!rfCall.headers && rfCall.headers['X-Admin'] === '1' &&
+      rfCall.credentials === 'same-origin',
+      'refundOrder 走管理员通道（X-Admin: 1 + credentials=same-origin）');
+    ok(!!rf && rf.status === 'cancelled' && rf.refundState === 'processing',
+      '取消已付款单返回 refundState=processing（页面据此显示「退款处理中」，不许静默）');
+
+    // ⑦ 离线（本地演示）：四个动作都必须抛中文错，绝不假报成功
+    fresh();
+    const offErr = async fn => { try { await fn(); return ''; } catch (e) { return (e && e.message) || String(e); } };
+    ok((await offErr(() => SdyApi.markPaid('M1', '现金'))).indexOf('需要连上后端') >= 0,
+      '离线 markPaid 抛中文错，绝不假报收款成功');
+    ok((await offErr(() => SdyApi.prepayOrder('M1'))).indexOf('需要连上后端') >= 0,
+      '离线 prepayOrder 抛中文错（未配置微信支付时服务端本就会回 503）');
+    ok((await offErr(() => SdyApi.refundOrder('M1', 'x'))).indexOf('需要连上后端') >= 0,
+      '离线 refundOrder 抛中文错，绝不假报退款成功');
+
+    // ⑦b 离线 payStatus 回本地镜像形状（页面零分叉）
+    Mall.addToCart('6901234567892', 2);
+    const mo = Mall.createOrder({ deliveryType: 'pickup', customer: { name: '张三', phone: '13800000000' } });
+    const mm = Mall.getOrders(); mm.filter(x => x.id === mo.id)[0].paid = true; Mall._save(Mall.KEYS.orders, mm);
+    const offSt = await SdyApi.payStatus(mo.id);
+    ok(!!offSt && offSt.paid === true && offSt.status === 'pending' &&
+      typeof offSt.transactionId === 'string' && typeof offSt.refundState === 'string' && typeof offSt.expireAt === 'number',
+      '离线 payStatus 返回同一形状 {paid,status,transactionId,refundState,expireAt}');
   }
 
   console.log('\n========================================');

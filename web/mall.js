@@ -30,6 +30,10 @@ const Mall = (() => {
   const thresholds = { lowStock: LOCAL_DEFAULTS.lowStock, minOrder: LOCAL_DEFAULTS.minOrder };
   // 是否已经连上后端（由 sdy-api.js 探测/同步后告知）：连上了就不许再用本地演示商品重播种。
   let serverConnected = false;
+  // 支付轮（支付）：服务端 /api/settings 的派生字段 payEnabled（微信支付是否已配置好）。
+  // **默认 false = 未开通**：拿不到字段 / 请求失败 / 不是布尔，全按未开通算——这正是当前线上的真实状态。
+  // 未开通时全站退回第 28 轮语义：pending 一律「待备货」，不叫顾客去别处付款。
+  let payOn = false;
   const STATUS_FLOW = {                    // 订单状态机：合法迁移表
     pending:    ['delivering', 'ready'],   // 待备货 → 配送中 | 待取货
     delivering: ['done'],                  // 配送中 → 已完成
@@ -260,7 +264,9 @@ const Mall = (() => {
     if (typeof x.pickupFee === 'number') DELIVERY_RULES.pickupFee = round2(x.pickupFee);
     if (typeof x.lowStock === 'number' && isFinite(x.lowStock)) thresholds.lowStock = Math.max(0, Math.floor(x.lowStock));
     if (typeof x.minOrder === 'number' && isFinite(x.minOrder)) thresholds.minOrder = round2(x.minOrder);
-    return Object.assign({}, DELIVERY_RULES, { lowStock: thresholds.lowStock, minOrder: thresholds.minOrder });
+    // 严格认布尔真值：'true' / 1 / 缺字段都算未开通（服务端下发的是 JSON bool，别自作聪明做类型兼容）
+    payOn = (x.payEnabled === true);
+    return Object.assign({}, DELIVERY_RULES, { lowStock: thresholds.lowStock, minOrder: thresholds.minOrder, payEnabled: payOn });
   }
   // 回到本地默认（断线重连失败 / 测试复位用）
   function resetSettings() {
@@ -269,8 +275,11 @@ const Mall = (() => {
     DELIVERY_RULES.fee = LOCAL_DEFAULTS.deliveryFee;
     thresholds.lowStock = LOCAL_DEFAULTS.lowStock;
     thresholds.minOrder = LOCAL_DEFAULTS.minOrder;
-    return Object.assign({}, DELIVERY_RULES, { lowStock: thresholds.lowStock, minOrder: thresholds.minOrder });
+    payOn = false;   // 复位即「未开通」，与「取不到 = 未开通」同一口径
+    return Object.assign({}, DELIVERY_RULES, { lowStock: thresholds.lowStock, minOrder: thresholds.minOrder, payEnabled: payOn });
   }
+  // 在线支付是否已开通（mall-admin.js / admin.html / index.html 都读这一个入口）
+  function payEnabled() { return payOn === true; }
   function lowStock() { return thresholds.lowStock; }
   function minOrder() { return thresholds.minOrder; }
   // 起送价校验：返回 null 表示可以通过，否则返回给顾客看的中文原因
@@ -366,12 +375,63 @@ const Mall = (() => {
   }
 
   function orderView(o) {
-    return Object.assign({}, o, { statusLabel: STATUS_META[o.status].label, statusCls: STATUS_META[o.status].cls });
+    return Object.assign({}, o, { statusLabel: orderLabel(o), statusCls: STATUS_META[o.status].cls });
   }
-  // 订单状态的一句话解释：文案与小程序 miniprogram/utils/rules.js 的 statusHint 保持一致，别在这里另写一套
+  // 支付轮（支付）：显示口径的唯一真源 —— status 一个值都不新增，只在 pending 内部按 paid 派生。
+  // 「今日营业额 / 待备货队列」等业务口径不在这里判断，见 mall-admin.js 的 kpiOf / prepQueue。
+  // 支付轮（payEnabled）：微信支付未开通时退回第 28 轮语义 —— pending 一律「待备货」，
+  // 否则老板的备货队列会因为「没人付得了款」而恒空，店铺直接停摆。
+  function isPaid(o) { return !!(o && (o.paid === true || o.paid === 1 || o.paid === '1')); }
+  function orderLabel(o) {
+    if (!o) return '';
+    if (o.status === 'pending') return (isPaid(o) || !payEnabled()) ? '待备货' : '待付款';
+    return (STATUS_META[o.status] || {}).label || String(o.status || '');
+  }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function fmtPaidAt(t) {
+    if (!t) return '';
+    const d = new Date(t);
+    if (isNaN(d.getTime())) return '';
+    const p = n => (n < 10 ? '0' : '') + n;
+    return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  // 支付徽标四态（管理后台订单表「支付」列 / 详情区共用）：
+  //   未付款 → 琥珀 .st-pending；已付款（带到账时间）→ 绿 .st-done；
+  //   退款处理中 → 蓝 .st-info；退款失败 → 红 .st-warn（必须一眼看见，不许静默）；
+  //   已退款 → 灰 .st-cancelled。
+  // 退款态（refundState）优先于 paid 显示：退款处理中的单 paid 仍为 true，只看 paid 会误读成「已收款」。
+  // 支付轮（支付）：退款三态中文以小程序侧字面为准，三端逐字一致（改文案前先看 miniprogram 同名字段）。
+  function payBadgeHTML(o) {
+    if (!o) return '';
+    const rs = String(o.refundState || '');
+    if (rs === 'processing') return '<span class="badge st-info">退款处理中</span>';
+    if (rs === 'fail') return '<span class="badge st-warn">退款失败，请联系店家</span>';
+    if (rs === 'success') return '<span class="badge st-cancelled">已退款</span>';
+    // 支付轮（payEnabled）：未开通在线支付时「未付款」不是异常、也没人能付，
+    // 挂个琥珀「未付款」只会让老板以为漏收了钱 —— 干脆不出徽标。
+    // 退款三态与「已付款」不受影响：那两件事都是真发生过的资金动作。
+    if (!isPaid(o) && !payEnabled()) return '';
+    if (!isPaid(o)) return '<span class="badge st-pending">未付款</span>';
+    const t = fmtPaidAt(o.paidAt);
+    // 时间缺省（老单被后台标记已收款但没写时间）时退化成「已付款」，不编造时间。
+    return '<span class="badge st-done">' + (t ? '已付款 ' + esc(t) : '已付款') + '</span>';
+  }
+  // 订单状态的一句话解释：文案与小程序 miniprogram/utils/rules.js 的 statusHint 保持一致，别在这里另写一套。
+  // 支付轮（支付）：待付款单先讲钱——Web 端不做线上支付，顾客必须知道要去小程序付。
   function statusHint(o) {
     if (!o) return '';
-    if (o.status === 'pending') return o.deliveryType === 'delivery' ? '老板正在备货，稍后安排配送' : '老板正在备货，到店报手机号自提';
+    if (o.status === 'pending') {
+      // 未开通在线支付：没有任何付款动作可做，别叫顾客去小程序 —— 回到与小程序逐字一致的备货文案。
+      if (!isPaid(o) && !payEnabled()) {
+        return o.deliveryType === 'delivery' ? '老板正在备货，稍后安排配送' : '老板正在备货，到店报手机号自提';
+      }
+      if (!isPaid(o)) return '请在微信小程序里完成支付（网页版暂不支持线上支付）';
+      return o.deliveryType === 'delivery' ? '老板正在备货，稍后安排配送' : '老板正在备货，到店报手机号自提';
+    }
     if (o.status === 'delivering') return '正在配送途中，请留意电话';
     if (o.status === 'ready') return '已备好，到店报手机号即可取货';
     if (o.status === 'done') return '这笔已完成，谢谢惠顾';
@@ -619,6 +679,12 @@ const Mall = (() => {
     advanceOrder: advanceOrder,
     orderView: orderView,
     statusHint: statusHint,
+    // 支付轮（支付）：显示口径真源（管理后台 mall-admin.js 再导出这两个，两端共用一套）
+    orderLabel: orderLabel,
+    payBadgeHTML: payBadgeHTML,
+    isPaid: isPaid,
+    // 支付轮（payEnabled）：在线支付是否开通（false = 未开通，全站退回「待备货」语义）
+    payEnabled: payEnabled,
     listAddresses: listAddresses,
     defaultAddress: defaultAddress,
     saveAddress: saveAddress,

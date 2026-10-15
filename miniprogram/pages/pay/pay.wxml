@@ -1,0 +1,77 @@
+<view class="ppage">
+  <van-skeleton wx:if="{{loading}}" title row="4" />
+
+  <!-- 支付认微信身份：没登录先在页面拦住，不发起任何支付请求 -->
+  <view class="errbox" wx:elif="{{needLogin}}">
+    <view class="errico">🔑</view>
+    <view class="errmsg">请先用微信登录，下单后可直接支付</view>
+    <view class="errsub">支付要认微信身份，登录一下就能付了</view>
+    <view class="errbtn" bindtap="goLogin">去「我的」登录</view>
+  </view>
+
+  <!-- 请求失败给「重新加载」，不冒充「订单不存在」 -->
+  <view class="errbox" wx:elif="{{err}}">
+    <view class="errico">📡</view>
+    <view class="errmsg">{{err}}</view>
+    <view class="errsub">这笔订单还在店里，只是这会儿没连上店里系统</view>
+    <view class="errbtn" bindtap="reload">重新加载</view>
+  </view>
+
+  <van-empty wx:elif="{{notFoundText}}" description="{{notFoundText}}" />
+
+  <!-- 支付成功 -->
+  <block wx:elif="{{paid}}">
+    <view class="pcard pok-card">
+      <view class="pico">✅</view>
+      <view class="pok">支付成功，正在备货</view>
+      <view class="psub">老板已经收到通知，备好后马上安排</view>
+      <view class="pamount" wx:if="{{amountText}}">已付 {{amountText}}</view>
+      <view class="pid" wx:if="{{transactionId}}">支付单号 {{transactionId}}</view>
+    </view>
+    <view class="pacts">
+      <van-button round type="primary" block bind:click="goOrder">查看订单</van-button>
+    </view>
+  </block>
+
+  <!-- 支付超时：服务端会把单自动取消并回补库存 -->
+  <block wx:elif="{{expired}}">
+    <view class="pcard">
+      <view class="pico">⌛</view>
+      <view class="pok">支付超时，订单已取消</view>
+      <view class="psub">超过支付时间没付上，库存已经放回去了</view>
+    </view>
+    <view class="pacts">
+      <van-button round block bind:click="goOrder">查看订单</van-button>
+    </view>
+  </block>
+
+  <!-- 收银台 -->
+  <block wx:else>
+    <view class="pcard">
+      <view class="ptitle">待支付</view>
+      <view class="pamount">{{amountText || '金额以服务端为准'}}</view>
+      <view class="pcount" wx:if="{{countText}}">{{countText}}</view>
+      <view class="pleft" wx:if="{{leftText}}">{{leftText}}</view>
+    </view>
+
+    <!-- 店里没开通在线支付（服务端 503）：说清是店里的事，别让顾客以为是自己付错了 -->
+    <view class="errbox" wx:if="{{noPayConfig}}">
+      <view class="errico">🏪</view>
+      <view class="errmsg">店里还没开通在线支付，请联系店家</view>
+      <view class="errsub">可以到店现金 / 扫码付，或者让老板开通后再来</view>
+    </view>
+
+    <!-- 失败 / 取消：留在本页，给「重新支付」 -->
+    <view class="errbox" wx:elif="{{failMsg}}">
+      <view class="errico">⚠️</view>
+      <view class="errmsg">{{failMsg}}</view>
+      <view class="errsub">订单还在，点下面重新支付就行</view>
+    </view>
+
+    <view class="pacts">
+      <van-button wx:if="{{!noPayConfig}}" round type="primary" block loading="{{paying}}"
+        bind:click="retry">{{failMsg ? '重新支付' : '立即支付'}}</van-button>
+      <van-button round block class="pgap" bind:click="goOrder">查看订单</van-button>
+    </view>
+  </block>
+</view>

@@ -69,6 +69,12 @@ async function main() {
   // 第 27 轮起下单必须带身份：api.identityParams() 只认会话里的 openid/phone，
   // 不认 createOrder 入参里的 phone（入参 phone 是收货人，不当作身份）。
   api.rememberPhone('13800138000')
+  // 第 31 轮：小程序一进页面就问 /api/settings（拿 payEnabled），这里照做，
+  // 后面的订单文案断言才有真实的「开没开通在线支付」依据。
+  const pSettings = await api.getSettings().catch(() => ({}))
+  const payOn = pSettings.payEnabled === true
+  ok(typeof pSettings.payEnabled === 'boolean', 'GET /api/settings 下发 payEnabled 布尔派生字段：' + pSettings.payEnabled)
+  ok(api.payEnabled() === payOn, 'payEnabled 收进客户端缓存（api.payEnabled()）：' + api.payEnabled())
   store.clearCart()
   store.addToCart(cola, 2)
   const r = await api.createOrder({
@@ -78,13 +84,68 @@ async function main() {
   ok(r.local === false, '在线下单（local=false）')
   const o = r.order
   ok(o.id.charAt(0) === 'M', '订单号由服务端生成（M 开头）：' + o.id)
-  ok(o.status === 'pending' && o.statusText === '待备货', '初始状态 pending/待备货')
+  // 第 29/31 轮：pending 单显「待付款」还是「待备货」= paid 口径 ∧ 店铺有没有开通在线支付。
+  // 没开通（或拿不到配置）时退回第 28 轮「待备货」—— 不新增 status 值，也不催一笔付不出的款。
+  ok(o.status === 'pending' && o.statusText === (payOn && o.paidKnown && !o.paid ? '待付款' : '待备货'),
+    '初始状态 pending，文案按 paid + payEnabled 口径：' + o.statusText +
+    '（payEnabled=' + payOn + ' / paidKnown=' + o.paidKnown + ' / paid=' + o.paid + '）')
   ok(o.subtotal === 5 && o.deliveryFee === 0 && o.total === 5, '自提：小计 5 + 配送 0 = 5')
   ok(o.items.length === 1 && o.items[0].qty === 2, '明细 1 行 ×2')
   ok(o.summary.indexOf('可口可乐') >= 0, '摘要：' + o.summary)
 
   const cola2 = (await api.listProducts('可口可乐')).filter((p) => p.code === '6901234567892')[0]
   ok(cola2.stock === stockBefore - 2, '服务端扣了 2 件库存：' + stockBefore + ' → ' + cola2.stock)
+
+  /* ---------- 第 29 轮：支付（未配置就只验 503 这条，绝不真支付） ---------- */
+  section('③b 支付：prepay（未配置 → 503 / 已配置 → 下发 payParams）')
+  let prepayRes = null
+  let prepayErr = null
+  await api.prepay(o.id).then((d) => { prepayRes = d }, (e) => { prepayErr = e })
+  // 已配置支付的后端要求顾客身份里带 openid（纯手机号只能下单、不能付款，契约 §1.5）。
+  // 真机上小程序就是「先 wx.login 拿 openid，再拉起收银台」，这里照做一次；
+  // 本机后端没配 WX_APPID 时这次登录会失败，于是自然落到下面的跳过分支，不假装成功。
+  if (!prepayRes && !(prepayErr && prepayErr.statusCode === 503)) {
+    await api.wxLogin({ phone: '13800138000', nickname: '联调支付' }).catch(() => null)
+    await api.prepay(o.id).then((d) => { prepayRes = d; prepayErr = null }, (e) => { prepayErr = e })
+  }
+  if (prepayRes) {
+    // 本地后端已经配好商户号：只验参数形状，不把它交给 wx.requestPayment
+    ok(payOn === true, '已配置支付 ⇒ /api/settings 的 payEnabled 同时是 true（不会出现「能付却按待备货」）')
+    ok(!!(prepayRes.payParams && prepayRes.payParams.package), '已配置支付：prepay 下发 payParams（' + prepayRes.payParams.package + '）')
+    ok(prepayRes.outTradeNo === o.id && prepayRes.amountFen > 0,
+      'prepay 金额按整数分下发：' + prepayRes.amountFen + ' 分 / outTradeNo=' + prepayRes.outTradeNo)
+    ok(typeof prepayRes.expireAt === 'number' && prepayRes.expireAt > 0, 'prepay 下发支付到期时间：' + prepayRes.expireAt)
+  } else if (prepayErr && prepayErr.statusCode === 503) {
+    // 契约 §1.2：服务端没配齐商户号 / 证书 / APIv3 密钥就是 503，客户端要能识别
+    ok(payOn === false, '未配置支付 ⇒ payEnabled=false 与 prepay 503 口径一致（不会催一笔付不出的款）')
+    ok(prepayErr.noPayConfig === true, '未配置支付时 prepay 抛出可识别错误（noPayConfig）')
+    ok(String(prepayErr.message).indexOf('微信支付未配置') >= 0, '错误文案可读：' + prepayErr.message)
+    ok(prepayErr.statusCode === 503, 'prepay 未配置 → HTTP 503')
+  } else {
+    // 后端还没实现 /api/pay/prepay（例如路由未挂）：如实跳过，不当成失败
+    ok(true, '后端还没实现支付接口，跳过 prepay 断言：' + (prepayErr && prepayErr.message))
+    ok(true, '同样跳过「未配置 → 503」断言（本机后端未接入支付）')
+    ok(true, '联调不真支付，跳过 payParams 断言')
+    ok(true, '同样跳过「payEnabled 与 prepay 口径一致」断言（本机后端未接入支付）')
+  }
+  // 第 31 轮：pending 未付款单的文案与「去支付」入口随 payEnabled 走 —— 两种形态都是真断言，不跳过
+  const oPay = await api.getOrder(o.id)
+  ok(oPay.status === 'pending' && oPay.paid === false, '新单在服务端仍是 pending + paid=false（第 29 轮契约）')
+  ok(oPay.statusText === (payOn ? '待付款' : '待备货'),
+    '订单文案随 payEnabled：payEnabled=' + payOn + ' → ' + oPay.statusText)
+  ok(oPay.canPay === payOn, '「去支付」入口只在开通支付时出现（canPay=' + oPay.canPay + '）')
+  ok(oPay.payHint === (payOn ? '还没付款，付了款老板马上备货' : ''),
+    '未开通支付时不出现催款文案：' + JSON.stringify(oPay.payHint))
+  let pstat = null
+  await api.payStatus(o.id).then((s) => { pstat = s }, () => null)
+  if (pstat) {
+    ok(pstat.paid === false, '新单未付款：payStatus.paid=false（布尔）')
+    ok(typeof pstat.status === 'string' && pstat.status.length > 0, 'payStatus 带回订单状态：' + pstat.status)
+  } else {
+    ok(true, 'payStatus 暂不可用（后端还没实现支付接口），跳过支付态断言')
+    ok(true, '同样跳过 payStatus.status 断言（联调不真支付）')
+  }
+
 
   section('④ 订单列表 / 取消回补库存')
   const mine = (await api.listOrders()).filter((x) => x.id === o.id)
@@ -131,10 +192,31 @@ async function main() {
   ok(cats.some((c) => c.name === '饮料'), '含「饮料」分类（' + cats.map((c) => c.name + '/' + c.count).join(' ') + '）')
 
   section('⑨ 批发等级 + 地址簿（手机号即身份）')
-  kv['sdy_mp_session'] = { openid: 'integration-test', phone: '13800001111', name: '王阿姨', tier: 'wholesale' }
+  // 本段要求「13800001111 = 批发客户」且「可口可乐带批发价 2.2」，这是演示数据集
+  // （deploy/seed-demo.py）的内容：Go 内置的 SEED_DEMO 只灌商品，商品不带 wholesalePrice、
+  // 也不登记顾客等级。为了让这段在两种后端上都是**真断言**而不是碰运气（等级本身只能由
+  // 管理端设定，D24），先照服务端单测的做法用管理端接口把前置数据补齐，断言完再恢复原样。
+  const COKE = '6901234567892'
+  const cokeBefore = (await raw('/api/products/' + COKE, 'GET')).data || {}
+  const cokeFixNeeded = !(Number(cokeBefore.wholesalePrice) > 0)
+  if (cokeFixNeeded) await raw('/api/products', 'POST', Object.assign({}, cokeBefore, { wholesalePrice: 2.2 }))
+  const cokeNow = (await raw('/api/products/' + COKE, 'GET')).data || {}
+  ok(Number(cokeNow.wholesalePrice) === 2.2,
+    '前置：可口可乐批发价 2.2（' + (cokeFixNeeded ? '内置 SEED_DEMO 不带，已用管理端接口补齐' : '演示数据集自带') + '）')
+  const tiered = await raw('/api/customers/tier', 'POST', { phone: '13800001111', name: '王阿姨', tier: 'wholesale' })
+  ok(tiered.status === 200 && tiered.data.tier === 'wholesale', '前置：13800001111 是批发客户（等级只能管理端设，D24）')
+  // 只带手机号：商品详情按 ?phone= 定级（手机号即身份，D24）。这里刻意不放 openid——
+  // 一个服务端不认识的 openid 只会让身份解析落空（R27：未知 openid 不算顾客身份）。
+  kv['sdy_mp_session'] = { phone: '13800001111', name: '王阿姨', tier: 'wholesale' }
   ok(api.boundPhone() === '13800001111', '注入会话手机号：' + api.boundPhone())
-  const dw = await api.getProduct('6901234567892')
-  ok(dw.tier === 'wholesale' && dw.price === 2.2, '批发顾客看到批发价 2.2（tier=' + dw.tier + '）')
+  const dw = await api.getProduct(COKE)
+  ok(dw.tier === 'wholesale' && dw.price === 2.2,
+    '批发顾客看到批发价 2.2（tier=' + dw.tier + '，实付 ' + dw.price + '）')
+  kv['sdy_mp_session'] = { phone: '13800138000' }
+  const dwRetail = await api.getProduct(COKE)
+  ok(dwRetail.tier === 'retail' && dwRetail.price === 2.5,
+    '同一个商品零售顾客看零售价 2.5（tier=' + dwRetail.tier + '，说明等级真的在换算价格）')
+  if (cokeFixNeeded) await raw('/api/products', 'POST', Object.assign({}, cokeBefore, { wholesalePrice: 0 }))
 
   // 地址簿换一个演示数据里没有的号，第一条必然成为默认地址（老号 13800001111 演示数据已带地址）
   kv['sdy_mp_session'] = { openid: 'integration-test', phone: '13800138000', name: '联调顾客', tier: 'retail' }

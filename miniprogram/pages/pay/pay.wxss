@@ -1,0 +1,47 @@
+@import "../../styles/state.wxss";
+
+/* 收银台（第 29 轮 / 0.9.0 顾客侧） */
+.ppage {
+  padding: 24rpx 28rpx calc(40rpx + env(safe-area-inset-bottom));
+}
+
+.pcard {
+  background: #fff;
+  border-radius: 24rpx;
+  padding: 46rpx 36rpx;
+  text-align: center;
+  margin-bottom: 24rpx;
+}
+.ptitle { font-size: 26rpx; color: #6b7280; }
+.pamount {
+  font-size: 68rpx;
+  font-weight: 700;
+  color: #111827;
+  margin-top: 16rpx;
+  letter-spacing: 1rpx;
+}
+.pcount { font-size: 25rpx; color: #9ca3af; margin-top: 10rpx; }
+.pleft {
+  display: inline-block;
+  margin-top: 22rpx;
+  font-size: 26rpx;
+  color: #b45309;
+  background: #fffbeb;
+  border-radius: 999rpx;
+  padding: 10rpx 26rpx;
+}
+
+/* 支付成功 / 超时 */
+.pico { font-size: 84rpx; line-height: 1.1; }
+.pok { font-size: 34rpx; font-weight: 700; color: #16a34a; margin-top: 16rpx; }
+.psub { font-size: 25rpx; color: #6b7280; margin-top: 12rpx; }
+.pid {
+  font-size: 22rpx;
+  color: #9ca3af;
+  margin-top: 18rpx;
+  word-break: break-all;
+}
+
+/* 按钮区：热区交给 van-button 的 44px 默认高度，这里只管间距 */
+.pacts { margin-top: 28rpx; }
+.pgap { display: block; margin-top: 20rpx; }

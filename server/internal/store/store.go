@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +87,9 @@ type OrderItem struct {
 }
 
 // Order 订单（状态机：pending → delivering / ready → done；pending → cancelled）。
+//
+// 支付轮（§1.4）：支付相关字段全部是**附加信息**，不新增状态值——「待付款 / 待备货」
+// 由 status 与 paid 派生显示（pending+paid=0 → 待付款，pending+paid=1 → 待备货）。
 type Order struct {
 	ID           string      `json:"id"`
 	CustomerName string      `json:"customerName"`
@@ -99,6 +103,17 @@ type Order struct {
 	Items        []OrderItem `json:"items"`
 	CreatedAt    string      `json:"createdAt"`
 	UpdatedAt    string      `json:"updatedAt,omitempty"`
+
+	// 微信支付（§1.4）。金额列仍是 REAL 元，这里只放标识与时间。
+	Paid          bool   `json:"paid"`          // 是否已收款（微信或现金/后台标记）
+	PaidAt        string `json:"paidAt"`        // 收款时间
+	TransactionID string `json:"transactionId"` // 微信支付单号（现金收款为空）
+	PayExpireAt   int64  `json:"payExpireAt"`   // 未付超时时间（Unix 秒，0 = 不参与扫单）
+	RefundID      string `json:"refundId"`      // 微信退款单号
+	RefundState   string `json:"refundState"`   // "" / processing / success / fail
+	// OpenID 只用于服务端发起支付（回填订单归属、prepay 的 payer），**绝不进 JSON**：
+	// 它是「这台微信」的标识，泄露出去等于把顾客的微信身份交出去。
+	OpenID string `json:"-"`
 }
 
 // NewOrderInput 下单入参（只带条码与数量，价格与库存一律以服务端为准）。
@@ -111,6 +126,15 @@ type NewOrderInput struct {
 	DeliveryType string              `json:"deliveryType"`
 	Items        []NewOrderInputItem `json:"items"`
 	ClientToken  string              `json:"clientToken"`
+	// OpenID（支付轮）：下单时顾客的微信标识。HTTP 层只认身份解析出来的 openid，
+	// 不信任请求体里的值；网页下单（手机号身份）为空，之后支付时走「跨端补 openid」（§1.5）。
+	OpenID string `json:"openid"`
+	// PayWindow（支付轮修正）：是否给这张单开「未付 15 分钟倒计时」。
+	// **只有微信支付真的配好时（HTTP 层传 pay != nil && pay.ready()）才为 true**：
+	// 支付没开通时 prepay 一律 503，顾客根本付不了款，如果照样写 pay_expire_at，
+	// 15 分钟后扫单就会把正常订单自动取消并回补库存——老板的备货队列恒空、店铺停摆。
+	// 为 false 时 pay_expire_at 写 0，而 §1.6 的候选条件本来就要求 pay_expire_at>0，自然永不被扫。
+	PayWindow bool `json:"-"`
 }
 
 // NewOrderInputItem 下单行入参。
@@ -200,6 +224,15 @@ var schemaStmts = []string{
 		total REAL NOT NULL DEFAULT 0,
 		status TEXT NOT NULL DEFAULT 'pending',
 		client_token TEXT NOT NULL DEFAULT '',
+		openid TEXT NOT NULL DEFAULT '',
+		paid INTEGER NOT NULL DEFAULT 0,
+		paid_at TEXT NOT NULL DEFAULT '',
+		transaction_id TEXT NOT NULL DEFAULT '',
+		prepay_id TEXT NOT NULL DEFAULT '',
+		pay_expire_at INTEGER NOT NULL DEFAULT 0,
+		refund_id TEXT NOT NULL DEFAULT '',
+		refund_state TEXT NOT NULL DEFAULT '',
+		refund_at TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL DEFAULT ''
 	)`,
@@ -297,6 +330,12 @@ var postMigrateStmts = []string{
 	// 而且索引一旦存在，模拟老库的 `ALTER TABLE product DROP COLUMN on_sale` 也会被拒绝
 	// （TestOnSaleColumnMigration 实测：error in index idx_product_onsale_category after drop column）。
 	`CREATE INDEX IF NOT EXISTS idx_product_onsale_category ON product(on_sale, category)`,
+	// 支付轮（§1.4）：微信支付单号全局唯一，防「一笔钱落到两张单上」。
+	// 部分唯一索引让「还没付款（空 transaction_id）的单」互不冲突。
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_transaction ON orders(transaction_id) WHERE transaction_id<>''`,
+	// 支付轮（§1.6）：超时扫单的候选集（paid=0 AND pay_expire_at<=now），
+	// 每分钟扫一次，没有这个索引就是全表扫。
+	`CREATE INDEX IF NOT EXISTS idx_orders_pay_expire ON orders(paid, pay_expire_at)`,
 }
 
 // Open 打开（或创建）数据库并建表。
@@ -326,6 +365,8 @@ func Open(path string, cfg pricing.Config) (*Store, error) {
 		return nil, err
 	}
 	// 任务池⑦（D24）：商品批发价 + 顾客等级，同样幂等补列，老库不清库。
+	// paidJustAdded 记「orders.paid 是不是本次才补上的」——一次性老库回填的判据（见下）。
+	paidJustAdded := false
 	for _, c := range []struct{ table, column, decl string }{
 		{"product", "wholesale_price", "REAL NOT NULL DEFAULT 0"},
 		{"customer", "tier", "TEXT NOT NULL DEFAULT 'retail'"},
@@ -339,10 +380,52 @@ func Open(path string, cfg pricing.Config) (*Store, error) {
 		{"stock_log", "order_id", "TEXT NOT NULL DEFAULT ''"},
 		// 第 27 轮（审计 E-P0-1）：内置示例数据标记，老库里的存量商品一律视为真实商品（0）。
 		{"product", "is_demo", "INTEGER NOT NULL DEFAULT 0"},
+		// 支付轮（§1.4）：微信支付 9 列。全部幂等补列，老库不清库；
+		// 唯一会对历史数据动手的是 paid 的一次性回填（见下面的 paidJustAdded 段），
+		// 而且只跑一次。pay_expire_at 默认 0 = 不参与超时扫单。
+		{"orders", "openid", "TEXT NOT NULL DEFAULT ''"},
+		{"orders", "paid", "INTEGER NOT NULL DEFAULT 0"},
+		{"orders", "paid_at", "TEXT NOT NULL DEFAULT ''"},
+		{"orders", "transaction_id", "TEXT NOT NULL DEFAULT ''"},
+		{"orders", "prepay_id", "TEXT NOT NULL DEFAULT ''"},
+		{"orders", "pay_expire_at", "INTEGER NOT NULL DEFAULT 0"},
+		{"orders", "refund_id", "TEXT NOT NULL DEFAULT ''"},
+		{"orders", "refund_state", "TEXT NOT NULL DEFAULT ''"},
+		{"orders", "refund_at", "TEXT NOT NULL DEFAULT ''"},
 	} {
-		if err := ensureColumn(db, c.table, c.column, c.decl); err != nil {
+		added, err := ensureColumnAdded(db, c.table, c.column, c.decl)
+		if err != nil {
 			db.Close()
 			return nil, err
+		}
+		if added && c.table == "orders" && c.column == "paid" {
+			paidJustAdded = true
+		}
+	}
+	// 支付轮：一次性老库回填（判据 = orders.paid 是**本次**才补上的列）。
+	//
+	// 为什么必须做：paid 由 ALTER TABLE 补出来、默认 0。如果放着不管，升级到 0.9.0 之后
+	// 所有**支付上线之前**的 pending 老单都变成「未收款」——后台「待备货」队列（只列已付款）
+	// 会把它们整批踢出去，顾客「我的订单」还会显示「待付款」并跳出倒计时。
+	// 这些单在下单时根本不存在线上支付，本来就在备货队列里、也可能是现金收的，
+	// 所以一律按「已收款」回填：
+	//   - paid_at 用 created_at（不是 now）：**绝不污染「今日已收款」**统计，
+	//     否则升级当天会把几个月的历史单全算成今天的营业额；
+	//   - cancelled 的老单不回填（它们不在备货队列里，也不想给它们留下收款痕迹）；
+	//   - pay_expire_at 保持 0：§1.6 扫单的候选条件是 `pay_expire_at>0`，
+	//     所以回填出来的已收款老单**永远不会**被超时扫单碰；
+	//   - 只有 added==true（首次升级）才跑，重启第二次不会再改任何数据，
+	//     也绝不会把当天的新未付款单刷成已付款（无条件 UPDATE 等于白拿货）。
+	if paidJustAdded {
+		res, err := db.Exec(`UPDATE orders SET paid=1,
+			paid_at = CASE WHEN paid_at='' THEN created_at ELSE paid_at END
+			WHERE paid=0 AND status<>?`, pricing.StatusCancelled)
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("回填历史订单收款状态失败: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil && n > 0 {
+			log.Printf("首次升级：已把 %d 张历史订单回填为已收款（老单不参与线上支付，pay_expire_at 保持 0 不参与扫单）", n)
 		}
 	}
 	// 补完列再建依赖这些列的索引（老库升级路径，见 postMigrateStmts 注释）。
@@ -394,9 +477,17 @@ func (s *Store) seedCouriers() error {
 // ensureColumn 幂等补列（老库升级用）：列已存在则什么都不做。
 // 表名/列名/类型都是代码内常量，不接受外部输入。
 func ensureColumn(db *sql.DB, table, column, decl string) error {
+	_, err := ensureColumnAdded(db, table, column, decl)
+	return err
+}
+
+// ensureColumnAdded 同 ensureColumn，但会告诉调用方「这一列是不是本次才补上的」。
+// 首次升级到 0.9.0 的老库要靠这个判据做一次性回填（见 Open 里的 paid 回填），
+// 已有列返回 added=false，所以重启一次不会重复执行、也不会改任何数据。
+func ensureColumnAdded(db *sql.DB, table, column, decl string) (bool, error) {
 	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
-		return fmt.Errorf("读取表结构失败: %w", err)
+		return false, fmt.Errorf("读取表结构失败: %w", err)
 	}
 	defer rows.Close()
 	has := false
@@ -405,22 +496,22 @@ func ensureColumn(db *sql.DB, table, column, decl string) error {
 		var name, ctype string
 		var dflt any
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return fmt.Errorf("读取表结构失败: %w", err)
+			return false, fmt.Errorf("读取表结构失败: %w", err)
 		}
 		if name == column {
 			has = true
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("读取表结构失败: %w", err)
+		return false, fmt.Errorf("读取表结构失败: %w", err)
 	}
 	if has {
-		return nil
+		return false, nil
 	}
 	if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + decl); err != nil {
-		return fmt.Errorf("升级表结构失败（%s.%s）: %w", table, column, err)
+		return false, fmt.Errorf("升级表结构失败（%s.%s）: %w", table, column, err)
 	}
-	return nil
+	return true, nil
 }
 
 // Close 关闭数据库。
@@ -473,6 +564,8 @@ func (s *Store) UpsertProduct(p Product) (Product, error) {
 	// 新建商品默认上架，上下架只走 SetProductsOnSale / POST /api/products/onsale。
 	// is_demo（第 27 轮）同理不在 ON CONFLICT 里覆盖：演示标记只由首次灌种子时写在插入语句上，
 	// 后来老板编辑这条商品（或第三方脚本按条码覆盖）都不会把标记抹掉，前端筛选口径才稳定。
+	// 支付轮起这个标记也用来标「微信支付测试商品」（`deploy/seed-demo.py` 的 PAYTEST）——
+	// 所以 POST /api/products 会透出 isDemo（只认显式 true），但**改真商品的档案永远不会把它标成示例**。
 	// 批发价（D24）随档案一起覆盖：调用方必须把 wholesalePrice 一并传（0 表示未设批发价），
 	// 与 img 同理——漏传会把已设的批发价清零（规则 19⑤）。
 	_, err := s.db.Exec(`INSERT INTO product
@@ -742,7 +835,10 @@ const (
 	StockKindTake   = "stock_take"    // 盘点（qty 为实盘数）
 	StockKindOrder  = "order_out"     // 下单扣减（第 27 轮）
 	StockKindCancel = "cancel_return" // 取消订单回补（第 27 轮）
-	maxStockLog     = 500             // 流水只留最近 500 条，免得库无限长大
+	// 超时未付自动取消回补（支付轮 §1.6）：与「人工取消」区分开，
+	// 老板在流水里一眼能看出「这单是没人付款自己取消的」。
+	StockKindPayTimeout = "pay_timeout"
+	maxStockLog         = 500 // 流水只留最近 500 条，免得库无限长大
 )
 
 // 低库存阈值（第 27 轮单一真源）：工作时台与设置接口都用这一个值。
@@ -1069,6 +1165,26 @@ var stateFlow = map[string][]string{
 	pricing.StatusCancelled:  {},
 }
 
+// DefaultPayExpireSeconds 未支付订单的有效期：15 分钟（§1.5「下单即开始 15 分钟倒计时」）。
+const DefaultPayExpireSeconds int64 = 900
+
+// PayExpireSeconds 返回未支付订单的有效期（秒）。
+//
+// 默认 900（15 分钟）。环境变量 PAY_EXPIRE_SECONDS 可以覆盖它，**仅为端到端验收**
+// （deploy/accept-pay.js 用 5 秒把「15 分钟」压缩成几秒）；非法值（空、非数字、<=0）
+// 一律回退默认值，绝不 panic，也绝不把服务卡在启动阶段。
+func PayExpireSeconds() int64 {
+	v := strings.TrimSpace(os.Getenv("PAY_EXPIRE_SECONDS"))
+	if v == "" {
+		return DefaultPayExpireSeconds
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return DefaultPayExpireSeconds
+	}
+	return n
+}
+
 // CreateOrder 事务下单：幂等检查 → 校验 → 原子扣库存（+流水）→ 写订单。
 // 全流程在同一个事务里，任何一步校验失败都整单回滚——不会出现「扣了库存单没成立」。
 func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
@@ -1208,12 +1324,21 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 		CustomerName: in.CustomerName, Phone: in.Phone, Address: in.Address,
 		DeliveryType: in.DeliveryType, Subtotal: pricing.Round2(subtotal), DeliveryFee: fee,
 		Total: pricing.Round2(subtotal + fee), Status: "pending", Items: items, CreatedAt: now,
+		OpenID: strings.TrimSpace(in.OpenID),
+	}
+	// 未付超时时间由**服务端**算（绝不信任前端传的倒计时）：下单时刻 + 有效期。
+	// 落库后 pay_expire_at>0 才会被 §1.6 的扫单 goroutine 纳入候选；支付未开通时
+	// 刻意写 0（见 NewOrderInput.PayWindow）——否则会把自己家的正常订单扫成取消。
+	var expireAt int64
+	if in.PayWindow {
+		expireAt = time.Now().Unix() + PayExpireSeconds()
 	}
 	if _, err := tx.Exec(`INSERT INTO orders
-		(id,customer_name,phone,address,delivery_type,subtotal,delivery_fee,total,status,client_token,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		(id,customer_name,phone,address,delivery_type,subtotal,delivery_fee,total,status,client_token,
+		 openid,pay_expire_at,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		o.ID, o.CustomerName, o.Phone, o.Address, o.DeliveryType, o.Subtotal, o.DeliveryFee, o.Total,
-		o.Status, strings.TrimSpace(in.ClientToken), now, now); err != nil {
+		o.Status, strings.TrimSpace(in.ClientToken), o.OpenID, expireAt, now, now); err != nil {
 		// 两个并发请求带同一个 token：唯一索引只会放行一个，输的那个回滚改读已存在的单。
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return Order{}, fmt.Errorf("%w: 并发重复下单", ErrDuplicated)
@@ -1245,16 +1370,20 @@ func (s *Store) CreateOrder(in NewOrderInput) (Order, error) {
 // GetOrder 读单，连带明细。
 func (s *Store) GetOrder(id string) (Order, error) {
 	row := s.db.QueryRow(`SELECT id,customer_name,phone,address,delivery_type,subtotal,delivery_fee,
-		total,status,created_at,updated_at FROM orders WHERE id=?`, id)
+		total,status,created_at,updated_at,
+		paid,paid_at,transaction_id,pay_expire_at,refund_id,refund_state,openid FROM orders WHERE id=?`, id)
 	var o Order
+	var paid int
 	err := row.Scan(&o.ID, &o.CustomerName, &o.Phone, &o.Address, &o.DeliveryType, &o.Subtotal,
-		&o.DeliveryFee, &o.Total, &o.Status, &o.CreatedAt, &o.UpdatedAt)
+		&o.DeliveryFee, &o.Total, &o.Status, &o.CreatedAt, &o.UpdatedAt,
+		&paid, &o.PaidAt, &o.TransactionID, &o.PayExpireAt, &o.RefundID, &o.RefundState, &o.OpenID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Order{}, fmt.Errorf("%w: 订单 %s", ErrNotFound, id)
 	}
 	if err != nil {
 		return Order{}, err
 	}
+	o.Paid = paid != 0
 	rows, err := s.db.Query(`SELECT code,name,price,qty FROM order_item WHERE order_id=? ORDER BY code`, id)
 	if err != nil {
 		return Order{}, err
@@ -1294,6 +1423,8 @@ func (s *Store) GetOrderByClientToken(token string) (Order, error) {
 //     所以顾客传 q=别人的手机号也只会在自己的单里再筛，永远拿不到别人的单。
 //   - Status 支持逗号分隔多值（`pending,delivering`），单值语义与第 27 轮完全一致。
 //   - Date 与 From/To 同时给时 Date 优先（单日查询）。
+//   - Paid（支付轮 §1.5）："" 不过滤 / "0" 只要未收款 / "1" 只要已收款；
+//     「待备货」队列就是 Status:"pending" + Paid:"1"（不新增 status 值）。
 //
 // Limit<=0 表示不分页（工作台统计要全量）；Offset 只在分页时生效。
 type OrderFilter struct {
@@ -1304,6 +1435,7 @@ type OrderFilter struct {
 	From   string // YYYY-MM-DD（含端点）
 	To     string // YYYY-MM-DD（含端点）
 	Type   string // pickup / delivery
+	Paid   string // "" / "0" / "1"（支付轮）
 	Limit  int
 	Offset int
 }
@@ -1375,6 +1507,20 @@ func (s *Store) ListOrdersFiltered(f OrderFilter) ([]Order, int, error) {
 	if t := strings.TrimSpace(f.Type); t != "" {
 		conds = append(conds, `delivery_type = ?`)
 		args = append(args, t)
+	}
+	// 支付轮（§1.5）：paid=0|1 筛选。paid 列是 INTEGER 亲和，传整数比较，
+	// 不靠 SQLite 的隐式转换（金额/标志位一律不做浮点或字符串比较）。
+	switch p := strings.TrimSpace(f.Paid); p {
+	case "":
+		// 不过滤
+	case "0":
+		conds = append(conds, `paid = ?`)
+		args = append(args, 0)
+	case "1":
+		conds = append(conds, `paid = ?`)
+		args = append(args, 1)
+	default:
+		return nil, 0, fmt.Errorf("%w: paid 只能是 0 或 1", ErrBadInput)
 	}
 	where := ""
 	if len(conds) > 0 {

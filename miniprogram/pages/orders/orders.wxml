@@ -35,7 +35,13 @@
     <view class="ocard" wx:for="{{orders}}" wx:key="id">
       <view class="ohead" data-id="{{item.id}}" bindtap="goDetail">
         <view class="oid">单号 {{item.id}}</view>
-        <view class="ostatus s-{{item.status}}">{{item.statusText}}</view>
+        <!-- 第 29 轮：退款提示行（与 Web payBadgeHTML 同口径：退款态优先于 paid——
+             退款中的单 paid 仍为 true，只显示「已微信支付」会让顾客以为钱没退回来） -->
+        <view class="otags">
+          <view class="orefund {{item.refundTone}}" wx:if="{{item.refundText}}">{{item.refundText}}</view>
+          <view class="opaid" wx:elif="{{item.paid}}">已微信支付</view>
+          <view class="ostatus s-{{item.status}}">{{item.statusText}}</view>
+        </view>
       </view>
 
       <view class="oitems" data-id="{{item.id}}" bindtap="goDetail">
@@ -51,6 +57,9 @@
 
       <view class="ohint">{{item.hint}}</view>
 
+      <!-- 第 29 轮：未付款单显示支付剩余时间（到点服务端自动取消并回补库存） -->
+      <view class="oleft" wx:if="{{item.canPay && item.payLeftText}}">支付剩余时间 {{item.payLeftText}}</view>
+
       <view class="ofoot">
         <view class="ometa">
           <text>{{item.createdText}}</text>
@@ -63,6 +72,7 @@
       </view>
 
       <view class="oacts">
+        <view class="obtn primary" wx:if="{{item.canPay}}" data-id="{{item.id}}" bindtap="onPay">去支付</view>
         <view class="obtn ghost" wx:if="{{item.canCancel}}" data-id="{{item.id}}" bindtap="onCancel">取消订单</view>
         <view class="obtn primary" wx:if="{{item.canAdvance}}" data-id="{{item.id}}" bindtap="onAdvance">确认收货</view>
         <view class="obtn line" wx:if="{{item.canReorder}}" data-id="{{item.id}}" bindtap="onReorder">再来一单</view>

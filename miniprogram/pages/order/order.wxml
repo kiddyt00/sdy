@@ -62,6 +62,30 @@
       <view class="drow"><text class="dk">配送费</text><text class="dv">{{o.feeText}}</text></view>
       <view class="drow"><text class="dk">合计</text><text class="dv strong">¥{{tools.fix2(o.total)}}</text></view>
       <view class="drow"><text class="dk">下单时间</text><text class="dv">{{o.createdText}}</text></view>
+      <!-- 第 29 轮：支付状态 + 倒计时 + 可折叠的微信支付单号（对账用）。
+           退款态优先于 paid（与 Web payBadgeHTML 同口径）：已退款的单这里直接显示退款结论，
+           不让顾客只看到「已微信支付」却以为钱还在店里。
+           第 31 轮（payEnabled）：店铺没开通在线支付、这单也没付过款时整行不出现 ——
+           那时「待付款」根本不存在（没人付得了），显它只会让顾客以为漏付了钱。 -->
+      <view class="drow" wx:if="{{o.refundText || o.paid || o.payExpired || o.canPay}}">
+        <text class="dk">支付</text>
+        <text class="dv {{o.refundText ? 'dv-' + o.refundTone : ''}}">{{o.refundText || (o.paid ? (o.paidText || '已微信支付') : (o.payExpired ? '已取消（超时未付）' : '待付款'))}}
+          <text class="dcopy" wx:if="{{o.transactionId}}" bindtap="togglePay">{{payOpen ? '收起单号' : '支付单号'}}</text>
+        </text>
+      </view>
+      <view class="drow" wx:if="{{o.canPay && o.payLeftText}}">
+        <text class="dk">支付剩余</text>
+        <text class="dv">{{o.payLeftText}}</text>
+      </view>
+      <view class="drow" wx:if="{{payOpen && o.transactionId}}">
+        <text class="dk">支付单号</text>
+        <text class="dv">{{o.transactionId}}</text>
+      </view>
+      <!-- 第 29 轮：退款单号（仅退款成功才有；默认收起，对账时展开） -->
+      <view class="drow" wx:if="{{o.refundNo}}">
+        <text class="dk">退款单号</text>
+        <text class="dv">{{refundOpen ? o.refundNo : '已收起'}}<text class="dcopy" bindtap="toggleRefund">{{refundOpen ? '收起' : '展开'}}</text></text>
+      </view>
       <view class="drow">
         <text class="dk">订单号</text>
         <text class="dv">{{o.id}} <text class="dcopy" bindtap="copyId">复制</text></text>
@@ -69,6 +93,7 @@
     </view>
 
     <view class="dacts">
+      <view class="dbtn primary" wx:if="{{o.canPay}}" bindtap="goPay">去支付</view>
       <view class="dbtn ghost" wx:if="{{o.canCancel}}" bindtap="onCancel">取消订单</view>
       <view class="dbtn primary" wx:if="{{o.canAdvance}}" bindtap="onAdvance">确认收货</view>
       <view class="dbtn line" wx:if="{{o.canReorder}}" bindtap="onReorder">再来一单</view>

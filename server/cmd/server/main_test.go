@@ -26,6 +26,15 @@ func newTestServer(t *testing.T) *httptest.Server {
 // newTestServerWx 同上，但可注入微信登录配置（测试指向假微信服务器，本地不出网）。
 func newTestServerWx(t *testing.T, wxc wxConf) *httptest.Server {
 	t.Helper()
+	ts, _ := newTestServerPay(t, wxc, nil)
+	return ts
+}
+
+// newTestServerPay 起测试服务，可注入微信支付运行时（pay=nil 即「支付未配置」），
+// 并把 store 一并返回——支付用例需要直接造数据（wx_user 的 openid↔手机号绑定、
+// 老订单的 created_at 等），走 HTTP 造反而绕。
+func newTestServerPay(t *testing.T, wxc wxConf, pay *payRT) (*httptest.Server, *store.Store) {
+	t.Helper()
 	st, err := store.Open(":memory:", pricing.DefaultConfig())
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
@@ -35,9 +44,9 @@ func newTestServerWx(t *testing.T, wxc wxConf) *httptest.Server {
 	if wxc.client == nil {
 		wxc.client = &http.Client{Timeout: 3 * time.Second}
 	}
-	ts := httptest.NewServer(withCORS(routes(st, res, t.TempDir(), false, wxc)))
+	ts := httptest.NewServer(withCORS(routes(st, res, t.TempDir(), false, wxc, pay)))
 	t.Cleanup(ts.Close)
-	return ts
+	return ts, st
 }
 
 // do 发一个请求，返回状态码与响应体文本。
@@ -322,7 +331,7 @@ func TestAdminCleanURL(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "admin.html"), page, 0o644); err != nil {
 		t.Fatalf("写测试页面失败: %v", err)
 	}
-	ts := httptest.NewServer(routes(st, barcode.New(st, barcode.DefaultConfig(), nil), dir, false, wxConf{}))
+	ts := httptest.NewServer(routes(st, barcode.New(st, barcode.DefaultConfig(), nil), dir, false, wxConf{}, nil))
 	t.Cleanup(ts.Close)
 
 	// /admin → 200 且内容就是 admin.html

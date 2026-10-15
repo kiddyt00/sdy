@@ -295,9 +295,14 @@ Mall.clearCart();
 section('⑪ 订单状态文案');
 const rules = require('../miniprogram/utils/rules.js');
 fresh();
+// 支付轮（payEnabled）：本节测的是「店家已开通在线支付」的口径，显式打开；
+// 未开通口径在 ⑪c 单独测（默认就是未开通，不能混在一起测，否则两套口径互相掩盖）。
+Mall.setSettings({ payEnabled: true });
+// 支付轮（支付）：statusHint 只改了 pending 分支——未付款先提示去小程序付钱，
+// 已付款（下面这些用例）必须仍与小程序 utils/rules.js 逐字一致。所以这里显式标 paid:true。
 const hintCases = [
-  { status: 'pending', deliveryType: 'delivery' },
-  { status: 'pending', deliveryType: 'pickup' },
+  { status: 'pending', deliveryType: 'delivery', paid: true },
+  { status: 'pending', deliveryType: 'pickup', paid: true },
   { status: 'delivering', deliveryType: 'delivery' },
   { status: 'ready', deliveryType: 'pickup' },
   { status: 'done', deliveryType: 'delivery' },
@@ -308,6 +313,58 @@ hintCases.forEach((c) => {
     '文案与小程序一致：' + c.status + '/' + c.deliveryType + ' → ' + Mall.statusHint(c));
 });
 ok(Mall.statusHint(null) === '', '空订单一句话也不编');
+// 支付轮（支付）：Web 端不做线上支付，待付款单的这句提示是 Web 独有（小程序已进收银台，不需要）
+ok(Mall.statusHint({ status: 'pending', deliveryType: 'delivery', paid: false }) === '请在微信小程序里完成支付（网页版暂不支持线上支付）',
+  '待付款单提示去小程序支付：' + Mall.statusHint({ status: 'pending', deliveryType: 'delivery', paid: false }));
+ok(Mall.statusHint({ status: 'pending', deliveryType: 'delivery', paid: 0 }) === Mall.statusHint({ status: 'pending', deliveryType: 'delivery' }),
+  'paid 缺省 / 0 / false 一律按未付款（老数据不会漏提示）');
+
+// ⑪b 支付轮（支付）：显示口径真源 isPaid / orderLabel / payBadgeHTML
+ok(Mall.isPaid({ paid: true }) === true && Mall.isPaid({ paid: 1 }) === true && Mall.isPaid({ paid: '1' }) === true,
+  'isPaid 认 true / 1 / "1" 三种后端写法');
+ok(Mall.isPaid({ paid: false }) === false && Mall.isPaid({}) === false && Mall.isPaid(null) === false,
+  'paid 缺省 / false / 空对象一律未付款（不抛错、不假装已收款）');
+ok(Mall.orderLabel({ status: 'pending', paid: false }) === '待付款' &&
+  Mall.orderLabel({ status: 'pending', paid: true }) === '待备货',
+  'orderLabel：pending 按 paid 派生两态（不新增 status 值）');
+ok(Mall.orderLabel({ status: 'ready', paid: false }) === rules.STATUS_LABELS.ready &&
+  Mall.orderLabel({ status: 'cancelled', paid: true }) === rules.STATUS_LABELS.cancelled,
+  'orderLabel 其余状态与小程序 STATUS_LABELS 逐字一致');
+const mkBadge = (o) => Mall.payBadgeHTML(o);
+ok(mkBadge({ paid: false }).indexOf('未付款') >= 0 && mkBadge({ paid: false }).indexOf('badge') >= 0,
+  '徽标：未付款 → 琥珀 .st-pending：' + mkBadge({ paid: false }));
+ok(mkBadge({ paid: true, paidAt: new Date(2026, 9, 10, 8, 6).getTime() }).indexOf('已付款 10-10 08:06') >= 0,
+  '徽标：已付款 → 绿 .st-done + MM-DD HH:mm 到账时间');
+// 支付轮（支付）：退款三态中文以小程序侧字面为准，三端逐字一致 —— 这里用整串全等，不做 contains 弱断言
+ok(mkBadge({ paid: true, refundState: 'processing' }) === '<span class="badge st-info">退款处理中</span>',
+  '徽标：退款处理中 → 蓝 .st-info，字面与小程序一致（退款态优先于 paid，退款中的单 paid 仍为 true）');
+ok(mkBadge({ paid: true, refundState: 'success' }) === '<span class="badge st-cancelled">已退款</span>',
+  '徽标：已退款 → 灰 .st-cancelled，字面与小程序一致');
+ok(mkBadge({ paid: true, refundState: 'fail' }) === '<span class="badge st-warn">退款失败，请联系店家</span>',
+  '徽标：退款失败，请联系店家 → 红 .st-warn（老板一眼看见）');
+ok(mkBadge(null) === '' && Mall.orderLabel(null) === '' && Mall.statusHint(null) === '',
+  '三个显示函数对空订单都安静降级，不抛错');
+
+// ⑪c 支付轮（payEnabled）：店家没开通在线支付（服务端缺 WXPAY_* → /api/settings 无 payEnabled
+// 或请求失败）时，pending 根本不存在「待付款」这个状态——不能显示成让顾客去付一笔付不了的钱。
+Mall.resetSettings();
+ok(Mall.payEnabled() === false, '默认（取不到 payEnabled）＝未开通在线支付');
+ok(Mall.orderLabel({ status: 'pending', paid: false }) === '待备货' && Mall.orderLabel({ status: 'pending' }) === '待备货',
+  '未开通时未付款的 pending 显示「待备货」（第 28 轮语义），绝不显示「待付款」');
+ok(Mall.orderLabel({ status: 'pending', paid: true }) === '待备货' &&
+  Mall.orderLabel({ status: 'cancelled', paid: false }) === rules.STATUS_LABELS.cancelled &&
+  Mall.orderLabel({ status: 'done', paid: true }) === rules.STATUS_LABELS.done,
+  '未开通时已付款 pending 仍是「待备货」，cancelled/done 分支一点不受影响');
+ok(Mall.payBadgeHTML({ status: 'pending', paid: false }) === '',
+  '未开通时不出「未付款」徽标（没有线上付款这回事，别吓顾客）');
+ok(Mall.payBadgeHTML({ status: 'pending', paid: true, paidAt: new Date(2026, 9, 10, 8, 6).getTime() }).indexOf('已付款 10-10 08:06') >= 0,
+  '未开通时已付款徽标照常显示（老板线下标记过的单要看得见）');
+ok(Mall.statusHint({ status: 'pending', deliveryType: 'delivery', paid: false }) === rules.statusHint({ status: 'pending', deliveryType: 'delivery' }) &&
+  Mall.statusHint({ status: 'pending', deliveryType: 'pickup', paid: false }) === rules.statusHint({ status: 'pending', deliveryType: 'pickup' }),
+  '未开通时不叫顾客去小程序付款，文案回到与小程序逐字一致的备货口径');
+ok(Mall.statusHint({ status: 'pending', deliveryType: 'delivery', paid: false }).indexOf('支付') < 0,
+  '未开通时提示里一个「支付」字都不许有');
+Mall.setSettings({ payEnabled: true });   // 复位成已开通，别把口径漏给后面的用例
 
 // ============ ⑫ 第 28 轮：列表筛选 / 排序 / 分页 / 替代 / 防抖 ============
 section('⑫ 商品列表排序与分页、缺货替代、搜索防抖（第 28 轮 7.2 / 7.4 / 7.8）');

@@ -22,9 +22,19 @@ services:
       BARCODE_GATEWAY: ${BARCODE_GATEWAY:-https://gscode.market.alicloudapi.com/getBarcode}
       WX_APPID: ${WX_APPID:-}
       WX_SECRET: ${WX_SECRET:-}
+      # 微信支付（第 29 轮）：七项不齐 = 支付关闭（下单照旧，订单「待付款」）
+      WXPAY_MCHID: ${WXPAY_MCHID:-}
+      WXPAY_SERIAL_NO: ${WXPAY_SERIAL_NO:-}
+      WXPAY_PRIVATE_KEY_PATH: ${WXPAY_PRIVATE_KEY_PATH:-}
+      WXPAY_API_V3_KEY: ${WXPAY_API_V3_KEY:-}
+      WXPAY_PLATFORM_CERT_PATH: ${WXPAY_PLATFORM_CERT_PATH:-}
+      WXPAY_API_BASE: ${WXPAY_API_BASE:-}
+      WXPAY_NOTIFY_URL: ${WXPAY_NOTIFY_URL:-}
     volumes:
       - ./data:/data
       - ./web:/app/web:ro
+      # 商户私钥/平台证书只读挂载（宿主机 ./secrets，chown 10001 且 chmod 600，绝不入库）
+      - ./secrets:/app/secrets:ro
     ports:
       - 127.0.0.1:8093:8080
     logging:
@@ -52,9 +62,19 @@ services:
       BARCODE_GATEWAY: ${BARCODE_GATEWAY:-https://gscode.market.alicloudapi.com/getBarcode}
       WX_APPID: ${WX_APPID:-}
       WX_SECRET: ${WX_SECRET:-}
+      # 微信支付（第 29 轮）：七项不齐 = 支付关闭（下单照旧，订单「待付款」）
+      WXPAY_MCHID: ${WXPAY_MCHID:-}
+      WXPAY_SERIAL_NO: ${WXPAY_SERIAL_NO:-}
+      WXPAY_PRIVATE_KEY_PATH: ${WXPAY_PRIVATE_KEY_PATH:-}
+      WXPAY_API_V3_KEY: ${WXPAY_API_V3_KEY:-}
+      WXPAY_PLATFORM_CERT_PATH: ${WXPAY_PLATFORM_CERT_PATH:-}
+      WXPAY_API_BASE: ${WXPAY_API_BASE:-}
+      WXPAY_NOTIFY_URL: ${WXPAY_NOTIFY_URL:-}
     volumes:
       - ./data:/data
       - ./web:/app/web:ro
+      # 商户私钥/平台证书只读挂载（宿主机 ./secrets，chown 10001 且 chmod 600，绝不入库）
+      - ./secrets:/app/secrets:ro
     ports:
       - 127.0.0.1:8094:8080
     logging:

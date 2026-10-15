@@ -3,12 +3,14 @@
 """演示数据灌库脚本（幂等；只用于「打开界面能看到真实内容」，正式开张前清库重建）
 
 用法：
-    python3 deploy/seed-demo.py http://<生产地址或本机 127.0.0.1:8093> [--force-orders]
+    python3 deploy/seed-demo.py http://<生产地址或本机 127.0.0.1:8093> [--force-orders] [--with-paytest]
 
 做什么：
     1) upsert 14 款商品：覆盖「正常价 / 批发 / 缺参考价 / 低库存 / 缺货」五种状态，
        并给演示款挂上仓库自带的 SVG 商品图（web/assets/demo/*.svg）；
        其中 7 款顺带写上批发价（WHOLESALE 表），演示「按顾客等级看价」；
+    1.2) --with-paytest 时额外 upsert 1 款**微信支付测试商品**（0.01 元、自提、
+       标 isDemo）。它是真商品、顾客真能买到，所以**默认不灌**；
     1.5) 登记 2 位顾客等级（王阿姨=批发 / 李叔=白名单），手机号即身份（D24）；
     2) 补 3 条收货地址簿（已存在同手机号同地址则跳过）；
     3) 库里没有订单时（或加 --force-orders）造 6 张订单并把状态推到
@@ -26,6 +28,27 @@ import json
 import sys
 import urllib.error
 import urllib.request
+
+# 微信支付测试商品（支付轮）：**默认不灌**，只有显式加 --with-paytest 才写进库。
+# 为什么要单独开关：它是真商品、顾客真能买到（1 分钱一单），不能跟着演示数据到处跑，
+# 只有「要验一笔真微信支付」的生产/联调库才需要。传 --no-paytest 可以显式关掉。
+#
+# 金额口径：salePrice=0.01 且 **走自提**（PickupFee=0）时订单总额恰好 = 1 分，
+# 与微信支付的 amount.total 最小值一致；走配送会加 3 元配送费变成 3.01 元（见 .agent_rules.md）。
+PAYTEST = {
+    "code": "9000000000001",
+    "name": "【测试】微信支付 1 分钱",
+    "brand": "测试专用",
+    "spec": "0.01 元 · 自提",
+    "category": "测试专用",
+    "unit": "件",
+    "costPrice": 0.01,
+    "salePrice": 0.01,
+    "refPrice": 0,       # 0 = 不参与零售比价防线（测试商品没有牵牛花参考价）
+    "stock": 999,
+    "isWholesale": False,
+    "isDemo": True,      # 管理端据此显示「示例/测试商品」警示条，可单独筛出来下架
+}
 
 # (code, name, brand, spec, category, unit, costPrice, salePrice, refPrice, stock, isWholesale)
 PRODUCTS = [
@@ -131,6 +154,8 @@ def main():
         return 2
     base = sys.argv[1].rstrip("/")
     force_orders = "--force-orders" in sys.argv
+    # 测试商品默认不灌（见 PAYTEST 注释）；要灌就显式 --with-paytest。
+    with_paytest = "--with-paytest" in sys.argv
 
     # 1) 商品
     ok = 0
@@ -146,6 +171,26 @@ def main():
         else:
             print("  ⚠️ 商品 %s(%s) 被拒：%s" % (name, code, body.get("error")))
     print("✅ 商品 upsert：%d/%d" % (ok, len(PRODUCTS)))
+
+    # 1.2) 微信支付测试商品（0.01 元，自提 → 订单总额恰好 1 分）：只在 --with-paytest 时灌。
+    #      单独统计（不计入上面的 14 款口径），并在摘要里显式提醒「它顾客真能买到」。
+    paytest_ok = False
+    if with_paytest:
+        st, body = call(base, "POST", "/api/products", {
+            "code": PAYTEST["code"], "name": PAYTEST["name"], "brand": PAYTEST["brand"],
+            "spec": PAYTEST["spec"], "category": PAYTEST["category"], "unit": PAYTEST["unit"],
+            "costPrice": PAYTEST["costPrice"], "salePrice": PAYTEST["salePrice"],
+            "wholesalePrice": 0, "refPrice": PAYTEST["refPrice"],
+            "stock": PAYTEST["stock"], "isWholesale": PAYTEST["isWholesale"],
+            "isDemo": PAYTEST["isDemo"], "img": "",
+        })
+        paytest_ok = 200 <= st < 300
+        if paytest_ok:
+            print("✅ 微信支付测试商品：%s（%s，¥%.2f，库存 %d，标 isDemo）——顾客真能买到，"
+                  "验完请到「商品档案」下架或删除"
+                  % (PAYTEST["name"], PAYTEST["code"], PAYTEST["salePrice"], PAYTEST["stock"]))
+        else:
+            print("  ⚠️ 微信支付测试商品被拒：%s" % body.get("error"))
 
     st, plist = call(base, "GET", "/api/products")
     products = plist.get("items", []) if isinstance(plist, dict) else []
@@ -293,6 +338,11 @@ def main():
     qty = sum(i.get("qty", 0) for o in live for i in (o.get("items") or []))
     print("\n📊 核对摘要")
     print("   商品 %d 款 / 订单 %d 张（其中取消 %d）" % (len(products), len(orders), len(orders) - len(live)))
+    if paytest_ok:
+        print("   ⚠️ 含微信支付测试商品 1 款（%s，¥0.01，isDemo=true）——顾客真能买到，验完请下架/删除"
+              % PAYTEST["code"])
+    else:
+        print("   （未灌微信支付测试商品；要灌请加 --with-paytest）")
     print("   营业额 ¥%.2f / 商品金额 ¥%.2f / 配送费 ¥%.2f / 售出 %g 件" % (rev, goods, fee, qty))
     print("   客单价 ¥%.2f" % (rev / len(live) if live else 0))
     st, custs = call(base, "GET", "/api/customers")
