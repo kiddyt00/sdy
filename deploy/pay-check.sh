@@ -87,8 +87,17 @@ hostpath() {
   esac
 }
 
-for pair in "WXPAY_PRIVATE_KEY_PATH:$PRIV:PRIVATE KEY" "WXPAY_PLATFORM_CERT_PATH:$PLAT:CERTIFICATE"; do
+# 平台证书与微信支付公钥都接受（方案 §1.2 明确「平台证书 / 微信支付公钥」任选其一；
+# server/internal/wxpay/crypto.go 的 parsePlatformPubKey 两种 PEM 都支持）。
+# 只认 BEGIN CERTIFICATE 会**误报**——2026-10-15 生产用微信支付公钥（BEGIN PUBLIC KEY
+# + PUB_KEY_ID_…）时就被本脚本判成 ✘，而实际上支付已开通（第五节 prepay 探针为证）。
+#
+# 用 `~~` 分隔「正则 | 给人看的标签」：正则本身带 `|`，不能用 `|` 当分隔符
+# （踩过一次：pattern 被截成 `BEGIN (CERTIFICATE`，断言恒失败）。
+for pair in "WXPAY_PRIVATE_KEY_PATH:$PRIV:BEGIN .*PRIVATE KEY~~商户私钥" \
+            "WXPAY_PLATFORM_CERT_PATH:$PLAT:BEGIN (CERTIFICATE|PUBLIC KEY)~~平台证书 / 微信支付公钥"; do
   name="${pair%%:*}"; rest="${pair#*:}"; val="${rest%%:*}"; want="${rest##*:}"
+  pat="${want%%~~*}"; label="${want##*~~}"
   if [ -z "$val" ]; then bad "$name 为空"; continue; fi
   case "$val" in
     /app/*) ok "$name = $val（容器内路径，正确）";;
@@ -96,8 +105,8 @@ for pair in "WXPAY_PRIVATE_KEY_PATH:$PRIV:PRIVATE KEY" "WXPAY_PLATFORM_CERT_PATH
   esac
   hp="$(hostpath "$val")"
   if [ ! -f "$hp" ]; then bad "宿主机上找不到 $hp"; continue; fi
-  if ! grep -q "BEGIN .*$want" "$hp" 2>/dev/null; then
-    bad "$hp 内容不像 $want PEM"; continue
+  if ! grep -qE "$pat" "$hp" 2>/dev/null; then
+    bad "$hp 内容不像 $label PEM"; continue
   fi
   perm="$(stat -c '%a' "$hp" 2>/dev/null || echo '?')"
   owner="$(stat -c '%U:%G' "$hp" 2>/dev/null || echo '?')"
